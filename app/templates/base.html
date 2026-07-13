@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}408 Focus Console{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}">
+  <div class="app-shell">
+    <header class="status-bar">
+      <div class="status-title"><i></i><strong>408 Focus Console</strong><span>个人备考控制台</span></div>
+      <div class="exam-countdown"><small>距考研</small><strong id="exam-days">-- 天</strong><span id="exam-clock">--:--:--</span></div>
+      <div class="score-board"><small>近期模拟考</small><div class="score-window"><div id="score-track" class="score-track"><div class="score-row"><span>正在读取成绩</span><b>-- / --</b><em>--</em></div></div></div></div>
+      <div class="today-study"><small>今日有效学习</small><strong id="today-study">00:00 / 08:00</strong><span id="today-progress">完成度 0%</span></div>
+      <div class="current-state"><span id="state-dot" class="state-dot"></span><span id="current-state">准备学习</span><a class="settings-link" href="{{ url_for('settings_page') }}" title="打开设置">设置</a></div>
+    </header>
+    <main class="app-main">{% block content %}{% endblock %}</main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>

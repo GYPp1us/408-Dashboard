@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}今日控制台 · 408 Focus Console{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>今日控制台</h1><p>先看时间窗口，再选择下一段专注。</p></div><span id="today-date" class="page-date">读取中</span></div>
+
+<section class="time-grid">
+  <article class="panel time-card current-time-card"><h2>当前时间</h2><strong id="current-time">--:--:--</strong><p>上午学习窗口 · 距离午休 <b id="lunch-remaining">--:--:--</b></p><div class="inline-state"><i></i><span id="home-state-note">准备开始下一段专注</span></div></article>
+  <article class="panel time-card"><h2>距离午休</h2><strong id="lunch-clock">--:--:--</strong><div class="progress-meta"><span>08:00</span><b id="lunch-percent">0%</b><span>12:00</span></div><div class="progress"><i id="lunch-progress"></i></div></article>
+  <article class="panel time-card"><h2>距离闭馆</h2><strong id="library-clock">--:--:--</strong><div class="progress-meta"><span>15:00</span><b id="library-percent">0%</b><span>22:00</span></div><div class="progress"><i id="library-progress"></i></div></article>
+</section>
+
+<section class="panel section-block"><div class="section-heading"><h2>快捷专注模式</h2><span>点击滑动启动</span></div><div id="focus-modes" class="focus-modes"><div class="loading-row">正在读取预设...</div></div></section>
+
+<section class="analytics-grid">
+  <article class="panel heatmap-panel"><div class="section-heading"><h2>近一个月专注热度 · 小时级</h2><div class="heat-legend"><span>少</span><i></i><i></i><i></i><i></i><span>多</span></div></div><div class="heatmap"><div id="heat-hours" class="heat-hours"></div><div id="heat-grid" class="heat-grid"></div></div><div class="heat-days"><span>小时</span><div><span>30 天前</span><span>20 天前</span><span>10 天前</span><span>今天</span></div></div><p id="heat-detail" class="detail-note">点击热度格查看该小时的演示数据。</p></article>
+  <article class="panel score-panel"><div class="section-heading"><h2>近期模拟考 / 目标</h2><a href="{{ url_for('settings_page') }}">维护</a></div><table class="metric-table"><thead><tr><th>科目</th><th>最近 / 目标</th><th>差距</th><th>完成</th></tr></thead><tbody id="score-table"><tr><td colspan="4">正在读取成绩...</td></tr></tbody></table></article>
+</section>
+
+<section class="bottom-grid">
+  <article class="panel"><div class="section-heading"><h2>本周长期计划</h2><a href="{{ url_for('settings_page') }}">设置</a></div><div id="plan-list" class="plan-list"><div class="loading-row">正在读取计划...</div></div></article>
+  <article class="panel"><div class="section-heading"><h2>今日专注记录</h2><a href="{{ url_for('focus_page') }}">打开专注页</a></div><div id="recent-focus" class="recent-list"><div class="loading-row">正在读取记录...</div></div></article>
+</section>
+{% endblock %}
