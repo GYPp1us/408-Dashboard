@@ -52,7 +52,10 @@ button { cursor:pointer; }
 .progress { position:relative; height:8px; margin-top:8px; overflow:hidden; border-radius:99px; background:#f4ddd7; }
 .progress i { position:absolute; z-index:1; inset:0 auto 0 0; display:block; width:0; height:100%; border-radius:inherit; background:var(--accent); transition:width .3s ease; }
 .progress-history { position:absolute; z-index:2; inset:0; pointer-events:none; }
-.progress-history span { position:absolute; top:1px; bottom:1px; min-width:2px; border:1px solid rgba(255,255,255,.75); border-radius:3px; background:#087565; box-shadow:0 0 0 1px rgba(8,117,101,.18); }
+.progress-history span { position:absolute; top:0; bottom:0; min-width:2px; border:0; border-radius:2px; background:#087565; }
+.progress-history span.at-start { border-radius:99px 2px 2px 99px; }
+.progress-history span.at-end { border-radius:2px 99px 99px 2px; }
+.progress-history span.at-start.at-end { border-radius:99px; }
 .progress.teal { background:#d7eee9; }
 .progress.teal i { background:var(--teal); }
 .section-block { margin-top:10px; }

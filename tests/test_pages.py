@@ -31,6 +31,9 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "近期专注记录" in html
     assert "lunch-start-label" in html
     assert "library-history" in html
+    assert "home-window-label" in html
+    assert "home-window-countdown" in html
+    assert "上午学习窗口 · 距离午休" not in html
     assert "focus-summary" in html
     assert "session-goal-chart" in html
     assert "today-subject-chart" in html

@@ -80,8 +80,44 @@
       if (sessionEnd <= sessionStart) return "";
       const left = ((sessionStart - start) / total) * 100;
       const width = ((sessionEnd - sessionStart) / total) * 100;
-      return `<span style="left:${left}%;width:${width}%" title="${escapeHtml(session.subject)} · ${Math.max(1, Math.round(sessionEnd - sessionStart))} 分钟"></span>`;
+      const edgeClass = `${sessionStart <= start ? " at-start" : ""}${sessionEnd >= end ? " at-end" : ""}`;
+      return `<span class="${edgeClass.trim()}" style="left:${left}%;width:${width}%" title="${escapeHtml(session.subject)} · ${Math.max(1, Math.round(sessionEnd - sessionStart))} 分钟"></span>`;
     }).join("");
+  }
+
+  function renderHomeWindow(data, currentTime) {
+    const now = currentTime.getHours() * 3600 + currentTime.getMinutes() * 60 + currentTime.getSeconds();
+    const morningStart = clockMinutes(data.windows.morning.start) * 60;
+    const lunchStart = clockMinutes(data.windows.morning.end) * 60;
+    const libraryStart = clockMinutes(data.windows.library.start) * 60;
+    const libraryEnd = clockMinutes(data.windows.library.end) * 60;
+    let label;
+    let action;
+    let remaining;
+    if (now < morningStart) {
+      label = "休息时间";
+      action = "距离上午开始";
+      remaining = morningStart - now;
+    } else if (now < lunchStart) {
+      label = "上午学习窗口";
+      action = "距离午休";
+      remaining = lunchStart - now;
+    } else if (now < libraryStart) {
+      label = "午间休息";
+      action = "距离下午开始";
+      remaining = libraryStart - now;
+    } else if (now < libraryEnd) {
+      label = "下午学习窗口";
+      action = "距离闭馆";
+      remaining = libraryEnd - now;
+    } else {
+      label = "休息时间";
+      action = "距离上午开始";
+      remaining = 86400 - now + morningStart;
+    }
+    $("#home-window-label").textContent = label;
+    $("#home-window-action").textContent = action;
+    $("#home-window-countdown").textContent = formatSeconds(remaining);
   }
 
   function renderWindows(data) {
@@ -90,6 +126,7 @@
       ["library", data.windows.library],
     ];
     const fetchedAt = Date.now();
+    const serverNowAt = Date.parse(data.now);
     const setWindow = (prefix, value, endAt) => {
       const now = Date.now();
       const startAt = endAt - Number(value.total_seconds || 0) * 1000;
@@ -105,8 +142,10 @@
     };
     window.clearInterval(state.windowCountdown);
     windows.forEach(([prefix, value]) => setWindow(prefix, value, fetchedAt + Number(value.remaining_seconds || 0) * 1000));
+    renderHomeWindow(data, new Date(serverNowAt));
     state.windowCountdown = window.setInterval(() => {
       windows.forEach(([prefix, value]) => setWindow(prefix, value, fetchedAt + Number(value.remaining_seconds || 0) * 1000));
+      renderHomeWindow(data, new Date(serverNowAt + Date.now() - fetchedAt));
     }, 1000);
   }
 
