@@ -45,8 +45,8 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
 def test_start_and_end_focus_session(authenticated_client):
     started = authenticated_client.post("/api/focus/start", json={
         "subject": "数据结构",
-        "mode": "深度专注",
-        "planned_minutes": 90,
+        "mode": "专注",
+        "planned_minutes": 0,
     })
     assert started.status_code == 201
     session_id = started.get_json()["session"]["id"]
@@ -59,19 +59,19 @@ def test_start_and_end_focus_session(authenticated_client):
     assert ended.get_json()["session"]["status"] == "completed"
 
 
-def test_invalid_focus_duration_is_rejected(authenticated_client):
+def test_negative_focus_duration_is_rejected(authenticated_client):
     response = authenticated_client.post("/api/focus/start", json={
         "subject": "数学",
-        "mode": "标准专注",
-        "planned_minutes": 0,
+        "mode": "专注",
+        "planned_minutes": -1,
     })
 
     assert response.status_code == 400
-    assert response.get_json() == {"error": "planned_minutes_must_be_positive"}
+    assert response.get_json() == {"error": "planned_minutes_must_be_non_negative"}
 
 
 def test_focus_start_is_idempotent_for_same_client_token(authenticated_client):
-    payload = {"subject": "数学", "mode": "标准专注", "planned_minutes": 50, "client_token": "drag-123"}
+    payload = {"subject": "数学", "mode": "专注", "planned_minutes": 0, "client_token": "drag-123"}
     first = authenticated_client.post("/api/focus/start", json=payload)
     second = authenticated_client.post("/api/focus/start", json=payload)
 

@@ -107,8 +107,8 @@ def register_routes(app):
             planned_minutes = int(payload.get("planned_minutes", 0))
         except (TypeError, ValueError):
             planned_minutes = 0
-        if planned_minutes <= 0:
-            return jsonify(error="planned_minutes_must_be_positive"), 400
+        if planned_minutes < 0:
+            return jsonify(error="planned_minutes_must_be_non_negative"), 400
         if not subject or not mode:
             return jsonify(error="subject_and_mode_required"), 400
         connection = connect(app.config["DATABASE"])

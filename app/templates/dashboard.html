@@ -1,8 +1,6 @@
 {% extends "base.html" %}
 {% block title %}今日控制台 · 408 Focus Console{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>今日控制台</h1><p>时间窗口、专注状态和长期数据在同一个工作面完成过渡。</p></div><span id="today-date" class="page-date">读取中</span></div>
-
 <section class="time-grid">
   <article class="panel time-card current-time-card"><h2>当前时间</h2><strong id="current-time">--:--:--</strong><p>上午学习窗口 · 距离午休 <b id="lunch-remaining">--:--:--</b></p><div class="inline-state"><i></i><span id="home-state-note">准备开始下一段专注</span></div></article>
   <article class="panel time-card"><h2>距离午休</h2><strong id="lunch-clock">--:--:--</strong><div class="progress-meta"><span>08:00</span><b id="lunch-percent">0%</b><span>12:00</span></div><div class="progress"><i id="lunch-progress"></i></div></article>
@@ -14,6 +12,6 @@
 
   <article class="panel score-panel"><div class="section-heading"><h2>近期模拟考 / 目标</h2><a href="{{ url_for('settings_page') }}">维护</a></div><table class="metric-table"><thead><tr><th>科目</th><th>最近 / 目标</th><th>差距</th><th>完成</th></tr></thead><tbody id="score-table"><tr><td colspan="4">正在读取成绩...</td></tr></tbody></table><div class="subsection-heading"><h3>本周长期计划</h3><a href="{{ url_for('settings_page') }}">设置</a></div><div id="plan-list" class="plan-list"><div class="loading-row">正在读取计划...</div></div></article>
 
-  <article class="panel mode-panel"><div id="idle-mode-view"><div class="section-heading"><h2>快捷专注模式</h2><span>拖动滑块启动</span></div><div id="focus-modes" class="focus-modes"><div class="loading-row">正在读取预设...</div></div></div><div id="active-mode-view" class="active-mode-view" hidden><div class="section-heading"><h2>专注进行中</h2><span class="active-label">青绿色状态</span></div><span class="focus-kicker">DEEP WORK · ACTIVE</span><h3 id="focus-subject">正在读取当前专注</h3><strong id="focus-timer">00:00:00</strong><div class="progress teal"><i id="focus-progress"></i></div><div class="focus-window" id="focus-window">预计结束 --:-- · 剩余 --:--</div><div class="ring" id="focus-ring">0%</div><div class="key-list"><div><span>开始时间</span><b id="focus-start">--:--</b></div><div><span>计划时长</span><b id="focus-planned">-- 分钟</b></div><div><span>今日有效</span><b id="focus-today">00:00 / 08:00</b></div></div><button id="end-focus" class="primary-teal" type="button">结束专注</button></div></article>
+  <article class="panel mode-panel"><div id="idle-mode-view"><div class="section-heading"><h2>快捷专注</h2><span>按学科选择，不限时</span></div><div id="focus-modes" class="focus-modes"><div class="loading-row">正在读取预设...</div></div></div><div id="active-mode-view" class="active-mode-view" hidden><div class="section-heading"><h2>专注进行中</h2><span class="active-label">青绿色状态</span></div><span class="focus-kicker">FOCUS · ACTIVE</span><h3 id="focus-subject">正在读取当前专注</h3><strong id="focus-timer">00:00:00</strong><div class="focus-window" id="focus-window">持续计时 · 不设上限</div><div class="key-list"><div><span>开始时间</span><b id="focus-start">--:--</b></div><div><span>专注方式</span><b>不限时</b></div><div><span>今日有效</span><b id="focus-today">00:00 / 08:00</b></div></div><div id="end-focus" class="drag-action drag-end" role="group" aria-label="滑动结束专注"><div class="drag-fill"></div><span class="drag-label">滑动结束</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动结束专注">→</span></div></div></article>
 </section>
 {% endblock %}

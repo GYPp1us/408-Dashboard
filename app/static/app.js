@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, starting: false };
+  const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, starting: false, ending: false };
   const $ = (selector) => document.querySelector(selector);
   const formatSeconds = (total) => {
     const value = Math.max(0, Math.floor(total));
@@ -119,13 +119,13 @@
   function renderRecentFocus(sessions) {
     const target = $("#recent-focus");
     if (!target) return;
-    target.innerHTML = sessions.length ? sessions.slice(0, 8).map((item) => `<div class="recent-item"><b>${escapeHtml(item.subject)} · ${escapeHtml(item.mode)}</b><small>${new Date(item.started_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · ${item.status === "active" ? "进行中" : "已完成"}</small></div>`).join("") : '<div class="loading-row">暂无专注记录。</div>';
+    target.innerHTML = sessions.length ? sessions.slice(0, 8).map((item) => `<div class="recent-item"><b>${escapeHtml(item.subject)} · 专注</b><small>${new Date(item.started_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · ${item.status === "active" ? "进行中" : "已完成"}</small></div>`).join("") : '<div class="loading-row">暂无专注记录。</div>';
   }
 
   function renderModes(modes) {
     const target = $("#focus-modes");
     if (!target) return;
-    target.innerHTML = modes.map((mode, index) => `<div class="mode"><strong>${escapeHtml(mode.name)}</strong><small>${escapeHtml(mode.subject)} · ${mode.duration_minutes || "自由"} ${mode.duration_minutes ? "分钟" : "计时"}</small><div class="drag-launch${index ? " secondary" : ""}" data-subject="${escapeHtml(mode.subject)}" data-mode="${escapeHtml(mode.name)}" data-duration="${mode.duration_minutes || 25}"><div class="drag-fill"></div><span class="drag-label">滑动启动</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(mode.name)}">→</span></div></div>`).join("");
+    target.innerHTML = modes.map((mode) => `<div class="mode"><strong>${escapeHtml(mode.subject)}</strong><small>不限时专注</small><div class="drag-launch" data-subject="${escapeHtml(mode.subject)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">滑动启动</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(mode.subject)}">→</span></div></div>`).join("");
     initDragLaunchers();
   }
 
@@ -175,7 +175,7 @@
     state.starting = true;
     track.classList.add("armed");
     try {
-      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ subject: track.dataset.subject, mode: track.dataset.mode, planned_minutes: Number(track.dataset.duration), client_token: crypto.randomUUID() }) });
+      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ subject: track.dataset.subject, mode: "专注", planned_minutes: 0, client_token: crypto.randomUUID() }) });
       applyFocusState(session.session, true);
       showToast("专注已启动");
     } catch (error) {
@@ -202,23 +202,26 @@
     if (!active) {
       window.clearInterval(state.timer);
       $("#focus-timer").textContent = "00:00:00";
+      const track = $("#end-focus");
+      const thumb = track?.querySelector(".drag-thumb");
+      if (track && thumb && window.gsap) {
+        gsap.set(thumb, { x: 0 });
+        setDragProgress(track, thumb);
+        track.classList.remove("armed");
+      }
       return;
     }
-    $("#focus-subject").textContent = `${active.subject} · ${active.mode}`;
+    $("#focus-subject").textContent = `${active.subject} · 专注`;
     $("#focus-start").textContent = new Date(active.started_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-    $("#focus-planned").textContent = `${active.planned_minutes} 分钟`;
     const tick = () => {
       const elapsed = Math.max(0, Math.floor((Date.now() - Date.parse(active.started_at)) / 1000));
-      const planned = active.planned_minutes * 60;
-      const progress = Math.min(100, Math.round((elapsed / planned) * 100));
       $("#focus-timer").textContent = formatSeconds(elapsed);
-      $("#focus-progress").style.width = `${progress}%`;
-      $("#focus-ring").textContent = `${progress}%`;
-      $("#focus-window").textContent = `预计结束 ${new Date(Date.parse(active.started_at) + planned * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · 剩余 ${formatSeconds(planned - elapsed)}`;
+      $("#focus-window").textContent = "持续计时 · 不设上限";
     };
     tick();
     window.clearInterval(state.timer);
     state.timer = window.setInterval(tick, 1000);
+    initDragEnd();
   }
 
   async function loadDashboard() {
@@ -231,12 +234,54 @@
 
   async function endFocus() {
     const active = state.dashboard?.focus?.active;
-    if (!active) return;
+    if (!active) return false;
     try {
       await api("/api/focus/end", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
       await loadDashboard();
       showToast("本段专注已结束");
+      return true;
     } catch (error) { showToast(error.message); }
+    return false;
+  }
+
+  function initDragEnd() {
+    const track = $("#end-focus");
+    if (!track || !window.gsap || !window.Draggable || track.dataset.bound) return;
+    const thumb = track.querySelector(".drag-thumb");
+    track.dataset.bound = "1";
+    const drag = Draggable.create(thumb, {
+      type: "x",
+      bounds: track,
+      onDrag() { setDragProgress(track, thumb); },
+      onRelease() {
+        const { max, ratio } = setDragProgress(track, thumb);
+        if (ratio >= .82) {
+          track.classList.add("armed");
+          gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onComplete: () => commitFocusEnd(track, thumb) });
+        } else {
+          gsap.to(thumb, { x: 0, duration: .58, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
+        }
+      }
+    })[0];
+    thumb.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+        gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => commitFocusEnd(track, thumb) });
+      }
+    });
+    drag.update();
+  }
+
+  async function commitFocusEnd(track, thumb) {
+    if (state.ending) return;
+    state.ending = true;
+    track.classList.add("armed");
+    const success = await endFocus();
+    if (!success) {
+      gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
+    }
+    state.ending = false;
   }
 
   async function loadSettings() {
@@ -253,7 +298,6 @@
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
-    $("#end-focus")?.addEventListener("click", endFocus);
     bindSettingsForms();
     try {
       if (document.body.dataset.page === "settings") await loadSettings();

@@ -51,10 +51,10 @@ DEFAULT_SETTINGS = {
 }
 
 DEFAULT_MODES = [
-    ("深度专注", "专业课", 90),
-    ("标准专注", "数学", 50),
-    ("短时冲刺", "英语", 25),
-    ("自由计时", "自定义", 0),
+    ("专注", "专业课", 0),
+    ("专注", "数学", 0),
+    ("专注", "英语", 0),
+    ("专注", "自定义", 0),
 ]
 
 def connect(path: str) -> sqlite3.Connection:
@@ -81,6 +81,8 @@ def init_db(connection: sqlite3.Connection) -> None:
         connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
     if connection.execute("SELECT COUNT(*) FROM focus_modes").fetchone()[0] == 0:
         connection.executemany("INSERT INTO focus_modes(name, subject, duration_minutes) VALUES (?, ?, ?)", DEFAULT_MODES)
+    else:
+        connection.execute("UPDATE focus_modes SET name = '专注', duration_minutes = 0")
     connection.commit()
 
 

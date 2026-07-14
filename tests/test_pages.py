@@ -23,8 +23,11 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "今日有效学习" in html
     assert "近期模拟考" in html
     assert "score-board" in html
+    assert 'id="today-date" class="console-date"' in html
     assert "2 小时级" in html
     assert "focus-modes" in html
+    assert "drag-action" in html
+    assert "时间窗口、专注状态和长期数据在同一个工作面完成过渡。" not in html
     assert "/static/vendor/Draggable.min.js" in html
     assert "active-mode-view" in html
     assert "sidebar" not in html
