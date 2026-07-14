@@ -23,17 +23,19 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "今日有效学习" in html
     assert "近期模拟考" in html
     assert "score-board" in html
+    assert "2 小时级" in html
+    assert "focus-modes" in html
+    assert "/static/vendor/Draggable.min.js" in html
+    assert "active-mode-view" in html
     assert "sidebar" not in html
     assert "topnav" not in html
 
 
-def test_focus_page_is_teal_and_keeps_core_data_visible(authenticated_client):
-    html = authenticated_client.get("/focus").get_data(as_text=True)
+def test_focus_page_uses_single_dashboard_route(authenticated_client):
+    response = authenticated_client.get("/focus")
 
-    assert "专注进行中" in html
-    assert "结束专注" in html
-    assert "今日有效学习" in html
-    assert "heatmap" in html
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/")
 
 
 def test_settings_is_small_low_frequency_entry(authenticated_client):

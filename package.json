@@ -1,0 +1,8 @@
+{
+  "name": "408-study-console-assets",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "gsap": "3.13.0"
+  }
+}

@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
 import re
 
-from flask import jsonify, render_template, request
+from flask import jsonify, redirect, render_template, request, url_for
 
 from .auth import login_required
-from .db import connect, get_settings, list_focus_modes, list_plans, list_scores
-from .services import aggregate_focus_heatmap, calculate_window, current_time, score_metrics, seconds_until_exam
+from .db import connect, get_settings, list_focus_modes, list_latest_scores, list_plans
+from .services import aggregate_focus_heatmap, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
 
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -35,8 +35,8 @@ def _heatmap_sessions(connection, now: datetime) -> list[tuple[datetime, datetim
     rows = connection.execute("SELECT started_at, ended_at FROM focus_sessions ORDER BY started_at").fetchall()
     sessions = []
     for row in rows:
-        start = datetime.fromisoformat(row["started_at"])
-        end = datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else now
+        start = datetime.fromisoformat(row["started_at"]).astimezone(now.tzinfo)
+        end = datetime.fromisoformat(row["ended_at"]).astimezone(now.tzinfo) if row["ended_at"] else now
         sessions.append((start, end))
     return sessions
 
@@ -49,8 +49,8 @@ def register_routes(app):
 
     @app.get("/focus")
     @login_required
-    def focus_page():
-        return render_template("focus.html", page_name="focus")
+    def focus_compatibility_redirect():
+        return redirect(url_for("dashboard"))
 
     @app.get("/settings")
     @login_required
@@ -69,15 +69,17 @@ def register_routes(app):
                 "library": calculate_window(now, settings["library_open"], settings["library_close"]),
             }
             active_row = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").fetchone()
-            scores = score_metrics(list_scores(connection))
+            sessions = _heatmap_sessions(connection, now)
+            scores = score_metrics(list_latest_scores(connection))
             plans = list_plans(connection)
             return jsonify({
                 "now": now.isoformat(),
                 "exam": {"date": settings["exam_date"], "remaining_seconds": seconds_until_exam(now, settings["exam_date"])},
+                "today_focus": summarize_today_focus(sessions, now),
                 "windows": windows,
                 "focus": {"active": _session_payload(dict(active_row) if active_row else None), "recent": _focus_rows(connection)},
                 "focus_modes": list_focus_modes(connection),
-                "heatmap": aggregate_focus_heatmap(_heatmap_sessions(connection, now), now),
+                "heatmap": aggregate_focus_heatmap(sessions, now),
                 "scores": scores,
                 "plans": plans,
             })
@@ -100,6 +102,7 @@ def register_routes(app):
         payload = request.get_json(silent=True) or {}
         subject = str(payload.get("subject", "")).strip()
         mode = str(payload.get("mode", "")).strip()
+        client_token = str(payload.get("client_token", "")).strip()
         try:
             planned_minutes = int(payload.get("planned_minutes", 0))
         except (TypeError, ValueError):
@@ -110,13 +113,20 @@ def register_routes(app):
             return jsonify(error="subject_and_mode_required"), 400
         connection = connect(app.config["DATABASE"])
         try:
+            connection.execute("BEGIN IMMEDIATE")
+            if client_token:
+                existing = connection.execute("SELECT * FROM focus_sessions WHERE client_token = ?", (client_token,)).fetchone()
+                if existing:
+                    connection.commit()
+                    return jsonify(session=dict(existing), idempotent=True), 200
             active = connection.execute("SELECT id FROM focus_sessions WHERE status = 'active' LIMIT 1").fetchone()
             if active:
+                connection.rollback()
                 return jsonify(error="focus_already_active"), 409
-            started_at = _now().isoformat()
+            started_at = _now("UTC").isoformat()
             cursor = connection.execute(
-                "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status) VALUES (?, ?, ?, ?, 'active')",
-                (subject, mode, planned_minutes, started_at),
+                "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status, client_token) VALUES (?, ?, ?, ?, 'active', ?)",
+                (subject, mode, planned_minutes, started_at, client_token or None),
             )
             connection.commit()
             return jsonify(session=_row(connection, cursor.lastrowid)), 201
@@ -136,7 +146,7 @@ def register_routes(app):
             row = connection.execute("SELECT * FROM focus_sessions WHERE id = ? AND status = 'active'", (session_id,)).fetchone()
             if not row:
                 return jsonify(error="active_focus_not_found"), 404
-            connection.execute("UPDATE focus_sessions SET ended_at = ?, status = 'completed' WHERE id = ?", (_now().isoformat(), session_id))
+            connection.execute("UPDATE focus_sessions SET ended_at = ?, status = 'completed' WHERE id = ? AND status = 'active'", (_now("UTC").isoformat(), session_id))
             connection.commit()
             return jsonify(session=_row(connection, int(session_id)))
         finally:
@@ -183,7 +193,7 @@ def register_routes(app):
                     return jsonify(error="invalid_score_payload"), 400
                 connection.execute("INSERT INTO scores(subject, exam_date, score, target) VALUES (?, ?, ?, ?)", (payload["subject"], payload.get("exam_date", _now().date().isoformat()), score, target))
                 connection.commit()
-            return jsonify(scores=score_metrics(list_scores(connection)))
+            return jsonify(scores=score_metrics(list_latest_scores(connection)))
         finally:
             connection.close()
 

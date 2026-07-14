@@ -51,5 +51,17 @@ def test_heatmap_returns_30_days_and_24_hours():
     heatmap = aggregate_focus_heatmap(sessions, end)
 
     assert len(heatmap) == 30
-    assert all(len(day) == 24 for day in heatmap)
+    assert all(len(day) == 12 for day in heatmap)
     assert sum(sum(day) for day in heatmap) == 120
+
+
+def test_today_summary_counts_only_sessions_in_local_day():
+    from app.services import summarize_today_focus
+
+    now = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
+    sessions = [
+        (datetime(2026, 7, 13, 10, 0, tzinfo=timezone.utc), datetime(2026, 7, 13, 11, 0, tzinfo=timezone.utc)),
+        (datetime(2026, 7, 12, 10, 0, tzinfo=timezone.utc), datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)),
+    ]
+
+    assert summarize_today_focus(sessions, now) == {"seconds": 3600, "count": 1}

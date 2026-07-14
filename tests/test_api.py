@@ -37,9 +37,9 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
     payload = response.get_json()
 
     assert response.status_code == 200
-    assert {"now", "windows", "focus", "heatmap", "scores", "plans"} <= payload.keys()
+    assert {"now", "windows", "focus", "today_focus", "heatmap", "scores", "plans"} <= payload.keys()
     assert len(payload["heatmap"]) == 30
-    assert all(len(day) == 24 for day in payload["heatmap"])
+    assert all(len(day) == 12 for day in payload["heatmap"])
 
 
 def test_start_and_end_focus_session(authenticated_client):
@@ -68,6 +68,24 @@ def test_invalid_focus_duration_is_rejected(authenticated_client):
 
     assert response.status_code == 400
     assert response.get_json() == {"error": "planned_minutes_must_be_positive"}
+
+
+def test_focus_start_is_idempotent_for_same_client_token(authenticated_client):
+    payload = {"subject": "数学", "mode": "标准专注", "planned_minutes": 50, "client_token": "drag-123"}
+    first = authenticated_client.post("/api/focus/start", json=payload)
+    second = authenticated_client.post("/api/focus/start", json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert second.get_json()["idempotent"] is True
+    assert second.get_json()["session"]["id"] == first.get_json()["session"]["id"]
+
+
+def test_focus_page_is_compatibility_redirect(authenticated_client):
+    response = authenticated_client.get("/focus")
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/")
 
 
 def test_settings_patch_validates_time_values(authenticated_client):

@@ -18,6 +18,9 @@
     <main class="app-main">{% block content %}{% endblock %}</main>
   </div>
   <div id="toast" class="toast" role="status"></div>
+  <script src="{{ url_for('static', filename='vendor/gsap.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/Draggable.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/Flip.min.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </body>
 </html>

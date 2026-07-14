@@ -46,17 +46,29 @@ def seconds_until_exam(now: datetime, exam_date: str) -> int:
 
 def aggregate_focus_heatmap(sessions: Iterable[tuple[datetime, datetime]], now: datetime) -> list[list[int]]:
     first_day = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=29)
-    heatmap = [[0 for _ in range(24)] for _ in range(30)]
+    heatmap = [[0 for _ in range(12)] for _ in range(30)]
     for start, end in sessions:
         cursor = max(start, first_day)
         while cursor < end:
-            next_hour = cursor.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-            segment_end = min(next_hour, end)
+            bucket_start = cursor.replace(hour=(cursor.hour // 2) * 2, minute=0, second=0, microsecond=0)
+            segment_end = min(bucket_start + timedelta(hours=2), end)
             day_index = (cursor.date() - first_day.date()).days
             if 0 <= day_index < 30:
-                heatmap[day_index][cursor.hour] += int((segment_end - cursor).total_seconds() // 60)
+                heatmap[day_index][cursor.hour // 2] += int((segment_end - cursor).total_seconds() // 60)
             cursor = segment_end
     return heatmap
+
+
+def summarize_today_focus(sessions: Iterable[tuple[datetime, datetime]], now: datetime) -> dict[str, int]:
+    total_seconds = 0
+    count = 0
+    for start, end in sessions:
+        local_start = start.astimezone(now.tzinfo)
+        if local_start.date() != now.date():
+            continue
+        total_seconds += max(0, int((end - start).total_seconds()))
+        count += 1
+    return {"seconds": total_seconds, "count": count}
 
 
 def score_metrics(scores: Iterable[dict]) -> list[dict]:

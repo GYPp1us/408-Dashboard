@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
     started_at TEXT NOT NULL,
     ended_at TEXT,
     status TEXT NOT NULL,
+    client_token TEXT UNIQUE,
     interruption_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS scores (
@@ -56,37 +57,30 @@ DEFAULT_MODES = [
     ("自由计时", "自定义", 0),
 ]
 
-DEFAULT_SCORES = [
-    ("数学", "2026-07-12", 118, 130),
-    ("英语", "2026-07-12", 72, 80),
-    ("政治", "2026-07-12", 68, 75),
-    ("专业课", "2026-07-12", 214, 240),
-]
-
-DEFAULT_PLANS = [
-    ("2026-07-14", "专业课", "图论、查找、排序", 900, 558),
-    ("2026-07-21", "数学", "概率论与线代错题二刷", 720, 252),
-    ("2026-07-28", "英语", "真题阅读与作文模板", 600, 108),
-]
-
-
 def connect(path: str) -> sqlite3.Connection:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA busy_timeout = 5000")
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
 
 
 def init_db(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(focus_sessions)")}
+    if "client_token" not in columns:
+        try:
+            connection.execute("ALTER TABLE focus_sessions ADD COLUMN client_token TEXT")
+        except sqlite3.OperationalError as error:
+            if "duplicate column name" not in str(error).lower():
+                raise
+    connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_focus ON focus_sessions(status) WHERE status = 'active'")
+    connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS unique_focus_client_token ON focus_sessions(client_token) WHERE client_token IS NOT NULL")
     for key, value in DEFAULT_SETTINGS.items():
         connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
     if connection.execute("SELECT COUNT(*) FROM focus_modes").fetchone()[0] == 0:
         connection.executemany("INSERT INTO focus_modes(name, subject, duration_minutes) VALUES (?, ?, ?)", DEFAULT_MODES)
-    if connection.execute("SELECT COUNT(*) FROM scores").fetchone()[0] == 0:
-        connection.executemany("INSERT INTO scores(subject, exam_date, score, target) VALUES (?, ?, ?, ?)", DEFAULT_SCORES)
-    if connection.execute("SELECT COUNT(*) FROM plans").fetchone()[0] == 0:
-        connection.executemany("INSERT INTO plans(week_start, subject, title, target_minutes, completed_minutes) VALUES (?, ?, ?, ?, ?)", DEFAULT_PLANS)
     connection.commit()
 
 
@@ -106,5 +100,28 @@ def list_scores(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     return _rows(connection, "SELECT id, subject, exam_date, score, target FROM scores ORDER BY id")
 
 
+def list_latest_scores(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    return _rows(connection, """
+        SELECT score.id, score.subject, score.exam_date, score.score, score.target
+        FROM scores AS score
+        WHERE score.id = (
+            SELECT latest.id FROM scores AS latest
+            WHERE latest.subject = score.subject
+            ORDER BY latest.exam_date DESC, latest.id DESC
+            LIMIT 1
+        )
+        ORDER BY score.id
+    """)
+
+
 def list_plans(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     return _rows(connection, "SELECT id, week_start, subject, title, target_minutes, completed_minutes FROM plans ORDER BY week_start")
+
+
+def clear_user_data(connection: sqlite3.Connection) -> None:
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("DELETE FROM focus_sessions")
+    connection.execute("DELETE FROM scores")
+    connection.execute("DELETE FROM plans")
+    connection.execute("DELETE FROM sqlite_sequence WHERE name IN ('focus_sessions', 'scores', 'plans')")
+    connection.commit()

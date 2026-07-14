@@ -33,4 +33,14 @@ node --check app/static/app.js
 
 The app binds only to loopback. Nginx owns public ports `80` and `443`; port `43127` must not be exposed publicly.
 
+The home dashboard is the only study surface. `/focus` is kept only as a compatibility redirect to `/`; focus start/end are same-page state transitions. The heatmap contains 30 days x 12 two-hour buckets, and focus sessions below it use the same backend snapshot.
+
+The first deployment should clear seeded data after making a backup:
+
+```bash
+PYTHONPATH=/opt/408-dashboard/current /opt/408-dashboard/venv/bin/python /opt/408-dashboard/current/scripts/clear_demo_data.py \
+  --database /opt/408-dashboard/shared/data/dashboard.sqlite3 \
+  --backup-dir /opt/408-dashboard/shared/backups
+```
+
 The environment file must define `DASHBOARD_SECRET_KEY`, `DASHBOARD_ADMIN_PASSWORD`, `DASHBOARD_DATABASE=/opt/408-dashboard/shared/data/dashboard.sqlite3`, `DASHBOARD_HOST=127.0.0.1`, `DASHBOARD_PORT=43127`, `COOKIE_SECURE=1`, and `TZ=Asia/Shanghai`.
