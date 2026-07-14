@@ -21,10 +21,15 @@ def test_dashboard_colors_follow_focus_state_except_score_deltas():
 
 def test_heatmap_scale_and_current_time_art_are_fixed():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    javascript = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
     image = ROOT / "app" / "static" / "current-time-art.jpg"
 
     assert image.is_file()
-    assert ".heat-cell { width:75%;" in css
+    assert ".heat-grid" in css and "gap:2.25px; width:75%" in css
+    assert ".heat-cell { min-width:0; aspect-ratio:1" in css
+    assert "user-select:none" in css
+    assert ".heat-cell.selected" not in css
+    assert 'classList.add("selected")' not in javascript
     assert 'background:url("current-time-art.jpg") right center/auto 100% no-repeat' in css
     assert "right:8px" in css
     assert "opacity:.8" in css

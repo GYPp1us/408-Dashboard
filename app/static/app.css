@@ -95,14 +95,14 @@ button { cursor:pointer; }
 .heat-legend i { width:9px; height:9px; border-radius:2px; background:var(--heat-empty); }
 .heat-legend i:nth-child(2){background:var(--heat-l1)}.heat-legend i:nth-child(3){background:var(--heat-l2)}.heat-legend i:nth-child(4){background:var(--heat-l3)}.heat-legend i:nth-child(5){background:var(--heat-l4)}
 .heatmap { display:grid; grid-template-columns:30px minmax(0,1fr); gap:7px; margin-top:12px; }
-.heat-hours { display:grid; grid-template-rows:repeat(12,1fr); gap:3px; color:#96a19b; font-size:10px; text-align:right; }
+.heat-hours { display:grid; grid-template-rows:repeat(12,1fr); gap:2.25px; color:#96a19b; font-size:10px; text-align:right; }
 .heat-hours span { transform:translateY(-2px); }
-.heat-grid { display:grid; grid-template-columns:repeat(30,minmax(0,1fr)); grid-template-rows:repeat(12,1fr); gap:3px; width:100%; }
-.heat-cell { width:75%; min-width:0; aspect-ratio:1; align-self:center; justify-self:center; border-radius:2px; background:var(--heat-empty); cursor:pointer; }
+.heat-grid { display:grid; grid-template-columns:repeat(30,minmax(0,1fr)); grid-template-rows:repeat(12,1fr); gap:2.25px; width:75%; }
+.heat-cell { min-width:0; aspect-ratio:1; border-radius:2px; background:var(--heat-empty); cursor:pointer; user-select:none; -webkit-user-select:none; }
 .heat-cell.l1{background:var(--heat-l1)}.heat-cell.l2{background:var(--heat-l2)}.heat-cell.l3{background:var(--heat-l3)}.heat-cell.l4{background:var(--heat-l4)}
-.heat-cell:hover,.heat-cell.selected { outline:2px solid var(--accent); outline-offset:1px; }
+.heat-cell:hover { outline:2px solid var(--accent); outline-offset:1px; }
 .heat-days { display:grid; grid-template-columns:30px minmax(0,1fr); gap:7px; margin-top:5px; color:#96a19b; font-size:10px; }
-.heat-days > div { display:flex; justify-content:space-between; }
+.heat-days > div { display:flex; justify-content:space-between; width:75%; }
 .detail-note,.setting-note { color:var(--muted); font-size:11px; }
 .metric-table { width:100%; border-collapse:collapse; font-size:12px; }
 .metric-table th,.metric-table td { padding:9px 0; border-bottom:1px solid #ecefed; text-align:left; }

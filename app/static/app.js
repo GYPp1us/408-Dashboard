@@ -180,8 +180,6 @@
     };
     grid.innerHTML = Array.from({ length: 12 }, (_, bucket) => heatmap.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, bucket)).join("")).join("");
     grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
-      grid.querySelectorAll(".selected").forEach((selected) => selected.classList.remove("selected"));
-      cell.classList.add("selected");
       $("#heat-detail").textContent = cell.dataset.detail;
     }));
   }
