@@ -46,3 +46,24 @@ def test_logout_clears_authenticated_session(client):
 
     assert response.status_code == 302
     assert client.get("/").status_code == 302
+
+
+def test_guest_dashboard_needs_no_password_and_admin_switch_requires_login(client):
+    response = client.get("/guest")
+
+    assert response.status_code == 200
+    assert client.get("/api/dashboard").status_code == 200
+    admin_switch = client.get("/admin")
+    assert admin_switch.status_code == 302
+    assert admin_switch.headers["Location"].startswith("/login?")
+
+
+def test_authenticated_admin_can_switch_to_guest_and_back(client):
+    client.post("/login", data={"password": "test-password"})
+
+    assert client.get("/guest").status_code == 200
+    response = client.get("/admin")
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/")
+    assert client.get("/").status_code == 200

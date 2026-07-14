@@ -61,6 +61,21 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "不限时专注" not in javascript
 
 
+def test_guest_dashboard_replaces_controls_with_today_summary(authenticated_client):
+    html = authenticated_client.get("/guest").get_data(as_text=True)
+
+    assert 'data-role="guest"' in html
+    assert "本日总结" in html
+    assert 'id="guest-today-total"' in html
+    assert 'id="guest-subject-list"' in html
+    assert 'href="/admin"' in html
+    assert 'id="focus-modes"' not in html
+    assert 'id="end-focus"' not in html
+    assert 'id="open-quick-score"' not in html
+    assert 'id="quick-score-modal"' not in html
+    assert 'href="/settings"' not in html
+
+
 def test_focus_page_uses_single_dashboard_route(authenticated_client):
     response = authenticated_client.get("/focus")
 

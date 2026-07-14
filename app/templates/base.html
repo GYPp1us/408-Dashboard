@@ -6,18 +6,18 @@
   <title>{% block title %}408 Focus Console{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
-<body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}">
+<body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}" data-role="{{ 'guest' if is_guest else 'admin' }}">
   <div class="app-shell">
     <header class="status-bar">
       <div class="status-title"><i></i><strong>408 Focus Console</strong><span id="today-date" class="console-date">读取中</span></div>
       <div class="exam-countdown"><small>距考研</small><strong id="exam-days">-- 天</strong><span id="exam-clock">--:--:--</span></div>
       <div class="score-board"><small>近期模拟考</small><div class="score-window"><div id="score-track" class="score-track"><div class="score-row"><span>正在读取成绩</span><b>-- / --</b><em>--</em></div></div></div></div>
       <div class="today-study"><small>今日有效学习</small><strong id="today-study">00:00 / 08:00</strong><span id="today-progress">完成度 0%</span></div>
-      <div class="current-state"><span id="state-dot" class="state-dot"></span><span id="current-state">准备学习</span><button id="open-quick-score" class="quick-score-trigger" type="button" title="快速录入模拟成绩（Ctrl+N）">＋ 成绩</button><a class="settings-link" href="{{ url_for('settings_page') }}" title="打开设置">设置</a></div>
+      <div class="current-state"><span id="state-dot" class="state-dot"></span><span id="current-state">准备学习</span>{% if is_guest %}<span class="guest-badge">访客</span><a class="role-switch" href="{{ url_for('switch_admin') }}" title="切换到管理员">管理员</a>{% else %}<a class="role-switch" href="{{ url_for('guest_dashboard') }}" title="切换到访客面板">访客</a><button id="open-quick-score" class="quick-score-trigger" type="button" title="快速录入模拟成绩（Ctrl+N）">＋ 成绩</button><a class="settings-link" href="{{ url_for('settings_page') }}" title="打开设置">设置</a>{% endif %}</div>
     </header>
     <main class="app-main">{% block content %}{% endblock %}</main>
   </div>
-  <dialog id="quick-score-modal" class="quick-score-dialog" aria-labelledby="quick-score-title">
+  {% if not is_guest %}<dialog id="quick-score-modal" class="quick-score-dialog" aria-labelledby="quick-score-title">
     <div class="quick-score-head"><div><small>QUICK ENTRY</small><h2 id="quick-score-title">录入模拟成绩</h2></div><button id="close-quick-score" class="modal-close" type="button" title="关闭" aria-label="关闭">×</button></div>
     <form id="quick-score-form" class="quick-score-form">
       <div class="quick-score-fields">
@@ -29,7 +29,7 @@
       <datalist id="quick-score-subjects"><option value="408"></option><option value="数学"></option><option value="英语"></option><option value="政治"></option></datalist>
       <div class="quick-score-actions"><span>Ctrl + N</span><button class="primary" type="submit">保存成绩</button></div>
     </form>
-  </dialog>
+  </dialog>{% endif %}
   <div id="toast" class="toast" role="status"></div>
   <script src="{{ url_for('static', filename='vendor/gsap.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/Draggable.min.js') }}"></script>

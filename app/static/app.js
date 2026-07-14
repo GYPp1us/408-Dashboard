@@ -53,6 +53,7 @@
     const today = data.today_focus || { seconds: 0, count: 0 };
     $("#today-study").textContent = `${formatSeconds(today.seconds)} / 08:00`;
     $("#today-progress").textContent = `完成度 ${Math.min(100, Math.round((today.seconds / 28800) * 100))}%`;
+    $("#focus-today")?.replaceChildren(document.createTextNode(`${formatSeconds(today.seconds)} / 08:00`));
     const active = data.focus?.active;
     $("#current-state").textContent = active ? `专注中 · ${active.subject}` : "准备学习";
     $("#state-dot").classList.toggle("state-dot-active", Boolean(active));
@@ -196,6 +197,26 @@
     const target = $("#recent-focus");
     if (!target) return;
     target.innerHTML = sessions.length ? sessions.slice(0, 8).map((item) => `<div class="recent-item"><b>${escapeHtml(item.subject)} · 专注</b><small>${new Date(item.started_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · ${item.status === "active" ? "进行中" : "已完成"}</small></div>`).join("") : '<div class="loading-row">暂无专注记录。</div>';
+  }
+
+  function renderGuestSummary(data) {
+    const totalTarget = $("#guest-today-total");
+    if (!totalTarget) return;
+    const today = data.today_focus || { seconds: 0, count: 0 };
+    totalTarget.textContent = formatSeconds(today.seconds);
+    $("#guest-today-target").textContent = `8 小时目标 · ${Math.min(100, Math.round((today.seconds / 28800) * 100))}%`;
+    $("#guest-today-count").textContent = String(today.count || 0);
+    $("#guest-today-state").textContent = data.focus?.active ? `专注中` : "空闲";
+    const totals = new Map();
+    (data.focus?.today || []).forEach((item) => {
+      const startedAt = Date.parse(item.started_at);
+      const endedAt = item.ended_at ? Date.parse(item.ended_at) : Date.now();
+      totals.set(item.subject, (totals.get(item.subject) || 0) + Math.max(0, Math.floor((endedAt - startedAt) / 1000)));
+    });
+    const target = $("#guest-subject-list");
+    target.innerHTML = totals.size
+      ? [...totals.entries()].sort((left, right) => right[1] - left[1]).map(([subject, seconds]) => `<div><span>${escapeHtml(subject)}</span><b>${formatSeconds(seconds)}</b></div>`).join("")
+      : '<div class="loading-row">今日暂无专注记录。</div>';
   }
 
   function closeFocusSummary() {
@@ -481,7 +502,7 @@
   async function loadDashboard() {
     const data = await api("/api/dashboard");
     state.dashboard = data;
-    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap); renderScoreChart(data.score_history); renderRecentFocus(data.focus.recent);
+    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap); renderScoreChart(data.score_history); renderRecentFocus(data.focus.recent); renderGuestSummary(data);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
   }
@@ -578,6 +599,7 @@
 
   function bindQuickScore() {
     const modal = $("#quick-score-modal");
+    if (!modal) return;
     $("#open-quick-score")?.addEventListener("click", openQuickScore);
     $("#close-quick-score")?.addEventListener("click", closeQuickScore);
     $("#quick-score-form")?.addEventListener("submit", submitScoreForm);

@@ -108,3 +108,19 @@ def test_settings_patch_validates_time_values(authenticated_client):
 
     assert response.status_code == 400
     assert response.get_json() == {"error": "invalid_time:lunch_start"}
+
+
+def test_guest_can_read_dashboard_but_cannot_mutate_data(client):
+    assert client.get("/guest").status_code == 200
+    assert client.get("/api/dashboard").status_code == 200
+
+    focus = client.post("/api/focus/start", json={"subject": "数学二轮", "mode": "专注", "planned_minutes": 0})
+    score = client.post("/api/scores", json={"subject": "数学", "score": 80, "target": 100})
+    settings = client.get("/api/settings")
+
+    assert focus.status_code == 403
+    assert focus.get_json() == {"error": "guest_read_only"}
+    assert score.status_code == 403
+    assert score.get_json() == {"error": "guest_read_only"}
+    assert settings.status_code == 403
+    assert settings.get_json() == {"error": "guest_read_only"}

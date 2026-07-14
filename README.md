@@ -24,6 +24,7 @@ node --check app/static/app.js
 ## Production layout
 
 - URL: `https://platform.arcol.site`
+- Public read-only guest panel: `https://platform.arcol.site/guest`
 - App upstream: `127.0.0.1:43127`
 - Deploy root: `/opt/408-dashboard`
 - Current release: `/opt/408-dashboard/current`

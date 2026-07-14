@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta, timezone
 import re
 
-from flask import jsonify, redirect, render_template, request, url_for
+from flask import jsonify, redirect, render_template, request, session, url_for
 
-from .auth import login_required
+from .auth import admin_required, is_guest, login_required
 from .db import connect, get_settings, list_focus_modes, list_latest_scores, list_plans, list_scores
 from .services import aggregate_focus_heatmap, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
 
@@ -62,7 +62,17 @@ def register_routes(app):
     @app.get("/")
     @login_required
     def dashboard():
-        return render_template("dashboard.html", page_name="home")
+        if is_guest():
+            return redirect(url_for("guest_dashboard"))
+        return render_template("dashboard.html", page_name="home", is_guest=False)
+
+    @app.get("/guest")
+    def guest_dashboard():
+        if session.get("authenticated") and not is_guest():
+            session["admin_authenticated"] = True
+        session["authenticated"] = True
+        session["role"] = "guest"
+        return render_template("dashboard.html", page_name="home", is_guest=True)
 
     @app.get("/focus")
     @login_required
@@ -70,9 +80,9 @@ def register_routes(app):
         return redirect(url_for("dashboard"))
 
     @app.get("/settings")
-    @login_required
+    @admin_required
     def settings_page():
-        return render_template("settings.html", page_name="settings")
+        return render_template("settings.html", page_name="settings", is_guest=False)
 
     @app.get("/api/dashboard")
     @login_required
@@ -116,7 +126,7 @@ def register_routes(app):
             connection.close()
 
     @app.post("/api/focus/start")
-    @login_required
+    @admin_required
     def start_focus():
         payload = request.get_json(silent=True) or {}
         subject = str(payload.get("subject", "")).strip()
@@ -153,7 +163,7 @@ def register_routes(app):
             connection.close()
 
     @app.post("/api/focus/end")
-    @login_required
+    @admin_required
     def end_focus():
         payload = request.get_json(silent=True) or {}
         session_id = payload.get("session_id")
@@ -172,7 +182,7 @@ def register_routes(app):
             connection.close()
 
     @app.route("/api/settings", methods=["GET", "PATCH"])
-    @login_required
+    @admin_required
     def settings_api():
         connection = connect(app.config["DATABASE"])
         try:
@@ -199,6 +209,8 @@ def register_routes(app):
     @app.route("/api/scores", methods=["GET", "POST"])
     @login_required
     def scores_api():
+        if request.method == "POST" and is_guest():
+            return jsonify(error="guest_read_only"), 403
         connection = connect(app.config["DATABASE"])
         try:
             if request.method == "POST":
@@ -219,6 +231,8 @@ def register_routes(app):
     @app.route("/api/plans", methods=["GET", "POST"])
     @login_required
     def plans_api():
+        if request.method == "POST" and is_guest():
+            return jsonify(error="guest_read_only"), 403
         connection = connect(app.config["DATABASE"])
         try:
             if request.method == "POST":
