@@ -89,12 +89,13 @@
     const grid = $("#heat-grid");
     if (!hours || !grid) return;
     hours.innerHTML = Array.from({ length: 12 }, (_, index) => `<span>${String(index * 2).padStart(2, "0")}</span>`).join("");
-    const max = Math.max(1, ...heatmap.flat());
-    grid.innerHTML = heatmap.flatMap((day, dayIndex) => day.map((minutes, bucket) => {
+    const max = Math.max(120, ...heatmap.flat());
+    const renderCell = (minutes, dayIndex, bucket) => {
       const level = minutes === 0 ? 0 : Math.min(4, Math.ceil((minutes / max) * 4));
       const startHour = bucket * 2;
       return `<i class="heat-cell${level ? ` l${level}` : ""}" data-detail="最近第 ${30 - dayIndex} 天 ${String(startHour).padStart(2, "0")}:00-${String(startHour + 2).padStart(2, "0")}:00 · ${minutes} 分钟" title="${minutes} 分钟"></i>`;
-    })).join("");
+    };
+    grid.innerHTML = Array.from({ length: 12 }, (_, bucket) => heatmap.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, bucket)).join("")).join("");
     grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
       grid.querySelectorAll(".selected").forEach((selected) => selected.classList.remove("selected"));
       cell.classList.add("selected");

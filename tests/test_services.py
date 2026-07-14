@@ -55,6 +55,17 @@ def test_heatmap_returns_30_days_and_24_hours():
     assert sum(sum(day) for day in heatmap) == 120
 
 
+def test_heatmap_keeps_day_and_two_hour_bucket_aligned():
+    from app.services import aggregate_focus_heatmap
+
+    now = datetime(2026, 7, 14, 20, 0, tzinfo=timezone.utc)
+    start = datetime(2026, 7, 13, 16, 0, tzinfo=timezone.utc)
+    heatmap = aggregate_focus_heatmap([(start, start + timedelta(minutes=1))], now)
+
+    assert heatmap[28][8] == 1
+    assert sum(sum(day) for day in heatmap) == 1
+
+
 def test_today_summary_counts_only_sessions_in_local_day():
     from app.services import summarize_today_focus
 
