@@ -1,6 +1,12 @@
 (() => {
   const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, scoreChart: null, summaryTimer: null, summaryCharts: [], starting: false, ending: false };
+  const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const $ = (selector) => document.querySelector(selector);
+  if (window.Chart) {
+    Chart.defaults.font.family = appFontFamily;
+    Chart.defaults.font.size = 14;
+    Chart.defaults.font.weight = 500;
+  }
   const formatSeconds = (total) => {
     const value = Math.max(0, Math.floor(total));
     return [Math.floor(value / 3600), Math.floor((value % 3600) / 60), value % 60].map((part) => String(part).padStart(2, "0")).join(":");
@@ -331,11 +337,11 @@
         animation: false,
         interaction: { mode: "index", intersect: false },
         scales: {
-          x: { grid: { display: false }, ticks: { color: "#758079", font: { size: 9 } } },
-          y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: "#ebefed" }, ticks: { color: "#758079", font: { size: 9 }, callback: (value) => `${value}%` } },
+          x: { grid: { display: false }, ticks: { color: "#758079", font: { size: 11 } } },
+          y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: "#ebefed" }, ticks: { color: "#758079", font: { size: 11 }, callback: (value) => `${value}%` } },
         },
         plugins: {
-          legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 7, color: "#5f6b66", font: { size: 9 } } },
+          legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 7, color: "#5f6b66", font: { size: 11 } } },
           tooltip: {
             enabled: false,
             external: ({ tooltip }) => {
