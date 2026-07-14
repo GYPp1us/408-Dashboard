@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, timer: null, countdown: null, starting: false };
+  const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, starting: false };
   const $ = (selector) => document.querySelector(selector);
   const formatSeconds = (total) => {
     const value = Math.max(0, Math.floor(total));
@@ -55,14 +55,26 @@
   }
 
   function renderWindows(data) {
-    const setWindow = (prefix, value) => {
-      $(`#${prefix}-clock`).textContent = formatSeconds(value.remaining_seconds);
-      $(`#${prefix}-remaining`)?.replaceChildren(document.createTextNode(formatSeconds(value.remaining_seconds)));
-      $(`#${prefix}-percent`).textContent = `${Math.round(value.progress * 100)}%`;
-      $(`#${prefix}-progress`).style.width = `${Math.round(value.progress * 100)}%`;
+    const windows = [
+      ["lunch", data.windows.morning],
+      ["library", data.windows.library],
+    ];
+    const fetchedAt = Date.now();
+    const setWindow = (prefix, value, endAt) => {
+      const now = Date.now();
+      const startAt = endAt - Number(value.total_seconds || 0) * 1000;
+      const progress = Math.min(1, Math.max(0, (now - startAt) / Math.max(1, endAt - startAt)));
+      const remaining = Math.max(0, Math.ceil((endAt - now) / 1000));
+      $(`#${prefix}-clock`).textContent = formatSeconds(remaining);
+      $(`#${prefix}-remaining`)?.replaceChildren(document.createTextNode(formatSeconds(remaining)));
+      $(`#${prefix}-percent`).textContent = `${Math.round(progress * 100)}%`;
+      $(`#${prefix}-progress`).style.width = `${Math.round(progress * 100)}%`;
     };
-    setWindow("lunch", data.windows.morning);
-    setWindow("library", data.windows.library);
+    window.clearInterval(state.windowCountdown);
+    windows.forEach(([prefix, value]) => setWindow(prefix, value, fetchedAt + Number(value.remaining_seconds || 0) * 1000));
+    state.windowCountdown = window.setInterval(() => {
+      windows.forEach(([prefix, value]) => setWindow(prefix, value, fetchedAt + Number(value.remaining_seconds || 0) * 1000));
+    }, 1000);
   }
 
   function renderTicker(scores) {
