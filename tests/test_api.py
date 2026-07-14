@@ -40,6 +40,7 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
     assert {"now", "windows", "focus", "today_focus", "heatmap", "scores", "score_history", "plans"} <= payload.keys()
     assert len(payload["heatmap"]) == 30
     assert all(len(day) == 12 for day in payload["heatmap"])
+    assert payload["focus"]["today"] == []
 
 
 def test_dashboard_score_history_keeps_all_submissions(authenticated_client):
@@ -64,6 +65,8 @@ def test_start_and_end_focus_session(authenticated_client):
 
     active = authenticated_client.get("/api/focus")
     assert active.get_json()["active"]["id"] == session_id
+    dashboard = authenticated_client.get("/api/dashboard").get_json()
+    assert dashboard["focus"]["today"][0]["id"] == session_id
 
     ended = authenticated_client.post("/api/focus/end", json={"session_id": session_id})
     assert ended.status_code == 200

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import re
 
 from flask import jsonify, redirect, render_template, request, url_for
@@ -41,6 +41,23 @@ def _heatmap_sessions(connection, now: datetime) -> list[tuple[datetime, datetim
     return sessions
 
 
+def _today_focus_rows(connection, now: datetime) -> list[dict]:
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    rows = connection.execute("SELECT * FROM focus_sessions ORDER BY started_at").fetchall()
+    result = []
+    for row in rows:
+        payload = dict(row)
+        start = datetime.fromisoformat(payload["started_at"]).astimezone(now.tzinfo)
+        end = datetime.fromisoformat(payload["ended_at"]).astimezone(now.tzinfo) if payload["ended_at"] else now
+        if end <= day_start or start >= day_end:
+            continue
+        payload["started_at"] = max(start, day_start).isoformat()
+        payload["ended_at"] = min(end, day_end).isoformat() if payload["ended_at"] else None
+        result.append(payload)
+    return result
+
+
 def register_routes(app):
     @app.get("/")
     @login_required
@@ -78,7 +95,7 @@ def register_routes(app):
                 "exam": {"date": settings["exam_date"], "remaining_seconds": seconds_until_exam(now, settings["exam_date"])},
                 "today_focus": summarize_today_focus(sessions, now),
                 "windows": windows,
-                "focus": {"active": _session_payload(dict(active_row) if active_row else None), "recent": _focus_rows(connection)},
+                "focus": {"active": _session_payload(dict(active_row) if active_row else None), "recent": _focus_rows(connection), "today": _today_focus_rows(connection, now)},
                 "focus_modes": list_focus_modes(connection),
                 "heatmap": aggregate_focus_heatmap(sessions, now),
                 "scores": scores,

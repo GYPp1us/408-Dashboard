@@ -29,6 +29,13 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "drag-action" in html
     assert "score-chart" in html
     assert "近期专注记录" in html
+    assert "lunch-start-label" in html
+    assert "library-history" in html
+    assert "focus-summary" in html
+    assert "session-goal-chart" in html
+    assert "today-subject-chart" in html
+    assert "summary-today-total" in html
+    assert "rest-timer" in html
     assert "长期计划" not in html
     assert "时间窗口、专注状态和长期数据在同一个工作面完成过渡。" not in html
     assert "/static/vendor/chart.umd.js" in html

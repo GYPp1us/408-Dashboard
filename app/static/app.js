@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, scoreChart: null, starting: false, ending: false };
+  const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, scoreChart: null, summaryTimer: null, summaryCharts: [], starting: false, ending: false };
   const $ = (selector) => document.querySelector(selector);
   const formatSeconds = (total) => {
     const value = Math.max(0, Math.floor(total));
@@ -54,6 +54,36 @@
     state.clock = window.setInterval(tick, 1000);
   }
 
+  function clockMinutes(value) {
+    const [hours, minutes] = String(value || "00:00").split(":").map(Number);
+    return hours * 60 + minutes;
+  }
+
+  function dateMinutes(value) {
+    const date = new Date(value);
+    const reference = new Date(state.dashboard?.now || Date.now());
+    const dayStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
+    if (date < dayStart) return 0;
+    if (date >= new Date(dayStart.getTime() + 86400000)) return 1440;
+    return date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
+  }
+
+  function renderWindowHistory(prefix, value, sessions) {
+    const target = $(`#${prefix}-history`);
+    if (!target) return;
+    const start = clockMinutes(value.start);
+    const end = clockMinutes(value.end);
+    const total = Math.max(1, end - start);
+    target.innerHTML = (sessions || []).map((session) => {
+      const sessionStart = Math.max(start, dateMinutes(session.started_at));
+      const sessionEnd = Math.min(end, session.ended_at ? dateMinutes(session.ended_at) : dateMinutes(Date.now()));
+      if (sessionEnd <= sessionStart) return "";
+      const left = ((sessionStart - start) / total) * 100;
+      const width = ((sessionEnd - sessionStart) / total) * 100;
+      return `<span style="left:${left}%;width:${width}%" title="${escapeHtml(session.subject)} · ${Math.max(1, Math.round(sessionEnd - sessionStart))} 分钟"></span>`;
+    }).join("");
+  }
+
   function renderWindows(data) {
     const windows = [
       ["lunch", data.windows.morning],
@@ -69,6 +99,9 @@
       $(`#${prefix}-remaining`)?.replaceChildren(document.createTextNode(formatSeconds(remaining)));
       $(`#${prefix}-percent`).textContent = `${Math.round(progress * 100)}%`;
       $(`#${prefix}-progress`).style.width = `${Math.round(progress * 100)}%`;
+      $(`#${prefix}-start-label`).textContent = value.start;
+      $(`#${prefix}-end-label`).textContent = value.end;
+      renderWindowHistory(prefix, value, state.dashboard?.focus?.today || []);
     };
     window.clearInterval(state.windowCountdown);
     windows.forEach(([prefix, value]) => setWindow(prefix, value, fetchedAt + Number(value.remaining_seconds || 0) * 1000));
@@ -115,6 +148,60 @@
     const target = $("#recent-focus");
     if (!target) return;
     target.innerHTML = sessions.length ? sessions.slice(0, 8).map((item) => `<div class="recent-item"><b>${escapeHtml(item.subject)} · 专注</b><small>${new Date(item.started_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · ${item.status === "active" ? "进行中" : "已完成"}</small></div>`).join("") : '<div class="loading-row">暂无专注记录。</div>';
+  }
+
+  function closeFocusSummary() {
+    window.clearInterval(state.summaryTimer);
+    state.summaryTimer = null;
+    state.summaryCharts.forEach((chart) => chart.destroy());
+    state.summaryCharts = [];
+    const recent = $("#recent-focus-view");
+    const summary = $("#focus-summary");
+    if (recent) recent.hidden = false;
+    if (summary) summary.hidden = true;
+  }
+
+  function showFocusSummary(session, todaySessions) {
+    const recent = $("#recent-focus-view");
+    const summary = $("#focus-summary");
+    if (!recent || !summary || !window.Chart) return;
+    closeFocusSummary();
+    recent.hidden = true;
+    summary.hidden = false;
+    const duration = Math.max(0, Math.floor((Date.parse(session.ended_at) - Date.parse(session.started_at)) / 1000));
+    $("#summary-session-time").textContent = formatSeconds(duration);
+    const gap = 3600 - duration;
+    $("#summary-goal-gap").textContent = gap > 0 ? `距 1 小时还差 ${Math.ceil(gap / 60)} 分钟` : gap < 0 ? `已达标 · 超出 ${Math.floor(Math.abs(gap) / 60)} 分钟` : "已达成 1 小时目标";
+    state.summaryCharts.push(new Chart($("#session-goal-chart"), {
+      type: "doughnut",
+      data: { datasets: [{ data: [Math.min(duration, 3600), Math.max(0, gap)], backgroundColor: ["#119c8a", "#e5ece8"], borderWidth: 0 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: "72%", plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 350 } },
+    }));
+    const totals = new Map();
+    (todaySessions || []).forEach((item) => {
+      const seconds = Math.max(0, Math.floor(((item.ended_at ? Date.parse(item.ended_at) : Date.now()) - Date.parse(item.started_at)) / 1000));
+      totals.set(item.subject, (totals.get(item.subject) || 0) + seconds);
+    });
+    if (!totals.size) totals.set(session.subject, duration);
+    const palette = ["#119c8a", "#e9573f", "#3f78c5", "#d48a25", "#8a5bb7", "#2c9a67"];
+    const subjects = [...totals.keys()];
+    const values = [...totals.values()];
+    $("#summary-today-total").textContent = formatSeconds(values.reduce((sum, value) => sum + value, 0));
+    state.summaryCharts.push(new Chart($("#today-subject-chart"), {
+      type: "doughnut",
+      data: { labels: subjects, datasets: [{ data: values, backgroundColor: subjects.map((_, index) => palette[index % palette.length]), borderColor: "#fff", borderWidth: 2 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: "58%", plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => `${context.label} ${formatSeconds(context.raw)}` } } }, animation: { duration: 350 } },
+    }));
+    const total = Math.max(1, values.reduce((sum, value) => sum + value, 0));
+    $("#today-subject-legend").innerHTML = subjects.map((subject, index) => `<span><i style="background:${palette[index % palette.length]}"></i>${escapeHtml(subject)} ${Math.round((values[index] / total) * 100)}%</span>`).join("");
+    const restStartedAt = Date.now();
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - restStartedAt) / 1000);
+      $("#rest-timer").textContent = formatSeconds(elapsed);
+      if (elapsed >= 900) closeFocusSummary();
+    };
+    tick();
+    state.summaryTimer = window.setInterval(tick, 1000);
   }
 
   function formatScoreDate(value) {
@@ -281,7 +368,8 @@
     track.classList.add("armed");
     try {
       const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ subject: track.dataset.subject, mode: "专注", planned_minutes: 0, client_token: crypto.randomUUID() }) });
-      state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session } };
+      const today = state.dashboard?.focus?.today || [];
+      state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session, today: [...today.filter((item) => item.id !== session.session.id), session.session] } };
       applyFocusState(session.session, true);
       showToast("专注已启动");
     } catch (error) {
@@ -301,6 +389,7 @@
 
   function applyFocusState(active, animate = false) {
     if (animate) animateLayout();
+    if (active) closeFocusSummary();
     document.body.classList.toggle("is-focusing", Boolean(active));
     $("#idle-mode-view").hidden = Boolean(active);
     $("#active-mode-view").hidden = !active;
@@ -342,8 +431,9 @@
     const active = state.dashboard?.focus?.active;
     if (!active) return false;
     try {
-      await api("/api/focus/end", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
+      const result = await api("/api/focus/end", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
       await loadDashboard();
+      showFocusSummary(result.session, state.dashboard?.focus?.today || []);
       showToast("本段专注已结束");
       return true;
     } catch (error) { showToast(error.message); }
@@ -402,6 +492,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
+    $("#close-focus-summary")?.addEventListener("click", closeFocusSummary);
     bindSettingsForms();
     try {
       if (document.body.dataset.page === "settings") await loadSettings();

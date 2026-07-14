@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS plans (
 DEFAULT_SETTINGS = {
     "morning_start": "08:00",
     "lunch_start": "12:00",
-    "library_open": "15:00",
+    "library_open": "13:30",
     "library_close": "22:00",
     "exam_date": "2026-12-26",
     "timezone": "Asia/Shanghai",

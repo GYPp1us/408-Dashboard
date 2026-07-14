@@ -11,6 +11,7 @@ def test_database_seeds_default_settings_and_modes(tmp_path):
 
     assert settings["morning_start"] == "08:00"
     assert settings["lunch_start"] == "12:00"
+    assert settings["library_open"] == "13:30"
     assert settings["library_close"] == "22:00"
     assert [mode["duration_minutes"] for mode in modes] == [0, 0, 0, 0]
     assert {mode["name"] for mode in modes} == {"专注"}
