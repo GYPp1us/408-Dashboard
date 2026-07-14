@@ -79,6 +79,7 @@ button { cursor:pointer; }
 .drag-launch.armed,.drag-action.armed { box-shadow:0 0 0 3px rgba(17,156,138,.18); }
 .analytics-grid,.bottom-grid,.focus-data-grid,.settings-data-grid { display:grid; grid-template-columns:1.55fr 1fr; gap:10px; margin-top:10px; }
 .bottom-grid,.focus-data-grid,.settings-data-grid { grid-template-columns:1fr 1fr; }
+.settings-data-grid { grid-template-columns:1fr; }
 .subsection-heading { display:flex; align-items:center; justify-content:space-between; margin-top:16px; padding-top:12px; border-top:1px solid var(--line); }
 .subsection-heading h3 { margin:0; font-size:11px; }
 .subsection-heading span,.subsection-heading a { color:var(--muted); font-size:9px; }
@@ -107,6 +108,12 @@ button { cursor:pointer; }
 .plan-item { display:grid; grid-template-columns:88px 1fr 70px; align-items:center; gap:10px; }
 .plan-item time,.recent-item small { color:var(--muted); font-size:9px; }.plan-item strong,.recent-item b { font-size:10px; }.plan-item span { color:var(--teal-deep); font-size:9px; text-align:right; }
 .loading-row { padding:12px 0; color:var(--muted); font-size:10px; }
+.score-chart-wrap { position:relative; height:250px; margin-top:10px; }
+.score-chart-wrap canvas { display:block; width:100% !important; height:100% !important; }
+.chart-empty { display:grid; height:100%; place-items:center; color:var(--muted); font-size:10px; }
+.chart-detail { display:flex; flex-wrap:wrap; align-items:center; gap:7px 12px; min-height:28px; margin-top:7px; color:var(--muted); font-size:9px; }
+.chart-detail strong { color:var(--ink); }
+.chart-detail span { color:var(--teal-deep); }
 .focus-layout { display:grid; grid-template-columns:1.35fr .65fr; gap:10px; }
 .focus-main { display:flex; flex-direction:column; justify-content:space-between; min-height:310px; padding:22px; border:1px solid #c9ebe3; border-radius:8px; background:#f1fbf8; }
 .focus-kicker { color:var(--teal-deep); font-size:10px; font-weight:750; letter-spacing:.8px; }.focus-main h2 { margin-top:12px; font-size:24px; }.focus-main > div > strong { display:block; margin-top:24px; color:var(--teal-deep); font-size:62px; line-height:1; }

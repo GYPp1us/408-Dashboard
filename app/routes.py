@@ -4,7 +4,7 @@ import re
 from flask import jsonify, redirect, render_template, request, url_for
 
 from .auth import login_required
-from .db import connect, get_settings, list_focus_modes, list_latest_scores, list_plans
+from .db import connect, get_settings, list_focus_modes, list_latest_scores, list_plans, list_scores
 from .services import aggregate_focus_heatmap, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
 
 
@@ -71,6 +71,7 @@ def register_routes(app):
             active_row = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").fetchone()
             sessions = _heatmap_sessions(connection, now)
             scores = score_metrics(list_latest_scores(connection))
+            score_history = score_metrics(list_scores(connection))
             plans = list_plans(connection)
             return jsonify({
                 "now": now.isoformat(),
@@ -81,6 +82,7 @@ def register_routes(app):
                 "focus_modes": list_focus_modes(connection),
                 "heatmap": aggregate_focus_heatmap(sessions, now),
                 "scores": scores,
+                "score_history": score_history,
                 "plans": plans,
             })
         finally:

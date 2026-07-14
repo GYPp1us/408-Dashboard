@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, starting: false, ending: false };
+  const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, scoreChart: null, starting: false, ending: false };
   const $ = (selector) => document.querySelector(selector);
   const formatSeconds = (total) => {
     const value = Math.max(0, Math.floor(total));
@@ -110,16 +110,120 @@
       : `<div><span>${escapeHtml(item.subject)}</span><b>${item.score} / ${item.target} · ${Math.round(item.completion * 100)}%</b></div>`).join("");
   }
 
-  function renderPlans(plans, selector = "#plan-list") {
-    const target = $(selector);
-    if (!target) return;
-    target.innerHTML = plans.length ? plans.map((plan) => `<div class="plan-item"><time>${escapeHtml(plan.week_start)}</time><strong>${escapeHtml(plan.subject)} · ${escapeHtml(plan.title)}</strong><span>${Math.round((plan.completed_minutes / plan.target_minutes) * 100)}%</span></div>`).join("") : '<div class="loading-row">暂无长期计划。</div>';
-  }
-
   function renderRecentFocus(sessions) {
     const target = $("#recent-focus");
     if (!target) return;
     target.innerHTML = sessions.length ? sessions.slice(0, 8).map((item) => `<div class="recent-item"><b>${escapeHtml(item.subject)} · 专注</b><small>${new Date(item.started_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · ${item.status === "active" ? "进行中" : "已完成"}</small></div>`).join("") : '<div class="loading-row">暂无专注记录。</div>';
+  }
+
+  function formatScoreDate(value) {
+    const date = new Date(`${value}T00:00:00`);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+  }
+
+  function renderScoreChart(history) {
+    const canvas = $("#score-chart");
+    const empty = $("#score-chart-empty");
+    const detail = $("#score-chart-detail");
+    if (!canvas || !empty || !detail || !window.Chart) return;
+    state.scoreChart?.destroy();
+    state.scoreChart = null;
+    const grouped = new Map();
+    (history || []).forEach((item) => {
+      const date = String(item.exam_date || "").slice(0, 10);
+      if (!date || !item.subject || Number(item.target) <= 0) return;
+      if (!grouped.has(date)) grouped.set(date, new Map());
+      grouped.get(date).set(item.subject, item);
+    });
+    const dates = [...grouped.keys()].sort().slice(-10);
+    if (!dates.length) {
+      canvas.hidden = true;
+      empty.hidden = false;
+      detail.textContent = "暂无模拟考数据。";
+      return;
+    }
+    canvas.hidden = false;
+    empty.hidden = true;
+    const subjects = [...new Set(dates.flatMap((date) => [...grouped.get(date).keys()]))];
+    const palette = ["#e9573f", "#119c8a", "#3f78c5", "#d48a25", "#8a5bb7", "#2c9a67", "#c45b8a", "#65727d"];
+    const datasets = subjects.map((subject, index) => ({
+      label: subject,
+      data: dates.map((date) => {
+        const item = grouped.get(date).get(subject);
+        return item ? Math.round((Number(item.score) / Number(item.target)) * 1000) / 10 : null;
+      }),
+      borderColor: palette[index % palette.length],
+      backgroundColor: palette[index % palette.length],
+      pointBackgroundColor: "#fff",
+      pointBorderWidth: 2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      borderWidth: 2,
+      tension: 0.28,
+      spanGaps: false,
+    }));
+    const maxValue = Math.max(100, ...datasets.flatMap((dataset) => dataset.data.filter((value) => value !== null)));
+    const crosshairPlugin = {
+      id: "scoreCrosshair",
+      afterDraw(chart) {
+        const active = chart.tooltip?.getActiveElements?.() || [];
+        if (!active.length) return;
+        const index = active[0].index;
+        const x = chart.scales.x.getPixelForValue(index);
+        const context = chart.ctx;
+        context.save();
+        context.strokeStyle = "rgba(23, 32, 38, .25)";
+        context.setLineDash([4, 4]);
+        context.beginPath();
+        context.moveTo(x, chart.chartArea.top);
+        context.lineTo(x, chart.chartArea.bottom);
+        context.stroke();
+        chart.data.datasets.forEach((dataset, datasetIndex) => {
+          if (dataset.data[index] === null) return;
+          const point = chart.getDatasetMeta(datasetIndex).data[index];
+          if (!point) return;
+          context.fillStyle = dataset.borderColor;
+          context.beginPath();
+          context.arc(point.x, point.y, 5, 0, Math.PI * 2);
+          context.fill();
+          context.fillStyle = "#fff";
+          context.beginPath();
+          context.arc(point.x, point.y, 2, 0, Math.PI * 2);
+          context.fill();
+        });
+        context.restore();
+      },
+    };
+    state.scoreChart = new Chart(canvas, {
+      type: "line",
+      data: { labels: dates.map(formatScoreDate), datasets },
+      plugins: [crosshairPlugin],
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: "#7a8583", font: { size: 9 } } },
+          y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: "#edf1ee" }, ticks: { color: "#7a8583", font: { size: 9 }, callback: (value) => `${value}%` } },
+        },
+        plugins: {
+          legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 7, color: "#56625f", font: { size: 9 } } },
+          tooltip: {
+            enabled: false,
+            external: ({ tooltip }) => {
+              if (!tooltip || tooltip.opacity === 0 || !tooltip.dataPoints?.length) {
+                detail.textContent = "将鼠标移到图表上查看当天各科成绩。";
+                return;
+              }
+              const date = dates[tooltip.dataPoints[0].dataIndex];
+              const items = [...grouped.get(date).values()];
+              detail.innerHTML = `<strong>${formatScoreDate(date)}</strong>${items.map((item) => `<span>${escapeHtml(item.subject)} ${Math.round((Number(item.score) / Number(item.target)) * 1000) / 10}% · ${item.score} / ${item.target}</span>`).join("")}`;
+            },
+          },
+        },
+      },
+    });
   }
 
   function renderModes(modes) {
@@ -176,6 +280,7 @@
     track.classList.add("armed");
     try {
       const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ subject: track.dataset.subject, mode: "专注", planned_minutes: 0, client_token: crypto.randomUUID() }) });
+      state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session } };
       applyFocusState(session.session, true);
       showToast("专注已启动");
     } catch (error) {
@@ -227,7 +332,7 @@
   async function loadDashboard() {
     const data = await api("/api/dashboard");
     state.dashboard = data;
-    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap); renderScores(data.scores); renderPlans(data.plans); renderRecentFocus(data.focus.recent);
+    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap); renderScoreChart(data.score_history); renderRecentFocus(data.focus.recent);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
   }
@@ -285,16 +390,14 @@
   }
 
   async function loadSettings() {
-    const [settings, scores, plans] = await Promise.all([api("/api/settings"), api("/api/scores"), api("/api/plans")]);
+    const [settings, scores] = await Promise.all([api("/api/settings"), api("/api/scores")]);
     Object.entries(settings.settings).forEach(([key, value]) => { const input = document.querySelector(`[name="${key}"]`); if (input) input.value = value; });
     renderScores(scores.scores.map((item) => ({ ...item, gap: item.target - item.score, completion: item.score / item.target })), "#settings-scores");
-    renderPlans(plans.plans, "#settings-plans");
   }
 
   function bindSettingsForms() {
     $("#settings-form")?.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/settings", { method: "PATCH", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); showToast("设置已保存"); } catch (error) { showToast(error.message); } });
     document.querySelector('[data-form="score"]')?.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/scores", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); event.currentTarget.reset(); await loadSettings(); showToast("成绩已添加"); } catch (error) { showToast(error.message); } });
-    document.querySelector('[data-form="plan"]')?.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/plans", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); event.currentTarget.reset(); await loadSettings(); showToast("计划已添加"); } catch (error) { showToast(error.message); } });
   }
 
   document.addEventListener("DOMContentLoaded", async () => {

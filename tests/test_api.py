@@ -37,9 +37,20 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
     payload = response.get_json()
 
     assert response.status_code == 200
-    assert {"now", "windows", "focus", "today_focus", "heatmap", "scores", "plans"} <= payload.keys()
+    assert {"now", "windows", "focus", "today_focus", "heatmap", "scores", "score_history", "plans"} <= payload.keys()
     assert len(payload["heatmap"]) == 30
     assert all(len(day) == 12 for day in payload["heatmap"])
+
+
+def test_dashboard_score_history_keeps_all_submissions(authenticated_client):
+    authenticated_client.post("/api/scores", json={"subject": "数学", "score": 80, "target": 100, "exam_date": "2026-07-01"})
+    authenticated_client.post("/api/scores", json={"subject": "英语", "score": 90, "target": 100, "exam_date": "2026-07-03"})
+    authenticated_client.post("/api/scores", json={"subject": "数学", "score": 85, "target": 100, "exam_date": "2026-07-05"})
+
+    payload = authenticated_client.get("/api/dashboard").get_json()
+
+    assert len(payload["score_history"]) == 3
+    assert len(payload["scores"]) == 2
 
 
 def test_start_and_end_focus_session(authenticated_client):
