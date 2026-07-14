@@ -65,7 +65,7 @@ button { cursor:pointer; }
 .section-block { margin-top:10px; }
 .section-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
 .section-heading > span,.section-heading > a { color:var(--muted); font-size:11px; }
-.dashboard-grid { display:grid; grid-template-columns:minmax(260px,.78fr) minmax(240px,.72fr) minmax(0,1.75fr); gap:10px; align-items:stretch; margin-top:10px; }
+.dashboard-grid { display:grid; grid-template-columns:minmax(260px,1.08fr) minmax(240px,1fr) minmax(0,40.5%); gap:10px; align-items:stretch; margin-top:10px; }
 .activity-panel,.score-panel,.mode-panel { min-height:540px; }
 .mode-panel { grid-column:1; grid-row:1; }
 .score-panel { grid-column:2; grid-row:1; }
@@ -94,14 +94,14 @@ button { cursor:pointer; }
 .heat-legend { display:flex; align-items:center; gap:4px; color:var(--muted); font-size:10px; }
 .heat-legend i { width:9px; height:9px; border-radius:2px; background:var(--heat-empty); }
 .heat-legend i:nth-child(2){background:var(--heat-l1)}.heat-legend i:nth-child(3){background:var(--heat-l2)}.heat-legend i:nth-child(4){background:var(--heat-l3)}.heat-legend i:nth-child(5){background:var(--heat-l4)}
-.heatmap { display:grid; grid-template-columns:30px minmax(0,1fr); gap:7px; width:calc(75% + 8px); margin-top:12px; }
+.heatmap { display:grid; grid-template-columns:30px minmax(0,1fr); gap:7px; width:100%; margin-top:12px; }
 .heat-hours { display:grid; grid-template-rows:repeat(12,1fr); gap:3.5px; color:#96a19b; font-size:10px; text-align:right; }
 .heat-hours span { transform:translateY(-2px); }
 .heat-grid { display:grid; grid-template-columns:repeat(30,minmax(0,1fr)); grid-template-rows:repeat(12,1fr); gap:3.5px; width:100%; }
 .heat-cell { min-width:0; aspect-ratio:1; border-radius:2px; background:var(--heat-empty); cursor:pointer; user-select:none; -webkit-user-select:none; }
 .heat-cell.l1{background:var(--heat-l1)}.heat-cell.l2{background:var(--heat-l2)}.heat-cell.l3{background:var(--heat-l3)}.heat-cell.l4{background:var(--heat-l4)}
 .heat-cell:hover { outline:2px solid var(--accent); outline-offset:1px; }
-.heat-days { display:grid; grid-template-columns:30px minmax(0,1fr); gap:7px; width:calc(75% + 8px); margin-top:5px; color:#96a19b; font-size:10px; }
+.heat-days { display:grid; grid-template-columns:30px minmax(0,1fr); gap:7px; width:100%; margin-top:5px; color:#96a19b; font-size:10px; }
 .heat-days > div { display:flex; justify-content:space-between; }
 .detail-note,.setting-note { color:var(--muted); font-size:11px; }
 .metric-table { width:100%; border-collapse:collapse; font-size:12px; }

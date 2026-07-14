@@ -25,7 +25,8 @@ def test_heatmap_scale_and_current_time_art_are_fixed():
     image = ROOT / "app" / "static" / "current-time-art.jpg"
 
     assert image.is_file()
-    assert ".heatmap" in css and "width:calc(75% + 8px)" in css
+    assert "minmax(0,40.5%)" in css
+    assert ".heatmap" in css and "width:100%" in css
     assert ".heat-grid" in css and "gap:3.5px; width:100%" in css
     assert ".heat-hours" in css and "gap:3.5px" in css
     assert ".heat-cell { min-width:0; aspect-ratio:1" in css
