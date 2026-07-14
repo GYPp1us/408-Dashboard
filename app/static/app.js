@@ -213,7 +213,7 @@
     $("#summary-goal-gap").textContent = gap > 0 ? `距 1 小时还差 ${Math.ceil(gap / 60)} 分钟` : gap < 0 ? `已达标 · 超出 ${Math.floor(Math.abs(gap) / 60)} 分钟` : "已达成 1 小时目标";
     state.summaryCharts.push(new Chart($("#session-goal-chart"), {
       type: "doughnut",
-      data: { datasets: [{ data: [Math.min(duration, 3600), Math.max(0, gap)], backgroundColor: ["#119c8a", "#e5ece8"], borderWidth: 0 }] },
+      data: { datasets: [{ data: [Math.min(duration, 3600), Math.max(0, gap)], backgroundColor: ["#148b7d", "#e5ebe8"], borderWidth: 0 }] },
       options: { responsive: true, maintainAspectRatio: false, cutout: "72%", plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 350 } },
     }));
     const totals = new Map();
@@ -222,7 +222,7 @@
       totals.set(item.subject, (totals.get(item.subject) || 0) + seconds);
     });
     if (!totals.size) totals.set(session.subject, duration);
-    const palette = ["#119c8a", "#e9573f", "#3f78c5", "#d48a25", "#8a5bb7", "#2c9a67"];
+    const palette = ["#148b7d", "#ef5b3f", "#4c78a8", "#d59a37", "#7c6db0", "#4b9a68"];
     const subjects = [...totals.keys()];
     const values = [...totals.values()];
     $("#summary-today-total").textContent = formatSeconds(values.reduce((sum, value) => sum + value, 0));
@@ -272,7 +272,7 @@
     canvas.hidden = false;
     empty.hidden = true;
     const subjects = [...new Set(dates.flatMap((date) => [...grouped.get(date).keys()]))];
-    const palette = ["#e9573f", "#119c8a", "#3f78c5", "#d48a25", "#8a5bb7", "#2c9a67", "#c45b8a", "#65727d"];
+    const palette = ["#ef5b3f", "#148b7d", "#4c78a8", "#d59a37", "#7c6db0", "#4b9a68", "#c55f78", "#687780"];
     const datasets = subjects.map((subject, index) => ({
       label: subject,
       data: dates.map((date) => {
@@ -299,7 +299,7 @@
         const x = chart.scales.x.getPixelForValue(index);
         const context = chart.ctx;
         context.save();
-        context.strokeStyle = "rgba(23, 32, 38, .25)";
+        context.strokeStyle = "rgba(32, 39, 47, .24)";
         context.setLineDash([4, 4]);
         context.beginPath();
         context.moveTo(x, chart.chartArea.top);
@@ -331,11 +331,11 @@
         animation: false,
         interaction: { mode: "index", intersect: false },
         scales: {
-          x: { grid: { display: false }, ticks: { color: "#7a8583", font: { size: 9 } } },
-          y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: "#edf1ee" }, ticks: { color: "#7a8583", font: { size: 9 }, callback: (value) => `${value}%` } },
+          x: { grid: { display: false }, ticks: { color: "#758079", font: { size: 9 } } },
+          y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: "#ebefed" }, ticks: { color: "#758079", font: { size: 9 }, callback: (value) => `${value}%` } },
         },
         plugins: {
-          legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 7, color: "#56625f", font: { size: 9 } } },
+          legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 7, color: "#5f6b66", font: { size: 9 } } },
           tooltip: {
             enabled: false,
             external: ({ tooltip }) => {
