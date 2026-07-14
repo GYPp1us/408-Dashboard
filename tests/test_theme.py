@@ -17,3 +17,14 @@ def test_dashboard_colors_follow_focus_state_except_score_deltas():
     assert 'focus: ["#7a5bc7"' in javascript
     assert "#148b7d" not in css
     assert "#148b7d" not in javascript
+
+
+def test_heatmap_scale_and_current_time_art_are_fixed():
+    css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    image = ROOT / "app" / "static" / "current-time-art.jpg"
+
+    assert image.is_file()
+    assert ".heat-cell { width:75%;" in css
+    assert 'background:url("current-time-art.jpg") right center/auto 100% no-repeat' in css
+    assert "right:8px" in css
+    assert "opacity:.8" in css

@@ -43,6 +43,9 @@ button { cursor:pointer; }
 .time-card { min-height:136px; }
 .time-card h2,.section-heading h2 { color:#626e68; font-size:12px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; }
 .time-card > strong { display:block; margin-top:19px; font-size:40px; line-height:1; }
+.current-time-card { position:relative; overflow:hidden; }
+.current-time-card::after { content:""; position:absolute; z-index:0; top:0; right:8px; bottom:0; width:50%; background:url("current-time-art.jpg") right center/auto 100% no-repeat; opacity:.8; pointer-events:none; }
+.current-time-card > * { position:relative; z-index:1; max-width:52%; }
 .current-time-card > strong { font-size:45px; }
 .time-card p { margin:8px 0 0; color:var(--muted); font-size:12px; }
 .time-card p b { color:var(--ink); }
@@ -95,7 +98,7 @@ button { cursor:pointer; }
 .heat-hours { display:grid; grid-template-rows:repeat(12,1fr); gap:3px; color:#96a19b; font-size:10px; text-align:right; }
 .heat-hours span { transform:translateY(-2px); }
 .heat-grid { display:grid; grid-template-columns:repeat(30,minmax(0,1fr)); grid-template-rows:repeat(12,1fr); gap:3px; width:100%; }
-.heat-cell { min-width:0; aspect-ratio:1; border-radius:2px; background:var(--heat-empty); cursor:pointer; }
+.heat-cell { width:75%; min-width:0; aspect-ratio:1; align-self:center; justify-self:center; border-radius:2px; background:var(--heat-empty); cursor:pointer; }
 .heat-cell.l1{background:var(--heat-l1)}.heat-cell.l2{background:var(--heat-l2)}.heat-cell.l3{background:var(--heat-l3)}.heat-cell.l4{background:var(--heat-l4)}
 .heat-cell:hover,.heat-cell.selected { outline:2px solid var(--accent); outline-offset:1px; }
 .heat-days { display:grid; grid-template-columns:30px minmax(0,1fr); gap:7px; margin-top:5px; color:#96a19b; font-size:10px; }
