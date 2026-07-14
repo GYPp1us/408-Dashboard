@@ -1,7 +1,12 @@
 (() => {
   const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, scoreChart: null, summaryTimer: null, summaryCharts: [], starting: false, ending: false };
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
+  const themePalettes = {
+    idle: ["#ef5b3f", "#c74732", "#f1875f", "#a93b2c", "#d76e43", "#f4a184", "#8f4a38", "#e48060"],
+    focus: ["#7a5bc7", "#5f42aa", "#987ddd", "#4d358c", "#876cbf", "#b09be7", "#614e87", "#9b84cf"],
+  };
   const $ = (selector) => document.querySelector(selector);
+  const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => themePalettes[active ? "focus" : "idle"];
   if (window.Chart) {
     Chart.defaults.font.family = appFontFamily;
     Chart.defaults.font.size = 14;
@@ -159,7 +164,7 @@
     const track = $("#score-track");
     if (!track) return;
     const rows = scores.length ? scores : [{ subject: "暂无成绩", score: "--", target: "--", gap: 0 }];
-    track.innerHTML = [...rows, ...rows.slice(0, 1)].map((item) => `<div class="score-row"><span>${escapeHtml(item.subject)}</span><b>${item.score} / ${item.target}</b><em>${item.gap > 0 ? `-${item.gap}` : item.gap < 0 ? `+${Math.abs(item.gap)}` : "--"}</em></div>`).join("");
+    track.innerHTML = [...rows, ...rows.slice(0, 1)].map((item) => `<div class="score-row"><span>${escapeHtml(item.subject)}</span><b>${item.score} / ${item.target}</b><em class="${item.gap > 0 ? "bad" : item.gap < 0 ? "good" : ""}">${item.gap > 0 ? `-${item.gap}` : item.gap < 0 ? `+${Math.abs(item.gap)}` : "--"}</em></div>`).join("");
   }
 
   function renderHeatmap(heatmap) {
@@ -217,9 +222,10 @@
     $("#summary-session-time").textContent = formatSeconds(duration);
     const gap = 3600 - duration;
     $("#summary-goal-gap").textContent = gap > 0 ? `距 1 小时还差 ${Math.ceil(gap / 60)} 分钟` : gap < 0 ? `已达标 · 超出 ${Math.floor(Math.abs(gap) / 60)} 分钟` : "已达成 1 小时目标";
+    const palette = getThemePalette();
     state.summaryCharts.push(new Chart($("#session-goal-chart"), {
       type: "doughnut",
-      data: { datasets: [{ data: [Math.min(duration, 3600), Math.max(0, gap)], backgroundColor: ["#148b7d", "#e5ebe8"], borderWidth: 0 }] },
+      data: { datasets: [{ data: [Math.min(duration, 3600), Math.max(0, gap)], backgroundColor: [palette[0], "#e5e7ea"], borderWidth: 0 }] },
       options: { responsive: true, maintainAspectRatio: false, cutout: "72%", plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 350 } },
     }));
     const totals = new Map();
@@ -228,7 +234,6 @@
       totals.set(item.subject, (totals.get(item.subject) || 0) + seconds);
     });
     if (!totals.size) totals.set(session.subject, duration);
-    const palette = ["#148b7d", "#ef5b3f", "#4c78a8", "#d59a37", "#7c6db0", "#4b9a68"];
     const subjects = [...totals.keys()];
     const values = [...totals.values()];
     $("#summary-today-total").textContent = formatSeconds(values.reduce((sum, value) => sum + value, 0));
@@ -278,7 +283,7 @@
     canvas.hidden = false;
     empty.hidden = true;
     const subjects = [...new Set(dates.flatMap((date) => [...grouped.get(date).keys()]))];
-    const palette = ["#ef5b3f", "#148b7d", "#4c78a8", "#d59a37", "#7c6db0", "#4b9a68", "#c55f78", "#687780"];
+    const palette = getThemePalette();
     const datasets = subjects.map((subject, index) => ({
       label: subject,
       data: dates.map((date) => {
@@ -359,6 +364,16 @@
     });
   }
 
+  function syncScoreChartTheme(active) {
+    if (!state.scoreChart) return;
+    const palette = getThemePalette(Boolean(active));
+    state.scoreChart.data.datasets.forEach((dataset, index) => {
+      dataset.borderColor = palette[index % palette.length];
+      dataset.backgroundColor = palette[index % palette.length];
+    });
+    state.scoreChart.update("none");
+  }
+
   function renderModes(modes) {
     const target = $("#focus-modes");
     if (!target) return;
@@ -436,6 +451,7 @@
     if (animate) animateLayout();
     if (active) closeFocusSummary();
     document.body.classList.toggle("is-focusing", Boolean(active));
+    syncScoreChartTheme(active);
     $("#idle-mode-view").hidden = Boolean(active);
     $("#active-mode-view").hidden = !active;
     $("#home-state-note").textContent = active ? "专注中，保持当前上下文" : "准备开始下一段专注";
