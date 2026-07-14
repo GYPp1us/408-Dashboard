@@ -51,10 +51,12 @@ DEFAULT_SETTINGS = {
 }
 
 DEFAULT_MODES = [
-    ("专注", "专业课", 0),
-    ("专注", "数学", 0),
-    ("专注", "英语", 0),
-    ("专注", "自定义", 0),
+    ("专注", "408二轮", 0),
+    ("专注", "数学二轮", 0),
+    ("专注", "英语二轮", 0),
+    ("专注", "政治一轮", 0),
+    ("专注", "408模拟", 0),
+    ("专注", "数学模拟", 0),
 ]
 
 def connect(path: str) -> sqlite3.Connection:
@@ -79,10 +81,18 @@ def init_db(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS unique_focus_client_token ON focus_sessions(client_token) WHERE client_token IS NOT NULL")
     for key, value in DEFAULT_SETTINGS.items():
         connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
-    if connection.execute("SELECT COUNT(*) FROM focus_modes").fetchone()[0] == 0:
-        connection.executemany("INSERT INTO focus_modes(name, subject, duration_minutes) VALUES (?, ?, ?)", DEFAULT_MODES)
-    else:
-        connection.execute("UPDATE focus_modes SET name = '专注', duration_minutes = 0")
+    mode_ids = [row["id"] for row in connection.execute("SELECT id FROM focus_modes ORDER BY id")]
+    for index, mode in enumerate(DEFAULT_MODES):
+        if index < len(mode_ids):
+            connection.execute(
+                "UPDATE focus_modes SET name = ?, subject = ?, duration_minutes = ? WHERE id = ?",
+                (*mode, mode_ids[index]),
+            )
+        else:
+            connection.execute("INSERT INTO focus_modes(name, subject, duration_minutes) VALUES (?, ?, ?)", mode)
+    if len(mode_ids) > len(DEFAULT_MODES):
+        placeholders = ",".join("?" for _ in mode_ids[len(DEFAULT_MODES):])
+        connection.execute(f"DELETE FROM focus_modes WHERE id IN ({placeholders})", mode_ids[len(DEFAULT_MODES):])
     connection.commit()
 
 

@@ -377,7 +377,7 @@
   function renderModes(modes) {
     const target = $("#focus-modes");
     if (!target) return;
-    target.innerHTML = modes.map((mode) => `<div class="mode"><strong>${escapeHtml(mode.subject)}</strong><small>不限时专注</small><div class="drag-launch" data-subject="${escapeHtml(mode.subject)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">滑动启动</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(mode.subject)}">→</span></div></div>`).join("");
+    target.innerHTML = modes.map((mode) => `<div class="mode"><strong>${escapeHtml(mode.subject)}</strong><div class="drag-launch" data-subject="${escapeHtml(mode.subject)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">滑动启动</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(mode.subject)}">→</span></div></div>`).join("");
     initDragLaunchers();
   }
 
@@ -547,13 +547,63 @@
     renderScores(scores.scores.map((item) => ({ ...item, gap: item.target - item.score, completion: item.score / item.target })), "#settings-scores");
   }
 
+  function openQuickScore() {
+    const modal = $("#quick-score-modal");
+    if (!modal || modal.open) return;
+    state.quickScoreReturnFocus = document.activeElement;
+    const dateInput = $("#quick-score-date");
+    if (dateInput && !dateInput.value) {
+      const now = new Date();
+      dateInput.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    }
+    modal.showModal();
+    requestAnimationFrame(() => $("#quick-score-subject")?.focus());
+  }
+
+  function closeQuickScore() {
+    const modal = $("#quick-score-modal");
+    if (modal?.open) modal.close();
+  }
+
+  async function submitScoreForm(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    try {
+      await api("/api/scores", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+      form.reset();
+      if (form.id === "quick-score-form") closeQuickScore();
+      if (document.body.dataset.page === "settings") await loadSettings();
+      else await loadDashboard();
+      showToast("成绩已添加");
+    } catch (error) { showToast(error.message); }
+  }
+
+  function bindQuickScore() {
+    const modal = $("#quick-score-modal");
+    $("#open-quick-score")?.addEventListener("click", openQuickScore);
+    $("#close-quick-score")?.addEventListener("click", closeQuickScore);
+    $("#quick-score-form")?.addEventListener("submit", submitScoreForm);
+    modal?.addEventListener("close", () => state.quickScoreReturnFocus?.focus?.());
+    modal?.addEventListener("click", (event) => {
+      const bounds = modal.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeQuickScore();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        openQuickScore();
+      }
+    });
+  }
+
   function bindSettingsForms() {
     $("#settings-form")?.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/settings", { method: "PATCH", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); showToast("设置已保存"); } catch (error) { showToast(error.message); } });
-    document.querySelector('[data-form="score"]')?.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/scores", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); event.currentTarget.reset(); await loadSettings(); showToast("成绩已添加"); } catch (error) { showToast(error.message); } });
+    document.querySelector('[data-form="score"]')?.addEventListener("submit", submitScoreForm);
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
     $("#close-focus-summary")?.addEventListener("click", closeFocusSummary);
+    bindQuickScore();
     bindSettingsForms();
     try {
       if (document.body.dataset.page === "settings") await loadSettings();

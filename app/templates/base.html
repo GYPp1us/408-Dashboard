@@ -13,10 +13,23 @@
       <div class="exam-countdown"><small>距考研</small><strong id="exam-days">-- 天</strong><span id="exam-clock">--:--:--</span></div>
       <div class="score-board"><small>近期模拟考</small><div class="score-window"><div id="score-track" class="score-track"><div class="score-row"><span>正在读取成绩</span><b>-- / --</b><em>--</em></div></div></div></div>
       <div class="today-study"><small>今日有效学习</small><strong id="today-study">00:00 / 08:00</strong><span id="today-progress">完成度 0%</span></div>
-      <div class="current-state"><span id="state-dot" class="state-dot"></span><span id="current-state">准备学习</span><a class="settings-link" href="{{ url_for('settings_page') }}" title="打开设置">设置</a></div>
+      <div class="current-state"><span id="state-dot" class="state-dot"></span><span id="current-state">准备学习</span><button id="open-quick-score" class="quick-score-trigger" type="button" title="快速录入模拟成绩（Ctrl+N）">＋ 成绩</button><a class="settings-link" href="{{ url_for('settings_page') }}" title="打开设置">设置</a></div>
     </header>
     <main class="app-main">{% block content %}{% endblock %}</main>
   </div>
+  <dialog id="quick-score-modal" class="quick-score-dialog" aria-labelledby="quick-score-title">
+    <div class="quick-score-head"><div><small>QUICK ENTRY</small><h2 id="quick-score-title">录入模拟成绩</h2></div><button id="close-quick-score" class="modal-close" type="button" title="关闭" aria-label="关闭">×</button></div>
+    <form id="quick-score-form" class="quick-score-form">
+      <div class="quick-score-fields">
+        <label>科目<input id="quick-score-subject" name="subject" list="quick-score-subjects" placeholder="如 408、数学" autocomplete="off" required></label>
+        <label>提交日期<input id="quick-score-date" name="exam_date" type="date" required></label>
+        <label>本次成绩<input name="score" type="number" min="0" step="0.5" placeholder="0" required></label>
+        <label>目标成绩<input name="target" type="number" min="1" step="0.5" placeholder="目标分" required></label>
+      </div>
+      <datalist id="quick-score-subjects"><option value="408"></option><option value="数学"></option><option value="英语"></option><option value="政治"></option></datalist>
+      <div class="quick-score-actions"><span>Ctrl + N</span><button class="primary" type="submit">保存成绩</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status"></div>
   <script src="{{ url_for('static', filename='vendor/gsap.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/Draggable.min.js') }}"></script>

@@ -44,8 +44,21 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "/static/vendor/chart.umd.js" in html
     assert "/static/vendor/Draggable.min.js" in html
     assert "active-mode-view" in html
+    assert 'id="open-quick-score"' in html
+    assert 'id="quick-score-modal"' in html
+    assert 'id="quick-score-form"' in html
+    assert "选择科目后滑动启动" in html
     assert "sidebar" not in html
     assert "topnav" not in html
+
+
+def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticated_client):
+    javascript = authenticated_client.get("/static/app.js").get_data(as_text=True)
+
+    assert 'event.key.toLowerCase() === "n"' in javascript
+    assert 'event.preventDefault();' in javascript
+    assert 'modal.showModal();' in javascript
+    assert "不限时专注" not in javascript
 
 
 def test_focus_page_uses_single_dashboard_route(authenticated_client):

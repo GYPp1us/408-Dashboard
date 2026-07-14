@@ -41,6 +41,7 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
     assert len(payload["heatmap"]) == 30
     assert all(len(day) == 12 for day in payload["heatmap"])
     assert payload["focus"]["today"] == []
+    assert [mode["subject"] for mode in payload["focus_modes"]] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
 
 
 def test_dashboard_score_history_keeps_all_submissions(authenticated_client):

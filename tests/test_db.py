@@ -13,7 +13,8 @@ def test_database_seeds_default_settings_and_modes(tmp_path):
     assert settings["lunch_start"] == "12:00"
     assert settings["library_open"] == "13:30"
     assert settings["library_close"] == "22:00"
-    assert [mode["duration_minutes"] for mode in modes] == [0, 0, 0, 0]
+    assert [mode["subject"] for mode in modes] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
+    assert [mode["duration_minutes"] for mode in modes] == [0, 0, 0, 0, 0, 0]
     assert {mode["name"] for mode in modes} == {"专注"}
     assert len(scores) == 0
     assert len(plans) == 0
@@ -26,7 +27,7 @@ def test_database_initialization_is_idempotent(tmp_path):
     init_db(connection)
     init_db(connection)
 
-    assert len(list_focus_modes(connection)) == 4
+    assert len(list_focus_modes(connection)) == 6
     assert list_scores(connection) == []
     assert list_plans(connection) == []
 
@@ -44,4 +45,24 @@ def test_clear_user_data_preserves_modes_and_settings(tmp_path):
 
     assert list_scores(connection) == []
     assert list_plans(connection) == []
-    assert len(list_focus_modes(connection)) == 4
+    assert len(list_focus_modes(connection)) == 6
+
+
+def test_database_replaces_legacy_focus_modes_in_fixed_order(tmp_path):
+    from app.db import connect, init_db, list_focus_modes
+
+    connection = connect(str(tmp_path / "legacy-modes.sqlite3"))
+    init_db(connection)
+    connection.execute("DELETE FROM focus_modes")
+    connection.executemany(
+        "INSERT INTO focus_modes(name, subject, duration_minutes) VALUES ('旧模式', ?, 50)",
+        [("专业课",), ("数学",), ("英语",), ("自定义",)],
+    )
+    connection.commit()
+
+    init_db(connection)
+
+    modes = list_focus_modes(connection)
+    assert [mode["subject"] for mode in modes] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
+    assert {mode["name"] for mode in modes} == {"专注"}
+    assert {mode["duration_minutes"] for mode in modes} == {0}
