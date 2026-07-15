@@ -74,6 +74,16 @@ def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authentic
     assert "setInterval(tick, 1000)" not in javascript
 
 
+def test_focus_client_token_has_legacy_browser_fallbacks(authenticated_client):
+    javascript = authenticated_client.get("/static/app.js").get_data(as_text=True)
+
+    assert "function createClientToken()" in javascript
+    assert 'typeof cryptoApi.randomUUID === "function"' in javascript
+    assert 'typeof cryptoApi.getRandomValues === "function"' in javascript
+    assert "client_token: createClientToken()" in javascript
+    assert "client_token: crypto.randomUUID()" not in javascript
+
+
 def test_guest_dashboard_replaces_controls_with_today_summary(authenticated_client):
     html = authenticated_client.get("/guest").get_data(as_text=True)
 

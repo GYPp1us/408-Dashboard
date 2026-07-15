@@ -19,6 +19,19 @@
   const formatMinutes = (minutes) => formatSeconds(Math.max(0, Math.round(minutes * 60)));
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 
+  function createClientToken() {
+    const cryptoApi = window.crypto || window.msCrypto;
+    if (cryptoApi && typeof cryptoApi.randomUUID === "function") return cryptoApi.randomUUID();
+    if (cryptoApi && typeof cryptoApi.getRandomValues === "function") {
+      const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    return `focus-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+
   function runSecondTasks(now = Date.now()) {
     state.secondTasks.forEach((task) => task(now));
   }
@@ -486,7 +499,7 @@
     state.starting = true;
     track.classList.add("armed");
     try {
-      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ subject: track.dataset.subject, mode: "专注", planned_minutes: 0, client_token: crypto.randomUUID() }) });
+      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ subject: track.dataset.subject, mode: "专注", planned_minutes: 0, client_token: createClientToken() }) });
       const today = state.dashboard?.focus?.today || [];
       state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session, today: [...today.filter((item) => item.id !== session.session.id), session.session] } };
       applyFocusState(session.session, true);
