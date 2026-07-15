@@ -294,6 +294,29 @@
       const percent = Math.max(0, Math.min(100, (seconds / 28800) * 100));
       target.innerHTML = `<span class="stack-primary" style="width:${percent}%"></span><span class="stack-rest" style="width:${100 - percent}%"></span>`;
     };
+    const subjectsWithActiveTime = (items, extraSeconds) => {
+      const subjects = (items || []).map((item) => ({ ...item, seconds: Number(item.seconds || 0) }));
+      if (active && extraSeconds) {
+        const activeSubject = subjects.find((item) => item.subject === active.subject);
+        if (activeSubject) activeSubject.seconds += extraSeconds;
+        else subjects.push({ subject: active.subject, seconds: extraSeconds });
+      }
+      return subjects.sort((left, right) => right.seconds - left.seconds || left.subject.localeCompare(right.subject, "zh-CN"));
+    };
+    const renderSubjectStack = (stackSelector, legendSelector, subjects, totalSeconds) => {
+      const stack = $(stackSelector);
+      const legend = $(legendSelector);
+      const topSubjects = subjects.slice(0, 3);
+      if (!totalSeconds || !topSubjects.length) {
+        stack.innerHTML = "";
+        legend.innerHTML = "<span>暂无专注数据</span>";
+        return;
+      }
+      const palette = getThemePalette();
+      const topSeconds = topSubjects.reduce((sum, item) => sum + item.seconds, 0);
+      stack.innerHTML = topSubjects.map((item, index) => `<span style="width:${(item.seconds / totalSeconds) * 100}%;background:${palette[index]}"></span>`).join("") + `<span class="stack-other" style="width:${Math.max(0, ((totalSeconds - topSeconds) / totalSeconds) * 100)}%"></span>`;
+      legend.innerHTML = topSubjects.map((item, index) => `<span><i style="background:${palette[index]}"></i>${escapeHtml(item.subject)}<b>${Math.round((item.seconds / totalSeconds) * 1000) / 10}% · ${formatSeconds(item.seconds)}</b></span>`).join("");
+    };
     const tick = (now) => {
       const extraSeconds = active ? Math.max(0, Math.floor((now - fetchedAt) / 1000)) : 0;
       const currentSeconds = Number(baseline.current_seconds || 0) + extraSeconds;
@@ -306,31 +329,13 @@
       trend.textContent = trendSeconds > 0 ? `↑ ${formatSeconds(trendSeconds)}` : trendSeconds < 0 ? `↓ ${formatSeconds(Math.abs(trendSeconds))}` : "较前 7 天持平";
       renderTargetStack("#investment-average-stack", dailyAverage);
 
-      const subjects = (baseline.subjects || []).map((item) => ({ ...item, seconds: Number(item.seconds || 0) }));
-      if (active && extraSeconds) {
-        const activeSubject = subjects.find((item) => item.subject === active.subject);
-        if (activeSubject) activeSubject.seconds += extraSeconds;
-        else subjects.push({ subject: active.subject, seconds: extraSeconds });
-      }
-      subjects.sort((left, right) => right.seconds - left.seconds || left.subject.localeCompare(right.subject, "zh-CN"));
-      const topSubjects = subjects.slice(0, 3);
-      const palette = getThemePalette();
-      const subjectStack = $("#investment-subject-stack");
-      const subjectLegend = $("#investment-subject-legend");
       $("#investment-week-total").textContent = formatSeconds(currentSeconds);
-      if (!currentSeconds) {
-        subjectStack.innerHTML = "";
-        subjectLegend.innerHTML = "<span>暂无专注数据</span>";
-      } else {
-        const topSeconds = topSubjects.reduce((sum, item) => sum + item.seconds, 0);
-        subjectStack.innerHTML = topSubjects.map((item, index) => `<span style="width:${(item.seconds / currentSeconds) * 100}%;background:${palette[index]}"></span>`).join("") + `<span class="stack-other" style="width:${Math.max(0, ((currentSeconds - topSeconds) / currentSeconds) * 100)}%"></span>`;
-        subjectLegend.innerHTML = topSubjects.map((item, index) => `<span><i style="background:${palette[index]}"></i>${escapeHtml(item.subject)}<b>${Math.round((item.seconds / currentSeconds) * 1000) / 10}% · ${formatSeconds(item.seconds)}</b></span>`).join("");
-      }
+      renderSubjectStack("#investment-subject-stack", "#investment-subject-legend", subjectsWithActiveTime(baseline.subjects, extraSeconds), currentSeconds);
 
       const todaySeconds = Number(baseline.today_seconds || 0) + extraSeconds;
       $("#investment-today-total").textContent = formatSeconds(todaySeconds);
       $("#investment-today-percent").textContent = `${Math.round((todaySeconds / 28800) * 1000) / 10}%`;
-      renderTargetStack("#investment-today-stack", todaySeconds);
+      renderSubjectStack("#investment-today-stack", "#investment-today-legend", subjectsWithActiveTime(baseline.today_subjects, extraSeconds), todaySeconds);
     };
     removeSecondTask("investment");
     if (active) setSecondTask("investment", tick);

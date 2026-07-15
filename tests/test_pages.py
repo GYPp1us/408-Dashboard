@@ -33,6 +33,8 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="investment-average-stack"' in html
     assert 'id="investment-subject-stack"' in html
     assert 'id="investment-today-stack"' in html
+    assert 'id="investment-today-legend"' in html
+    assert html.index("今日截至当前") < html.index("投入最多的三个科目") < html.index("近七天日均专注")
     assert 'id="focus-comparison-view"' in html
     assert 'id="focus-compare-today-bar"' in html
     assert 'id="focus-compare-yesterday-bar"' in html
@@ -73,6 +75,7 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert '<span class="drag-label">${escapeHtml(mode.subject)}</span>' in javascript
     assert '<span class="drag-label">滑动启动</span>' not in javascript
     assert "function renderFocusInvestment(investment, active)" in javascript
+    assert "subjectsWithActiveTime(baseline.today_subjects, extraSeconds)" in javascript
     assert "function renderFocusComparison(active)" in javascript
     assert javascript.count('{ category: "') == 30
     assert "Math.floor(elapsed / 30) % focusMessages.length" in javascript

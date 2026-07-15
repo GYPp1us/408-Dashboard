@@ -97,6 +97,7 @@ def test_focus_investment_compares_rolling_weeks_and_summarizes_subjects():
     assert result["daily_average_seconds"] == 2 * 3600
     assert result["previous_daily_average_seconds"] == 3600
     assert result["today_seconds"] == 2 * 3600
+    assert result["today_subjects"] == [{"subject": "408二轮", "seconds": 2 * 3600}]
     assert result["yesterday_same_time_seconds"] == 7 * 3600
     assert result["subjects"] == [
         {"subject": "数学二轮", "seconds": 7 * 3600},
@@ -116,6 +117,7 @@ def test_focus_investment_handles_empty_data():
         "daily_average_seconds": 0,
         "previous_daily_average_seconds": 0,
         "today_seconds": 0,
+        "today_subjects": [],
         "yesterday_same_time_seconds": 0,
         "subjects": [],
     }

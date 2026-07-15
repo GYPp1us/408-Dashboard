@@ -71,6 +71,9 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
 
     assert ".investment-charts { display:grid" in css
+    assert "grid-template-rows:auto auto auto" in css
+    assert ".investment-chart { display:flex; flex-direction:column; padding:10px 0 11px" in css
+    assert "min-height:470px" not in css
     assert ".linear-stack { display:flex; height:14px" in css
     assert ".linear-stack .stack-primary { background:var(--accent)" in css
     assert ".investment-trend.up { background:#e7f3ef; color:var(--score-positive)" in css
