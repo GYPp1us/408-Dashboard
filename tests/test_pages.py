@@ -103,3 +103,6 @@ def test_settings_is_small_low_frequency_entry(authenticated_client):
     assert "时间窗口" in html
     assert "长期计划" not in html
     assert "数据中心" not in html
+    assert "热度图显示时段" in html
+    assert 'name="heatmap_visible_hours"' in html
+    assert html.count("data-heat-hour=") == 12

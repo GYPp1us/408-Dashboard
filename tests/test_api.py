@@ -40,6 +40,7 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
     assert {"now", "windows", "focus", "today_focus", "heatmap", "scores", "score_history", "plans"} <= payload.keys()
     assert len(payload["heatmap"]) == 30
     assert all(len(day) == 12 for day in payload["heatmap"])
+    assert payload["heatmap_visible_hours"] == list(range(0, 24, 2))
     assert payload["focus"]["today"] == []
     assert [mode["subject"] for mode in payload["focus_modes"]] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
 
@@ -108,6 +109,21 @@ def test_settings_patch_validates_time_values(authenticated_client):
 
     assert response.status_code == 400
     assert response.get_json() == {"error": "invalid_time:lunch_start"}
+
+
+def test_heatmap_visible_hours_are_validated_and_persisted(authenticated_client):
+    saved = authenticated_client.patch("/api/settings", json={"heatmap_visible_hours": "6,8,10,12,14,16,18,20,22"})
+
+    assert saved.status_code == 200
+    assert saved.get_json()["settings"]["heatmap_visible_hours"] == "6,8,10,12,14,16,18,20,22"
+    assert authenticated_client.get("/api/dashboard").get_json()["heatmap_visible_hours"] == [6, 8, 10, 12, 14, 16, 18, 20, 22]
+
+    empty = authenticated_client.patch("/api/settings", json={"heatmap_visible_hours": ""})
+    invalid = authenticated_client.patch("/api/settings", json={"heatmap_visible_hours": "7,8"})
+    assert empty.status_code == 400
+    assert invalid.status_code == 400
+    assert empty.get_json() == {"error": "invalid_heatmap_visible_hours"}
+    assert invalid.get_json() == {"error": "invalid_heatmap_visible_hours"}
 
 
 def test_guest_can_read_dashboard_but_cannot_mutate_data(client):

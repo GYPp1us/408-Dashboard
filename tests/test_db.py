@@ -13,6 +13,7 @@ def test_database_seeds_default_settings_and_modes(tmp_path):
     assert settings["lunch_start"] == "12:00"
     assert settings["library_open"] == "13:30"
     assert settings["library_close"] == "22:00"
+    assert settings["heatmap_visible_hours"] == "0,2,4,6,8,10,12,14,16,18,20,22"
     assert [mode["subject"] for mode in modes] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
     assert [mode["duration_minutes"] for mode in modes] == [0, 0, 0, 0, 0, 0]
     assert {mode["name"] for mode in modes} == {"专注"}

@@ -48,6 +48,7 @@ DEFAULT_SETTINGS = {
     "library_close": "22:00",
     "exam_date": "2026-12-26",
     "timezone": "Asia/Shanghai",
+    "heatmap_visible_hours": "0,2,4,6,8,10,12,14,16,18,20,22",
 }
 
 DEFAULT_MODES = [

@@ -9,6 +9,15 @@ from .services import aggregate_focus_heatmap, calculate_window, current_time, s
 
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+HEATMAP_HOURS = tuple(range(0, 24, 2))
+
+
+def _heatmap_hours(value: str) -> list[int]:
+    parts = [part.strip() for part in str(value).split(",") if part.strip()]
+    hours = [int(part) for part in parts]
+    if not hours or len(hours) != len(set(hours)) or any(hour not in HEATMAP_HOURS for hour in hours):
+        raise ValueError("invalid_heatmap_visible_hours")
+    return [hour for hour in HEATMAP_HOURS if hour in hours]
 
 
 def _now(timezone_name: str = "UTC") -> datetime:
@@ -100,6 +109,10 @@ def register_routes(app):
             scores = score_metrics(list_latest_scores(connection))
             score_history = score_metrics(list_scores(connection))
             plans = list_plans(connection)
+            try:
+                heatmap_visible_hours = _heatmap_hours(settings.get("heatmap_visible_hours", ""))
+            except (TypeError, ValueError):
+                heatmap_visible_hours = list(HEATMAP_HOURS)
             return jsonify({
                 "now": now.isoformat(),
                 "exam": {"date": settings["exam_date"], "remaining_seconds": seconds_until_exam(now, settings["exam_date"])},
@@ -108,6 +121,7 @@ def register_routes(app):
                 "focus": {"active": _session_payload(dict(active_row) if active_row else None), "recent": _focus_rows(connection), "today": _today_focus_rows(connection, now)},
                 "focus_modes": list_focus_modes(connection),
                 "heatmap": aggregate_focus_heatmap(sessions, now),
+                "heatmap_visible_hours": heatmap_visible_hours,
                 "scores": scores,
                 "score_history": score_history,
                 "plans": plans,
@@ -188,7 +202,7 @@ def register_routes(app):
         try:
             if request.method == "PATCH":
                 payload = request.get_json(silent=True) or {}
-                allowed = {"morning_start", "lunch_start", "library_open", "library_close", "exam_date", "timezone"}
+                allowed = {"morning_start", "lunch_start", "library_open", "library_close", "exam_date", "timezone", "heatmap_visible_hours"}
                 for key, value in payload.items():
                     if key not in allowed:
                         continue
@@ -200,6 +214,11 @@ def register_routes(app):
                             datetime.fromisoformat(value)
                         except (TypeError, ValueError):
                             return jsonify(error="invalid_exam_date"), 400
+                    if key == "heatmap_visible_hours":
+                        try:
+                            value = ",".join(str(hour) for hour in _heatmap_hours(value))
+                        except (TypeError, ValueError):
+                            return jsonify(error="invalid_heatmap_visible_hours"), 400
                     connection.execute("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(value)))
                 connection.commit()
             return jsonify(settings=get_settings(connection))

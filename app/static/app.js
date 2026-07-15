@@ -204,18 +204,24 @@
     track.innerHTML = [...rows, ...rows.slice(0, 1)].map((item) => `<div class="score-row"><span>${escapeHtml(item.subject)}</span><b>${item.score} / ${item.target}</b><em class="${item.gap > 0 ? "bad" : item.gap < 0 ? "good" : ""}">${item.gap > 0 ? `-${item.gap}` : item.gap < 0 ? `+${Math.abs(item.gap)}` : "--"}</em></div>`).join("");
   }
 
-  function renderHeatmap(heatmap) {
+  function renderHeatmap(heatmap, visibleHours) {
     const hours = $("#heat-hours");
     const grid = $("#heat-grid");
     if (!hours || !grid) return;
-    hours.innerHTML = Array.from({ length: 12 }, (_, index) => `<span>${String(index * 2).padStart(2, "0")}</span>`).join("");
-    const max = Math.max(120, ...heatmap.flat());
+    const configuredHours = [...new Set((visibleHours || []).map(Number))].filter((hour) => Number.isInteger(hour) && hour >= 0 && hour < 24 && hour % 2 === 0);
+    const shownHours = configuredHours.length ? configuredHours : Array.from({ length: 12 }, (_, index) => index * 2);
+    const buckets = shownHours.map((hour) => hour / 2);
+    const rowTemplate = `repeat(${buckets.length},1fr)`;
+    hours.style.gridTemplateRows = rowTemplate;
+    grid.style.gridTemplateRows = rowTemplate;
+    hours.innerHTML = shownHours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("");
+    const max = Math.max(120, ...heatmap.flatMap((day) => buckets.map((bucket) => day[bucket] || 0)));
     const renderCell = (minutes, dayIndex, bucket) => {
       const level = minutes === 0 ? 0 : Math.min(4, Math.ceil((minutes / max) * 4));
       const startHour = bucket * 2;
       return `<i class="heat-cell${level ? ` l${level}` : ""}" data-detail="最近第 ${30 - dayIndex} 天 ${String(startHour).padStart(2, "0")}:00-${String(startHour + 2).padStart(2, "0")}:00 · ${minutes} 分钟" title="${minutes} 分钟"></i>`;
     };
-    grid.innerHTML = Array.from({ length: 12 }, (_, bucket) => heatmap.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, bucket)).join("")).join("");
+    grid.innerHTML = buckets.map((bucket) => heatmap.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, bucket)).join("")).join("");
     grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
       $("#heat-detail").textContent = cell.dataset.detail;
     }));
@@ -543,13 +549,14 @@
       exam: data.exam?.date,
       day: String(data.now || "").slice(0, 10),
       heatmap: data.heatmap,
+      heatmapVisibleHours: data.heatmap_visible_hours,
     });
   }
 
   function applyDashboard(data) {
     state.dashboard = data;
     state.dashboardSignature = dashboardSignature(data);
-    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap); renderScoreChart(data.score_history); renderRecentFocus(data.focus.recent); renderGuestSummary(data);
+    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderScoreChart(data.score_history); renderRecentFocus(data.focus.recent); renderGuestSummary(data);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
   }
@@ -632,6 +639,8 @@
   async function loadSettings() {
     const [settings, scores] = await Promise.all([api("/api/settings"), api("/api/scores")]);
     Object.entries(settings.settings).forEach(([key, value]) => { const input = document.querySelector(`[name="${key}"]`); if (input) input.value = value; });
+    const visibleHours = new Set(String(settings.settings.heatmap_visible_hours || "").split(","));
+    document.querySelectorAll("[data-heat-hour]").forEach((input) => { input.checked = visibleHours.has(input.dataset.heatHour); });
     renderScores(scores.scores.map((item) => ({ ...item, gap: item.target - item.score, completion: item.score / item.target })), "#settings-scores");
   }
 
@@ -686,7 +695,19 @@
   }
 
   function bindSettingsForms() {
-    $("#settings-form")?.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/settings", { method: "PATCH", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); showToast("设置已保存"); } catch (error) { showToast(error.message); } });
+    $("#settings-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const selectedHours = [...document.querySelectorAll("[data-heat-hour]:checked")].map((input) => input.dataset.heatHour);
+      if (!selectedHours.length) {
+        showToast("热度图至少保留一个时段");
+        return;
+      }
+      $("#heatmap-visible-hours").value = selectedHours.join(",");
+      try {
+        await api("/api/settings", { method: "PATCH", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+        showToast("设置已保存");
+      } catch (error) { showToast(error.message); }
+    });
     document.querySelector('[data-form="score"]')?.addEventListener("submit", submitScoreForm);
   }
 
