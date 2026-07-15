@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, timer: null, countdown: null, windowCountdown: null, scoreChart: null, summaryTimer: null, summaryCharts: [], starting: false, ending: false };
+  const state = { dashboard: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false };
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
     idle: ["#ef5b3f", "#c74732", "#f1875f", "#a93b2c", "#d76e43", "#f4a184", "#8f4a38", "#e48060"],
@@ -18,6 +18,47 @@
   };
   const formatMinutes = (minutes) => formatSeconds(Math.max(0, Math.round(minutes * 60)));
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+
+  function runSecondTasks(now = Date.now()) {
+    state.secondTasks.forEach((task) => task(now));
+  }
+
+  function setSecondTask(name, task) {
+    state.secondTasks.set(name, task);
+    task(Date.now());
+  }
+
+  function removeSecondTask(name) {
+    state.secondTasks.delete(name);
+  }
+
+  function startAlignedSecondClock() {
+    const tick = () => {
+      runSecondTasks(Date.now());
+      state.secondTimer = window.setTimeout(tick, Math.max(20, 1000 - (Date.now() % 1000)));
+    };
+    window.clearTimeout(state.secondTimer);
+    state.secondTimer = window.setTimeout(tick, Math.max(20, 1000 - (Date.now() % 1000)));
+  }
+
+  function scheduleWakeLockRetry() {
+    window.clearTimeout(state.wakeRetry);
+    if (document.visibilityState === "visible") state.wakeRetry = window.setTimeout(ensureWakeLock, 2000);
+  }
+
+  async function ensureWakeLock() {
+    if (!("wakeLock" in navigator) || document.visibilityState !== "visible" || state.wakeLock) return;
+    try {
+      const lock = await navigator.wakeLock.request("screen");
+      state.wakeLock = lock;
+      lock.addEventListener("release", () => {
+        if (state.wakeLock === lock) state.wakeLock = null;
+        scheduleWakeLockRetry();
+      });
+    } catch (_error) {
+      scheduleWakeLockRetry();
+    }
+  }
 
   async function api(url, options = {}) {
     const response = await fetch(url, { headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
@@ -42,28 +83,27 @@
   function renderStatus(data) {
     const remaining = Number(data.exam?.remaining_seconds || 0);
     state.examEndsAt = Date.now() + remaining * 1000;
-    const tick = () => {
-      const value = Math.max(0, Math.floor((state.examEndsAt - Date.now()) / 1000));
+    const today = data.today_focus || { seconds: 0, count: 0 };
+    const active = data.focus?.active;
+    const todayFetchedAt = Date.now();
+    const tick = (now) => {
+      const value = Math.max(0, Math.floor((state.examEndsAt - now) / 1000));
       $("#exam-days").textContent = `${Math.floor(value / 86400)} 天`;
       $("#exam-clock").textContent = formatSeconds(value % 86400);
+      const todaySeconds = Number(today.seconds || 0) + (active ? Math.max(0, Math.floor((now - todayFetchedAt) / 1000)) : 0);
+      $("#today-study").textContent = `${formatSeconds(todaySeconds)} / 08:00`;
+      $("#today-progress").textContent = `完成度 ${Math.min(100, Math.round((todaySeconds / 28800) * 100))}%`;
+      $("#focus-today")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 08:00`));
+      $("#guest-today-total")?.replaceChildren(document.createTextNode(formatSeconds(todaySeconds)));
+      $("#guest-today-target")?.replaceChildren(document.createTextNode(`8 小时目标 · ${Math.min(100, Math.round((todaySeconds / 28800) * 100))}%`));
     };
-    tick();
-    window.clearInterval(state.countdown);
-    state.countdown = window.setInterval(tick, 1000);
-    const today = data.today_focus || { seconds: 0, count: 0 };
-    $("#today-study").textContent = `${formatSeconds(today.seconds)} / 08:00`;
-    $("#today-progress").textContent = `完成度 ${Math.min(100, Math.round((today.seconds / 28800) * 100))}%`;
-    $("#focus-today")?.replaceChildren(document.createTextNode(`${formatSeconds(today.seconds)} / 08:00`));
-    const active = data.focus?.active;
+    setSecondTask("status", tick);
     $("#current-state").textContent = active ? `专注中 · ${active.subject}` : "准备学习";
     $("#state-dot").classList.toggle("state-dot-active", Boolean(active));
   }
 
   function renderClock() {
-    const tick = () => { const now = new Date(); $("#current-time")?.replaceChildren(document.createTextNode(now.toLocaleTimeString("zh-CN", { hour12: false }))); };
-    tick();
-    window.clearInterval(state.clock);
-    state.clock = window.setInterval(tick, 1000);
+    setSecondTask("clock", (now) => $("#current-time")?.replaceChildren(document.createTextNode(new Date(now).toLocaleTimeString("zh-CN", { hour12: false }))));
   }
 
   function clockMinutes(value) {
@@ -139,8 +179,7 @@
     ];
     const fetchedAt = Date.now();
     const serverNowAt = Date.parse(data.now);
-    const setWindow = (prefix, value, endAt) => {
-      const now = Date.now();
+    const setWindow = (prefix, value, endAt, now) => {
       const startAt = endAt - Number(value.total_seconds || 0) * 1000;
       const progress = Math.min(1, Math.max(0, (now - startAt) / Math.max(1, endAt - startAt)));
       const remaining = Math.max(0, Math.ceil((endAt - now) / 1000));
@@ -152,13 +191,10 @@
       $(`#${prefix}-end-label`).textContent = value.end;
       renderWindowHistory(prefix, value, state.dashboard?.focus?.today || []);
     };
-    window.clearInterval(state.windowCountdown);
-    windows.forEach(([prefix, value]) => setWindow(prefix, value, fetchedAt + Number(value.remaining_seconds || 0) * 1000));
-    renderHomeWindow(data, new Date(serverNowAt));
-    state.windowCountdown = window.setInterval(() => {
-      windows.forEach(([prefix, value]) => setWindow(prefix, value, fetchedAt + Number(value.remaining_seconds || 0) * 1000));
-      renderHomeWindow(data, new Date(serverNowAt + Date.now() - fetchedAt));
-    }, 1000);
+    setSecondTask("windows", (now) => {
+      windows.forEach(([prefix, value]) => setWindow(prefix, value, fetchedAt + Number(value.remaining_seconds || 0) * 1000, now));
+      renderHomeWindow(data, new Date(serverNowAt + now - fetchedAt));
+    });
   }
 
   function renderTicker(scores) {
@@ -220,8 +256,7 @@
   }
 
   function closeFocusSummary() {
-    window.clearInterval(state.summaryTimer);
-    state.summaryTimer = null;
+    removeSecondTask("summary");
     state.summaryCharts.forEach((chart) => chart.destroy());
     state.summaryCharts = [];
     const recent = $("#recent-focus-view");
@@ -264,13 +299,12 @@
     const total = Math.max(1, values.reduce((sum, value) => sum + value, 0));
     $("#today-subject-legend").innerHTML = subjects.map((subject, index) => `<span><i style="background:${palette[index % palette.length]}"></i>${escapeHtml(subject)} ${Math.round((values[index] / total) * 100)}%</span>`).join("");
     const restStartedAt = Date.now();
-    const tick = () => {
-      const elapsed = Math.floor((Date.now() - restStartedAt) / 1000);
+    const tick = (now) => {
+      const elapsed = Math.floor((now - restStartedAt) / 1000);
       $("#rest-timer").textContent = formatSeconds(elapsed);
       if (elapsed >= 900) closeFocusSummary();
     };
-    tick();
-    state.summaryTimer = window.setInterval(tick, 1000);
+    setSecondTask("summary", tick);
   }
 
   function formatScoreDate(value) {
@@ -475,7 +509,7 @@
     $("#active-mode-view").hidden = !active;
     $("#home-state-note").textContent = active ? "专注中，保持当前上下文" : "准备开始下一段专注";
     if (!active) {
-      window.clearInterval(state.timer);
+      removeSecondTask("focus");
       $("#focus-timer").textContent = "00:00:00";
       const track = $("#end-focus");
       const thumb = track?.querySelector(".drag-thumb");
@@ -488,23 +522,58 @@
     }
     $("#focus-subject").textContent = `${active.subject} · 专注`;
     $("#focus-start").textContent = new Date(active.started_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-    const tick = () => {
-      const elapsed = Math.max(0, Math.floor((Date.now() - Date.parse(active.started_at)) / 1000));
+    const tick = (now) => {
+      const elapsed = Math.max(0, Math.floor((now - Date.parse(active.started_at)) / 1000));
       $("#focus-timer").textContent = formatSeconds(elapsed);
       $("#focus-window").textContent = "持续计时 · 不设上限";
     };
-    tick();
-    window.clearInterval(state.timer);
-    state.timer = window.setInterval(tick, 1000);
+    setSecondTask("focus", tick);
     initDragEnd();
   }
 
-  async function loadDashboard() {
-    const data = await api("/api/dashboard");
+  function dashboardSignature(data) {
+    const windowSignature = (value) => [value?.start, value?.end, value?.total_seconds];
+    const active = data.focus?.active;
+    return JSON.stringify({
+      active: active ? [active.id, active.subject, active.started_at, active.status] : null,
+      recent: (data.focus?.recent || []).map((item) => [item.id, item.status, item.ended_at]),
+      scores: (data.score_history || []).map((item) => [item.id, item.subject, item.exam_date, item.score, item.target]),
+      modes: (data.focus_modes || []).map((item) => [item.id, item.subject]),
+      windows: [windowSignature(data.windows?.morning), windowSignature(data.windows?.library)],
+      exam: data.exam?.date,
+      day: String(data.now || "").slice(0, 10),
+      heatmap: data.heatmap,
+    });
+  }
+
+  function applyDashboard(data) {
     state.dashboard = data;
+    state.dashboardSignature = dashboardSignature(data);
     renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap); renderScoreChart(data.score_history); renderRecentFocus(data.focus.recent); renderGuestSummary(data);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
+  }
+
+  async function loadDashboard() {
+    applyDashboard(await api("/api/dashboard"));
+  }
+
+  async function syncDashboard() {
+    if (document.body.dataset.page === "settings" || document.visibilityState !== "visible" || state.syncing) return;
+    state.syncing = true;
+    try {
+      const data = await api("/api/dashboard");
+      if (dashboardSignature(data) !== state.dashboardSignature) applyDashboard(data);
+    } catch (error) {
+      console.warn("dashboard_sync_failed", error);
+    } finally {
+      state.syncing = false;
+    }
+  }
+
+  function startDashboardSync() {
+    window.clearInterval(state.syncTimer);
+    if (document.body.dataset.page !== "settings") state.syncTimer = window.setInterval(syncDashboard, 500);
   }
 
   async function endFocus() {
@@ -622,6 +691,14 @@
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
+    startAlignedSecondClock();
+    ensureWakeLock();
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      ensureWakeLock();
+      runSecondTasks(Date.now());
+      syncDashboard();
+    });
     $("#close-focus-summary")?.addEventListener("click", closeFocusSummary);
     bindQuickScore();
     bindSettingsForms();
@@ -629,5 +706,6 @@
       if (document.body.dataset.page === "settings") await loadSettings();
       else await loadDashboard();
     } catch (error) { showToast(error.message); }
+    startDashboardSync();
   });
 })();

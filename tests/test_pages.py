@@ -61,6 +61,19 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "不限时专注" not in javascript
 
 
+def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authenticated_client):
+    javascript = authenticated_client.get("/static/app.js").get_data(as_text=True)
+
+    assert 'navigator.wakeLock.request("screen")' in javascript
+    assert "window.setInterval(syncDashboard, 500)" in javascript
+    assert "secondTasks: new Map()" in javascript
+    assert 'setSecondTask("clock"' in javascript
+    assert 'setSecondTask("status"' in javascript
+    assert 'setSecondTask("windows"' in javascript
+    assert 'setSecondTask("focus"' in javascript
+    assert "setInterval(tick, 1000)" not in javascript
+
+
 def test_guest_dashboard_replaces_controls_with_today_summary(authenticated_client):
     html = authenticated_client.get("/guest").get_data(as_text=True)
 
