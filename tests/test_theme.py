@@ -52,7 +52,7 @@ def test_time_cards_use_window_duration_widths_and_watermark_titles():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
     javascript = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
 
-    assert "grid-template-columns:360px minmax(0,var(--morning-window)) minmax(0,var(--library-window))" in css
+    assert "grid-template-columns:468px minmax(0,var(--morning-window)) minmax(0,var(--library-window))" in css
     assert ".time-card h2 { position:absolute" in css
     assert "color:rgba(98,110,104,.24)" in css
     assert 'style.setProperty("--morning-window"' in javascript

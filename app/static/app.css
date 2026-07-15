@@ -40,7 +40,7 @@ button { cursor:pointer; }
 .back-link { color:var(--accent-deep); }
 .panel { min-width:0; padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
 .panel h2 { margin:0; font-size:14px; }
-.time-grid { --morning-window:14400fr; --library-window:30600fr; display:grid; grid-template-columns:360px minmax(0,var(--morning-window)) minmax(0,var(--library-window)); gap:10px; }
+.time-grid { --morning-window:14400fr; --library-window:30600fr; display:grid; grid-template-columns:468px minmax(0,var(--morning-window)) minmax(0,var(--library-window)); gap:10px; }
 .time-card { position:relative; min-height:136px; overflow:hidden; }
 .time-card h2 { position:absolute; z-index:1; top:10px; right:12px; color:rgba(98,110,104,.24); font-size:25px; font-weight:800; line-height:1; letter-spacing:0; white-space:nowrap; pointer-events:none; }
 .section-heading h2 { color:#626e68; font-size:12px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; }
