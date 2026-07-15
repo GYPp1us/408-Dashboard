@@ -42,21 +42,21 @@ button { cursor:pointer; }
 .panel h2 { margin:0; font-size:14px; }
 .time-grid { --morning-window:14400fr; --library-window:30600fr; display:grid; grid-template-columns:468px minmax(0,var(--morning-window)) minmax(0,var(--library-window)); gap:10px; }
 .time-card { position:relative; min-height:136px; overflow:hidden; }
-.time-card h2 { position:absolute; z-index:1; top:10px; right:12px; color:rgba(98,110,104,.24); font-size:25px; font-weight:800; line-height:1; letter-spacing:0; white-space:nowrap; pointer-events:none; }
+.time-card h2 { color:var(--muted); font-size:13px; font-weight:700; line-height:1; }
 .section-heading h2 { color:#626e68; font-size:12px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; }
 .time-card > :not(h2) { position:relative; z-index:2; }
-.time-card > strong { display:block; margin-top:8px; font-size:40px; line-height:1; }
+.time-card > strong { display:block; margin-top:5px; font-size:40px; line-height:1; }
 .current-time-card { position:relative; overflow:hidden; }
 .current-time-card::after { content:""; position:absolute; z-index:0; top:0; right:8px; bottom:0; width:50%; background:url("current-time-art.jpg") right center/auto 100% no-repeat; opacity:.8; pointer-events:none; }
 .current-time-card > :not(h2) { max-width:52%; }
-.current-time-card > strong { font-size:45px; }
+.current-time-card > strong { margin-top:0; font-size:45px; }
 .time-card p { margin:8px 0 0; color:var(--muted); font-size:12px; }
 .time-card p b { color:var(--ink); }
 .inline-state { display:flex; align-items:center; gap:7px; margin-top:14px; color:var(--accent-deep); font-size:12px; font-weight:650; }
 .inline-state i { width:6px; height:6px; border-radius:50%; background:var(--accent); }
-.progress-meta { display:flex; justify-content:space-between; margin-top:23px; color:var(--muted); font-size:11px; }
+.progress-meta { display:flex; justify-content:space-between; margin-top:10px; color:var(--muted); font-size:11px; }
 .progress-meta b { color:#4f5963; }
-.progress { position:relative; height:8px; margin-top:8px; overflow:hidden; border-radius:99px; background:#e3e7e9; }
+.progress { position:relative; height:8px; margin-top:5px; overflow:hidden; border-radius:99px; background:#e3e7e9; }
 .progress i { position:absolute; z-index:1; inset:0 auto 0 0; display:block; width:0; height:100%; border-radius:inherit; background:#a8afb5; transition:width .3s ease; }
 .progress-history { position:absolute; z-index:2; inset:0; pointer-events:none; }
 .progress-history span { position:absolute; top:0; bottom:0; min-width:2px; border:0; border-radius:2px; background:var(--accent); }

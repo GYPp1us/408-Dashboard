@@ -48,13 +48,17 @@ def test_status_bar_uses_stacked_date_and_tall_score_billboard():
     assert "translateY(-152px)" in css
 
 
-def test_time_cards_use_window_duration_widths_and_watermark_titles():
+def test_time_cards_use_window_duration_widths_and_compact_titles():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
     javascript = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    template = (ROOT / "app" / "templates" / "dashboard.html").read_text(encoding="utf-8")
 
     assert "grid-template-columns:468px minmax(0,var(--morning-window)) minmax(0,var(--library-window))" in css
-    assert ".time-card h2 { position:absolute" in css
-    assert "color:rgba(98,110,104,.24)" in css
+    assert ".time-card h2 { color:var(--muted); font-size:13px" in css
+    assert ".time-card > strong { display:block; margin-top:5px" in css
+    assert ".progress-meta { display:flex; justify-content:space-between; margin-top:10px" in css
+    assert ".progress { position:relative; height:8px; margin-top:5px" in css
+    assert "<h2>当前时间</h2>" not in template
     assert 'style.setProperty("--morning-window"' in javascript
     assert 'style.setProperty("--library-window"' in javascript
     assert "data.windows.morning.total_seconds" in javascript
