@@ -43,6 +43,7 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
     assert payload["heatmap_visible_hours"] == list(range(0, 24, 2))
     assert payload["focus"]["today"] == []
     assert payload["focus_investment"]["daily_average_seconds"] == 0
+    assert payload["focus_investment"]["yesterday_same_time_seconds"] == 0
     assert payload["focus_investment"]["subjects"] == []
     assert [mode["subject"] for mode in payload["focus_modes"]] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
 

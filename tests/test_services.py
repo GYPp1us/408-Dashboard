@@ -85,7 +85,7 @@ def test_focus_investment_compares_rolling_weeks_and_summarizes_subjects():
     now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
     sessions = [
         ("408二轮", now - timedelta(hours=2), now),
-        ("数学二轮", now - timedelta(days=2, hours=7), now - timedelta(days=2)),
+        ("数学二轮", now - timedelta(days=1, hours=7), now - timedelta(days=1)),
         ("英语二轮", now - timedelta(days=4, hours=5), now - timedelta(days=4)),
         ("政治一轮", now - timedelta(days=10, hours=7), now - timedelta(days=10)),
     ]
@@ -97,6 +97,7 @@ def test_focus_investment_compares_rolling_weeks_and_summarizes_subjects():
     assert result["daily_average_seconds"] == 2 * 3600
     assert result["previous_daily_average_seconds"] == 3600
     assert result["today_seconds"] == 2 * 3600
+    assert result["yesterday_same_time_seconds"] == 7 * 3600
     assert result["subjects"] == [
         {"subject": "数学二轮", "seconds": 7 * 3600},
         {"subject": "英语二轮", "seconds": 5 * 3600},
@@ -115,5 +116,6 @@ def test_focus_investment_handles_empty_data():
         "daily_average_seconds": 0,
         "previous_daily_average_seconds": 0,
         "today_seconds": 0,
+        "yesterday_same_time_seconds": 0,
         "subjects": [],
     }

@@ -1,10 +1,42 @@
 (() => {
-  const state = { dashboard: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, focusMessageIndex: null };
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
     idle: ["#ef5b3f", "#c74732", "#f1875f", "#a93b2c", "#d76e43", "#f4a184", "#8f4a38", "#e48060"],
     focus: ["#7a5bc7", "#5f42aa", "#987ddd", "#4d358c", "#876cbf", "#b09be7", "#614e87", "#9b84cf"],
   };
+  const focusMessages = [
+    { category: "时间管理", text: "当前只处理一个问题，剩下的交给计划。" },
+    { category: "时间管理", text: "先完成眼前这一步，再决定下一步。" },
+    { category: "时间管理", text: "用完整的一小时，换一个真正清晰的知识点。" },
+    { category: "时间管理", text: "难题先标记，别让局部拖住整段节奏。" },
+    { category: "时间管理", text: "速度不是匆忙，而是减少无意义的切换。" },
+    { category: "时间管理", text: "给任务设边界，也给注意力留出余地。" },
+    { category: "时间管理", text: "复习进度由完成的闭环决定，不由打开的页面决定。" },
+    { category: "时间管理", text: "卡住五分钟，就换一种表述重新理解。" },
+    { category: "时间管理", text: "今天的稳定投入，比临时冲刺更可靠。" },
+    { category: "时间管理", text: "结束前留两分钟，写下清晰的下一步。" },
+    { category: "继续前进", text: "你正在把陌生变成熟悉。" },
+    { category: "继续前进", text: "每一次专注，都在降低考场上的不确定性。" },
+    { category: "继续前进", text: "不必等状态完美，开始本身会制造状态。" },
+    { category: "继续前进", text: "碰到能力边界时，慢一点也算前进。" },
+    { category: "继续前进", text: "现在积累的确定性，会在考场上替你说话。" },
+    { category: "继续前进", text: "把会做的做稳，把不会的逐步拆开。" },
+    { category: "继续前进", text: "今日不求惊艳，只求比昨天更扎实。" },
+    { category: "继续前进", text: "题目不会辜负真正理解它的人。" },
+    { category: "继续前进", text: "长期主义不是坚持口号，而是完成这一段。" },
+    { category: "继续前进", text: "无需一次看见终点，只需要守住当前节奏。" },
+    { category: "视线提醒", text: "别盯着面板，回到书页和题目。" },
+    { category: "视线提醒", text: "看远处二十秒，让眼睛也完成一次休息。" },
+    { category: "视线提醒", text: "肩膀放松，呼吸一次，再继续。" },
+    { category: "视线提醒", text: "喝一口水，不要用疲劳冒充努力。" },
+    { category: "视线提醒", text: "坐姿归位，屏幕只是计时器，不是任务本身。" },
+    { category: "视线提醒", text: "如果正在走神，写下干扰，再回到当前题。" },
+    { category: "视线提醒", text: "面板没有新答案，答案在你的草稿纸上。" },
+    { category: "视线提醒", text: "眼睛离开屏幕，注意力留在问题上。" },
+    { category: "视线提醒", text: "听见自己翻页的声音，比看计时数字更重要。" },
+    { category: "视线提醒", text: "不用频繁确认时间，计时会替你记住。" },
+  ];
   const $ = (selector) => document.querySelector(selector);
   const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => themePalettes[active ? "focus" : "idle"];
   if (window.Chart) {
@@ -305,6 +337,50 @@
     else tick(fetchedAt);
   }
 
+  function renderFocusComparison(active) {
+    const view = $("#focus-comparison-view");
+    if (!view || !active) {
+      removeSecondTask("focusComparison");
+      state.focusMessageIndex = null;
+      return;
+    }
+    const tick = (now) => {
+      const investment = state.dashboard?.focus_investment || {};
+      const fetchedAt = state.dashboardFetchedAt || now;
+      const extraSeconds = Math.max(0, Math.floor((now - fetchedAt) / 1000));
+      const todaySeconds = Number(investment.today_seconds || 0) + extraSeconds;
+      const yesterdaySeconds = Number(investment.yesterday_same_time_seconds || 0);
+      const delta = todaySeconds - yesterdaySeconds;
+      const maxSeconds = Math.max(1, todaySeconds, yesterdaySeconds);
+      view.classList.toggle("ahead", delta > 0);
+      view.classList.toggle("behind", delta < 0);
+      $("#focus-compare-time").textContent = `截至 ${new Date(now).toLocaleTimeString("zh-CN", { hour12: false })}`;
+      $("#focus-compare-today").textContent = formatSeconds(todaySeconds);
+      $("#focus-compare-today-label").textContent = formatSeconds(todaySeconds);
+      $("#focus-compare-yesterday-label").textContent = formatSeconds(yesterdaySeconds);
+      $("#focus-compare-trend").textContent = delta > 0 ? `领先 ${formatSeconds(delta)}` : delta < 0 ? `落后 ${formatSeconds(Math.abs(delta))}` : "与昨日持平";
+      $("#focus-compare-today-bar").style.width = `${(todaySeconds / maxSeconds) * 100}%`;
+      $("#focus-compare-yesterday-bar").style.width = `${(yesterdaySeconds / maxSeconds) * 100}%`;
+
+      const elapsed = Math.max(0, Math.floor((now - Date.parse(active.started_at)) / 1000));
+      const messageIndex = Math.floor(elapsed / 30) % focusMessages.length;
+      if (messageIndex !== state.focusMessageIndex) {
+        state.focusMessageIndex = messageIndex;
+        const message = focusMessages[messageIndex];
+        const card = $("#focus-message-card");
+        const displayIndex = String(messageIndex + 1).padStart(2, "0");
+        card.dataset.index = displayIndex;
+        $("#focus-message-category").textContent = message.category;
+        $("#focus-message-text").textContent = message.text;
+        $("#focus-message-count").textContent = `${displayIndex} / ${focusMessages.length}`;
+        card.classList.remove("is-changing");
+        void card.offsetWidth;
+        card.classList.add("is-changing");
+      }
+    };
+    setSecondTask("focusComparison", tick);
+  }
+
   function renderGuestSummary(data) {
     const totalTarget = $("#guest-today-total");
     if (!totalTarget) return;
@@ -329,18 +405,23 @@
     removeSecondTask("summary");
     state.summaryCharts.forEach((chart) => chart.destroy());
     state.summaryCharts = [];
-    const recent = $("#focus-investment-view");
+    const overview = $("#focus-investment-view");
+    const comparison = $("#focus-comparison-view");
     const summary = $("#focus-summary");
-    if (recent) recent.hidden = false;
+    const active = Boolean(state.dashboard?.focus?.active);
+    if (overview) overview.hidden = active;
+    if (comparison) comparison.hidden = !active;
     if (summary) summary.hidden = true;
   }
 
   function showFocusSummary(session, todaySessions) {
-    const recent = $("#focus-investment-view");
+    const overview = $("#focus-investment-view");
+    const comparison = $("#focus-comparison-view");
     const summary = $("#focus-summary");
-    if (!recent || !summary || !window.Chart) return;
+    if (!overview || !summary || !window.Chart) return;
     closeFocusSummary();
-    recent.hidden = true;
+    overview.hidden = true;
+    if (comparison) comparison.hidden = true;
     summary.hidden = false;
     const duration = Math.max(0, Math.floor((Date.parse(session.ended_at) - Date.parse(session.started_at)) / 1000));
     $("#summary-session-time").textContent = formatSeconds(duration);
@@ -577,9 +658,13 @@
     syncScoreChartTheme(active);
     $("#idle-mode-view").hidden = Boolean(active);
     $("#active-mode-view").hidden = !active;
+    $("#focus-investment-view").hidden = Boolean(active);
+    $("#focus-comparison-view").hidden = !active;
     $("#home-state-note").textContent = active ? "专注中，保持当前上下文" : "准备开始下一段专注";
     if (!active) {
       removeSecondTask("focus");
+      removeSecondTask("focusComparison");
+      state.focusMessageIndex = null;
       $("#focus-timer").textContent = "00:00:00";
       const track = $("#end-focus");
       const thumb = track?.querySelector(".drag-thumb");
@@ -590,6 +675,7 @@
       }
       return;
     }
+    renderFocusComparison(active);
     $("#focus-subject").textContent = `${active.subject} · 专注`;
     $("#focus-start").textContent = new Date(active.started_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     const tick = (now) => {
@@ -619,6 +705,7 @@
 
   function applyDashboard(data) {
     state.dashboard = data;
+    state.dashboardFetchedAt = Date.now();
     state.dashboardSignature = dashboardSignature(data);
     renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderGuestSummary(data);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
@@ -635,6 +722,10 @@
     try {
       const data = await api("/api/dashboard");
       if (dashboardSignature(data) !== state.dashboardSignature) applyDashboard(data);
+      else {
+        state.dashboard.focus_investment = data.focus_investment;
+        state.dashboardFetchedAt = Date.now();
+      }
     } catch (error) {
       console.warn("dashboard_sync_failed", error);
     } finally {

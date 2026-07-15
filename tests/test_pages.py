@@ -33,6 +33,10 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="investment-average-stack"' in html
     assert 'id="investment-subject-stack"' in html
     assert 'id="investment-today-stack"' in html
+    assert 'id="focus-comparison-view"' in html
+    assert 'id="focus-compare-today-bar"' in html
+    assert 'id="focus-compare-yesterday-bar"' in html
+    assert 'id="focus-message-card"' in html
     assert "lunch-start-label" in html
     assert "library-history" in html
     assert "home-window-label" in html
@@ -67,6 +71,9 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert '<span class="drag-label">${escapeHtml(mode.subject)}</span>' in javascript
     assert '<span class="drag-label">滑动启动</span>' not in javascript
     assert "function renderFocusInvestment(investment, active)" in javascript
+    assert "function renderFocusComparison(active)" in javascript
+    assert javascript.count('{ category: "') == 30
+    assert "Math.floor(elapsed / 30) % focusMessages.length" in javascript
 
 
 def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authenticated_client):
@@ -80,6 +87,7 @@ def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authentic
     assert 'setSecondTask("windows"' in javascript
     assert 'setSecondTask("focus"' in javascript
     assert 'setSecondTask("investment"' in javascript
+    assert 'setSecondTask("focusComparison"' in javascript
     assert "setInterval(tick, 1000)" not in javascript
 
 

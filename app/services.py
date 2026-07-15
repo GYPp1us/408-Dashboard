@@ -92,6 +92,9 @@ def aggregate_focus_investment(sessions: Iterable[tuple[str, datetime, datetime]
     previous_seconds, _ = summarize(previous_start, current_start)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_seconds, _ = summarize(today_start, now)
+    yesterday_start = today_start - timedelta(days=1)
+    yesterday_same_time = yesterday_start + (now - today_start)
+    yesterday_same_time_seconds, _ = summarize(yesterday_start, yesterday_same_time)
     subjects = [
         {"subject": subject, "seconds": seconds}
         for subject, seconds in sorted(current_subjects.items(), key=lambda item: (-item[1], item[0]))
@@ -102,6 +105,7 @@ def aggregate_focus_investment(sessions: Iterable[tuple[str, datetime, datetime]
         "daily_average_seconds": current_seconds // 7,
         "previous_daily_average_seconds": previous_seconds // 7,
         "today_seconds": today_seconds,
+        "yesterday_same_time_seconds": yesterday_same_time_seconds,
         "subjects": subjects,
     }
 
