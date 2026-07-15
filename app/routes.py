@@ -5,7 +5,7 @@ from flask import jsonify, redirect, render_template, request, session, url_for
 
 from .auth import admin_required, is_guest, login_required
 from .db import connect, get_settings, list_focus_modes, list_latest_scores, list_plans, list_scores
-from .services import aggregate_focus_heatmap, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
+from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
 
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -40,13 +40,13 @@ def _focus_rows(connection, limit: int = 20) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def _heatmap_sessions(connection, now: datetime) -> list[tuple[datetime, datetime]]:
-    rows = connection.execute("SELECT started_at, ended_at FROM focus_sessions ORDER BY started_at").fetchall()
+def _focus_sessions(connection, now: datetime) -> list[tuple[str, datetime, datetime]]:
+    rows = connection.execute("SELECT subject, started_at, ended_at FROM focus_sessions ORDER BY started_at").fetchall()
     sessions = []
     for row in rows:
         start = datetime.fromisoformat(row["started_at"]).astimezone(now.tzinfo)
         end = datetime.fromisoformat(row["ended_at"]).astimezone(now.tzinfo) if row["ended_at"] else now
-        sessions.append((start, end))
+        sessions.append((row["subject"], start, end))
     return sessions
 
 
@@ -105,7 +105,8 @@ def register_routes(app):
                 "library": calculate_window(now, settings["library_open"], settings["library_close"]),
             }
             active_row = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").fetchone()
-            sessions = _heatmap_sessions(connection, now)
+            focus_sessions = _focus_sessions(connection, now)
+            sessions = [(start, end) for _, start, end in focus_sessions]
             scores = score_metrics(list_latest_scores(connection))
             score_history = score_metrics(list_scores(connection))
             plans = list_plans(connection)
@@ -117,6 +118,7 @@ def register_routes(app):
                 "now": now.isoformat(),
                 "exam": {"date": settings["exam_date"], "remaining_seconds": seconds_until_exam(now, settings["exam_date"])},
                 "today_focus": summarize_today_focus(sessions, now),
+                "focus_investment": aggregate_focus_investment(focus_sessions, now),
                 "windows": windows,
                 "focus": {"active": _session_payload(dict(active_row) if active_row else None), "recent": _focus_rows(connection), "today": _today_focus_rows(connection, now)},
                 "focus_modes": list_focus_modes(connection),

@@ -62,13 +62,48 @@ def aggregate_focus_heatmap(sessions: Iterable[tuple[datetime, datetime]], now: 
 def summarize_today_focus(sessions: Iterable[tuple[datetime, datetime]], now: datetime) -> dict[str, int]:
     total_seconds = 0
     count = 0
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     for start, end in sessions:
-        local_start = start.astimezone(now.tzinfo)
-        if local_start.date() != now.date():
-            continue
-        total_seconds += max(0, int((end - start).total_seconds()))
-        count += 1
+        overlap_start = max(start.astimezone(now.tzinfo), day_start)
+        overlap_end = min(end.astimezone(now.tzinfo), now)
+        seconds = max(0, int((overlap_end - overlap_start).total_seconds()))
+        if seconds:
+            total_seconds += seconds
+            count += 1
     return {"seconds": total_seconds, "count": count}
+
+
+def aggregate_focus_investment(sessions: Iterable[tuple[str, datetime, datetime]], now: datetime) -> dict:
+    session_rows = list(sessions)
+
+    def summarize(start: datetime, end: datetime) -> tuple[int, dict[str, int]]:
+        totals: dict[str, int] = {}
+        for subject, session_start, session_end in session_rows:
+            overlap_start = max(session_start.astimezone(now.tzinfo), start)
+            overlap_end = min(session_end.astimezone(now.tzinfo), end)
+            seconds = max(0, int((overlap_end - overlap_start).total_seconds()))
+            if seconds:
+                totals[subject] = totals.get(subject, 0) + seconds
+        return sum(totals.values()), totals
+
+    current_start = now - timedelta(days=7)
+    previous_start = current_start - timedelta(days=7)
+    current_seconds, current_subjects = summarize(current_start, now)
+    previous_seconds, _ = summarize(previous_start, current_start)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_seconds, _ = summarize(today_start, now)
+    subjects = [
+        {"subject": subject, "seconds": seconds}
+        for subject, seconds in sorted(current_subjects.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    return {
+        "current_seconds": current_seconds,
+        "previous_seconds": previous_seconds,
+        "daily_average_seconds": current_seconds // 7,
+        "previous_daily_average_seconds": previous_seconds // 7,
+        "today_seconds": today_seconds,
+        "subjects": subjects,
+    }
 
 
 def score_metrics(scores: Iterable[dict]) -> list[dict]:

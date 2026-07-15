@@ -252,10 +252,57 @@
       : `<div><span>${escapeHtml(item.subject)}</span><b>${item.score} / ${item.target} · ${Math.round(item.completion * 100)}%</b></div>`).join("");
   }
 
-  function renderRecentFocus(sessions) {
-    const target = $("#recent-focus");
-    if (!target) return;
-    target.innerHTML = sessions.length ? sessions.slice(0, 8).map((item) => `<div class="recent-item"><b>${escapeHtml(item.subject)} · 专注</b><small>${new Date(item.started_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · ${item.status === "active" ? "进行中" : "已完成"}</small></div>`).join("") : '<div class="loading-row">暂无专注记录。</div>';
+  function renderFocusInvestment(investment, active) {
+    if (!$("#focus-investment-view")) return;
+    const baseline = investment || {};
+    const fetchedAt = Date.now();
+    const renderTargetStack = (selector, seconds) => {
+      const target = $(selector);
+      if (!target) return;
+      const percent = Math.max(0, Math.min(100, (seconds / 28800) * 100));
+      target.innerHTML = `<span class="stack-primary" style="width:${percent}%"></span><span class="stack-rest" style="width:${100 - percent}%"></span>`;
+    };
+    const tick = (now) => {
+      const extraSeconds = active ? Math.max(0, Math.floor((now - fetchedAt) / 1000)) : 0;
+      const currentSeconds = Number(baseline.current_seconds || 0) + extraSeconds;
+      const dailyAverage = Math.floor(currentSeconds / 7);
+      const previousAverage = Number(baseline.previous_daily_average_seconds || 0);
+      const trendSeconds = dailyAverage - previousAverage;
+      const trend = $("#investment-trend");
+      $("#investment-daily-average").textContent = formatSeconds(dailyAverage);
+      trend.className = `investment-trend${trendSeconds > 0 ? " up" : trendSeconds < 0 ? " down" : ""}`;
+      trend.textContent = trendSeconds > 0 ? `↑ ${formatSeconds(trendSeconds)}` : trendSeconds < 0 ? `↓ ${formatSeconds(Math.abs(trendSeconds))}` : "较前 7 天持平";
+      renderTargetStack("#investment-average-stack", dailyAverage);
+
+      const subjects = (baseline.subjects || []).map((item) => ({ ...item, seconds: Number(item.seconds || 0) }));
+      if (active && extraSeconds) {
+        const activeSubject = subjects.find((item) => item.subject === active.subject);
+        if (activeSubject) activeSubject.seconds += extraSeconds;
+        else subjects.push({ subject: active.subject, seconds: extraSeconds });
+      }
+      subjects.sort((left, right) => right.seconds - left.seconds || left.subject.localeCompare(right.subject, "zh-CN"));
+      const topSubjects = subjects.slice(0, 3);
+      const palette = getThemePalette();
+      const subjectStack = $("#investment-subject-stack");
+      const subjectLegend = $("#investment-subject-legend");
+      $("#investment-week-total").textContent = formatSeconds(currentSeconds);
+      if (!currentSeconds) {
+        subjectStack.innerHTML = "";
+        subjectLegend.innerHTML = "<span>暂无专注数据</span>";
+      } else {
+        const topSeconds = topSubjects.reduce((sum, item) => sum + item.seconds, 0);
+        subjectStack.innerHTML = topSubjects.map((item, index) => `<span style="width:${(item.seconds / currentSeconds) * 100}%;background:${palette[index]}"></span>`).join("") + `<span class="stack-other" style="width:${Math.max(0, ((currentSeconds - topSeconds) / currentSeconds) * 100)}%"></span>`;
+        subjectLegend.innerHTML = topSubjects.map((item, index) => `<span><i style="background:${palette[index]}"></i>${escapeHtml(item.subject)}<b>${Math.round((item.seconds / currentSeconds) * 1000) / 10}% · ${formatSeconds(item.seconds)}</b></span>`).join("");
+      }
+
+      const todaySeconds = Number(baseline.today_seconds || 0) + extraSeconds;
+      $("#investment-today-total").textContent = formatSeconds(todaySeconds);
+      $("#investment-today-percent").textContent = `${Math.round((todaySeconds / 28800) * 1000) / 10}%`;
+      renderTargetStack("#investment-today-stack", todaySeconds);
+    };
+    removeSecondTask("investment");
+    if (active) setSecondTask("investment", tick);
+    else tick(fetchedAt);
   }
 
   function renderGuestSummary(data) {
@@ -282,14 +329,14 @@
     removeSecondTask("summary");
     state.summaryCharts.forEach((chart) => chart.destroy());
     state.summaryCharts = [];
-    const recent = $("#recent-focus-view");
+    const recent = $("#focus-investment-view");
     const summary = $("#focus-summary");
     if (recent) recent.hidden = false;
     if (summary) summary.hidden = true;
   }
 
   function showFocusSummary(session, todaySessions) {
-    const recent = $("#recent-focus-view");
+    const recent = $("#focus-investment-view");
     const summary = $("#focus-summary");
     if (!recent || !summary || !window.Chart) return;
     closeFocusSummary();
@@ -519,7 +566,7 @@
 
   function animateLayout() {
     if (!window.Flip) return;
-    const flipState = Flip.getState(".time-card, .activity-panel, .score-panel, .mode-panel");
+    const flipState = Flip.getState(".time-card, .activity-panel, .investment-panel, .mode-panel");
     requestAnimationFrame(() => Flip.from(flipState, { duration: .42, ease: "power2.inOut", stagger: .015, absolute: false }));
   }
 
@@ -573,7 +620,7 @@
   function applyDashboard(data) {
     state.dashboard = data;
     state.dashboardSignature = dashboardSignature(data);
-    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderScoreChart(data.score_history); renderRecentFocus(data.focus.recent); renderGuestSummary(data);
+    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderGuestSummary(data);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
   }

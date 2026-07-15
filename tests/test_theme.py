@@ -65,3 +65,13 @@ def test_time_cards_use_window_duration_widths_and_compact_titles():
     assert 'style.setProperty("--library-window"' in javascript
     assert "data.windows.morning.total_seconds" in javascript
     assert "data.windows.library.total_seconds" in javascript
+
+
+def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
+    css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert ".investment-charts { display:grid" in css
+    assert ".linear-stack { display:flex; height:14px" in css
+    assert ".linear-stack .stack-primary { background:var(--accent)" in css
+    assert ".investment-trend.up { background:#e7f3ef; color:var(--score-positive)" in css
+    assert ".investment-trend.down { background:#faebe8; color:var(--score-negative)" in css

@@ -72,7 +72,48 @@ def test_today_summary_counts_only_sessions_in_local_day():
     now = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
     sessions = [
         (datetime(2026, 7, 13, 10, 0, tzinfo=timezone.utc), datetime(2026, 7, 13, 11, 0, tzinfo=timezone.utc)),
+        (datetime(2026, 7, 12, 23, 30, tzinfo=timezone.utc), datetime(2026, 7, 13, 0, 30, tzinfo=timezone.utc)),
         (datetime(2026, 7, 12, 10, 0, tzinfo=timezone.utc), datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)),
     ]
 
-    assert summarize_today_focus(sessions, now) == {"seconds": 3600, "count": 1}
+    assert summarize_today_focus(sessions, now) == {"seconds": 5400, "count": 2}
+
+
+def test_focus_investment_compares_rolling_weeks_and_summarizes_subjects():
+    from app.services import aggregate_focus_investment
+
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    sessions = [
+        ("408二轮", now - timedelta(hours=2), now),
+        ("数学二轮", now - timedelta(days=2, hours=7), now - timedelta(days=2)),
+        ("英语二轮", now - timedelta(days=4, hours=5), now - timedelta(days=4)),
+        ("政治一轮", now - timedelta(days=10, hours=7), now - timedelta(days=10)),
+    ]
+
+    result = aggregate_focus_investment(sessions, now)
+
+    assert result["current_seconds"] == 14 * 3600
+    assert result["previous_seconds"] == 7 * 3600
+    assert result["daily_average_seconds"] == 2 * 3600
+    assert result["previous_daily_average_seconds"] == 3600
+    assert result["today_seconds"] == 2 * 3600
+    assert result["subjects"] == [
+        {"subject": "数学二轮", "seconds": 7 * 3600},
+        {"subject": "英语二轮", "seconds": 5 * 3600},
+        {"subject": "408二轮", "seconds": 2 * 3600},
+    ]
+
+
+def test_focus_investment_handles_empty_data():
+    from app.services import aggregate_focus_investment
+
+    result = aggregate_focus_investment([], datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc))
+
+    assert result == {
+        "current_seconds": 0,
+        "previous_seconds": 0,
+        "daily_average_seconds": 0,
+        "previous_daily_average_seconds": 0,
+        "today_seconds": 0,
+        "subjects": [],
+    }
