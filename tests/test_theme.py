@@ -9,6 +9,10 @@ def test_dashboard_colors_follow_focus_state_except_score_deltas():
     javascript = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
 
     assert "body.page-focus,body.is-focusing { --accent:#7a5bc7" in css
+    assert ":root { --ink:#20272f" in css and "--accent:#d66c58" in css
+    assert "idle: [\"#d66c58\", \"#b25647\", \"#dd9073\"" in javascript
+    assert "#ef5b3f" not in css
+    assert "#ef5b3f" not in javascript
     assert ".progress i" in css and "background:#a8afb5" in css
     assert ".progress-history span" in css and "background:var(--accent)" in css
     assert ".heat-cell.l1{background:var(--heat-l1)}" in css

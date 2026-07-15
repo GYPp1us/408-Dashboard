@@ -2,7 +2,7 @@
   const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, focusMessageIndex: null };
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
-    idle: ["#ef5b3f", "#c74732", "#f1875f", "#a93b2c", "#d76e43", "#f4a184", "#8f4a38", "#e48060"],
+    idle: ["#d66c58", "#b25647", "#dd9073", "#97483e", "#c27758", "#e4a994", "#835144", "#d28a72"],
     focus: ["#7a5bc7", "#5f42aa", "#987ddd", "#4d358c", "#876cbf", "#b09be7", "#614e87", "#9b84cf"],
   };
   const focusMessages = [
