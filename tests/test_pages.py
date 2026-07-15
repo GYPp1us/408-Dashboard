@@ -20,8 +20,8 @@ def authenticated_client(tmp_path):
 def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_client):
     html = authenticated_client.get("/").get_data(as_text=True)
 
-    assert "今日有效学习" in html
-    assert "近期模拟考" in html
+    assert "<small>今日有效学习</small>" not in html
+    assert "<small>近期模拟考</small>" not in html
     assert "score-board" in html
     assert 'id="today-date" class="console-date"' in html
     assert "2 小时级" in html

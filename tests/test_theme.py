@@ -36,3 +36,13 @@ def test_heatmap_scale_and_current_time_art_are_fixed():
     assert 'background:url("current-time-art.jpg") right center/auto 100% no-repeat' in css
     assert "right:8px" in css
     assert "opacity:.8" in css
+
+
+def test_status_bar_uses_stacked_date_and_tall_score_billboard():
+    css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert ".status-title { display:grid" in css
+    assert ".status-title i { grid-row:1 / 3" in css
+    assert ".score-window { flex:1; height:38px" in css
+    assert ".score-row" in css and "height:38px" in css
+    assert "translateY(-152px)" in css
