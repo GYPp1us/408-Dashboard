@@ -13,7 +13,7 @@
       <div class="exam-countdown"><small>距考研</small><strong id="exam-days">-- 天</strong><span id="exam-clock">--:--:--</span></div>
       <div class="score-board"><div class="score-window"><div id="score-track" class="score-track"><div class="score-row"><span>正在读取成绩</span><b>-- / --</b><em>--</em></div></div></div></div>
       <div class="today-study"><strong id="today-study">00:00 / 08:00</strong><span id="today-progress">完成度 0%</span></div>
-      <div class="current-state"><span id="state-dot" class="state-dot"></span><span id="current-state">准备学习</span>{% if is_guest %}<span class="guest-badge">访客</span><a class="role-switch" href="{{ url_for('switch_admin') }}" title="切换到管理员">管理员</a>{% else %}<a class="role-switch" href="{{ url_for('guest_dashboard') }}" title="切换到访客面板">访客</a><button id="open-quick-score" class="quick-score-trigger" type="button" title="快速录入模拟成绩（Ctrl+N）">＋ 成绩</button><a class="settings-link" href="{{ url_for('settings_page') }}" title="打开设置">设置</a>{% endif %}</div>
+      <div class="current-state"><span id="state-dot" class="state-dot"></span><span id="current-state">准备学习</span>{% if is_guest %}<span class="guest-badge">访客</span><a class="role-switch" href="{{ url_for('switch_admin') }}" title="切换到管理员">管理员</a>{% else %}<button id="open-quick-score" class="quick-score-trigger" type="button" title="快速录入模拟成绩（Ctrl+N）">＋ 成绩</button><a class="settings-link" href="{{ url_for('settings_page') }}" title="打开设置">设置</a>{% endif %}</div>
     </header>
     <main class="app-main">{% block content %}{% endblock %}</main>
   </div>

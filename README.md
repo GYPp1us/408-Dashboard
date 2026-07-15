@@ -107,10 +107,7 @@ sudo certbot --nginx -d study.example.com
 
 Certbot 会在 Nginx 中加入证书配置，并可自动将 HTTP 重定向到 HTTPS。
 
-完成后访问：
-
-- 管理员面板：`https://study.example.com/`
-- 无密码访客面板：`https://study.example.com/guest`
+完成后访问 `https://study.example.com/`。未登录访问会自动进入无密码访客面板；点击右上角“管理员”或直接访问 `https://study.example.com/admin` 后，输入管理员密码进入管理界面。
 
 ## HTTP 与 HTTPS 的区别
 

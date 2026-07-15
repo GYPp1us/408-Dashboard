@@ -57,6 +57,8 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="quick-score-form"' in html
     assert "<h2>快捷专注</h2>" not in html
     assert "选择科目后滑动启动" not in html
+    assert 'href="/guest"' not in html
+    assert "切换到访客面板" not in html
     assert "sidebar" not in html
     assert "topnav" not in html
 

@@ -69,22 +69,19 @@ def _today_focus_rows(connection, now: datetime) -> list[dict]:
 
 def register_routes(app):
     @app.get("/")
-    @login_required
     def dashboard():
-        if is_guest():
+        if not session.get("authenticated") or is_guest():
             return redirect(url_for("guest_dashboard"))
         return render_template("dashboard.html", page_name="home", is_guest=False)
 
     @app.get("/guest")
     def guest_dashboard():
-        if session.get("authenticated") and not is_guest():
-            session["admin_authenticated"] = True
+        session.clear()
         session["authenticated"] = True
         session["role"] = "guest"
         return render_template("dashboard.html", page_name="home", is_guest=True)
 
     @app.get("/focus")
-    @login_required
     def focus_compatibility_redirect():
         return redirect(url_for("dashboard"))
 

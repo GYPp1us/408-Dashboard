@@ -15,12 +15,15 @@ def client(tmp_path):
     return app.test_client()
 
 
-def test_protected_page_redirects_to_login(client):
+def test_root_redirects_to_guest_without_password(client):
     response = client.get("/")
 
     assert response.status_code == 302
-    assert response.headers["Location"].startswith("/login?")
-    assert "next=/" in response.headers["Location"]
+    assert response.headers["Location"].endswith("/guest")
+    guest = client.get(response.headers["Location"])
+    assert guest.status_code == 200
+    assert 'data-role="guest"' in guest.get_data(as_text=True)
+    assert client.get("/api/dashboard").status_code == 200
 
 
 def test_invalid_password_is_rejected(client):
@@ -45,7 +48,8 @@ def test_logout_clears_authenticated_session(client):
     response = client.post("/logout")
 
     assert response.status_code == 302
-    assert client.get("/").status_code == 302
+    assert response.headers["Location"].endswith("/guest")
+    assert client.get("/admin").headers["Location"].startswith("/login?")
 
 
 def test_guest_dashboard_needs_no_password_and_admin_switch_requires_login(client):
@@ -57,13 +61,17 @@ def test_guest_dashboard_needs_no_password_and_admin_switch_requires_login(clien
     assert admin_switch.status_code == 302
     assert admin_switch.headers["Location"].startswith("/login?")
 
+    login = client.post("/login", data={"password": "test-password", "next": "/admin"})
+    assert login.headers["Location"].endswith("/admin")
+    assert client.get("/admin").headers["Location"].endswith("/")
+    assert 'data-role="admin"' in client.get("/").get_data(as_text=True)
 
-def test_authenticated_admin_can_switch_to_guest_and_back(client):
+
+def test_entering_guest_clears_admin_authentication(client):
     client.post("/login", data={"password": "test-password"})
 
     assert client.get("/guest").status_code == 200
     response = client.get("/admin")
 
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/")
-    assert client.get("/").status_code == 200
+    assert response.headers["Location"].startswith("/login?")
