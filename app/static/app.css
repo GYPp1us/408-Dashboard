@@ -40,7 +40,7 @@ button { cursor:pointer; }
 .back-link { color:var(--accent-deep); }
 .panel { min-width:0; padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
 .panel h2 { margin:0; font-size:14px; }
-.time-grid { --morning-window:14400fr; --library-window:30600fr; display:grid; grid-template-columns:468px minmax(0,var(--morning-window)) minmax(0,var(--library-window)); gap:10px; }
+.time-grid { --morning-window:14400fr; --library-window:30600fr; display:grid; grid-template-columns:468px minmax(280px,var(--morning-window)) minmax(0,var(--library-window)); gap:10px; }
 .time-card { position:relative; min-height:136px; overflow:hidden; }
 .time-card h2 { color:var(--muted); font-size:13px; font-weight:700; line-height:1; }
 .section-heading h2 { color:#626e68; font-size:12px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; }
@@ -76,7 +76,6 @@ button { cursor:pointer; }
 .activity-panel { display:flex; flex-direction:column; }
 .focus-modes { display:grid; grid-template-columns:1fr; gap:8px; }
 .mode { padding:10px; border:1px solid var(--accent-border); border-radius:7px; background:var(--accent-surface); }
-.mode strong { display:block; font-size:13px; }
 .guest-summary-total { padding:18px 0; border-bottom:1px solid var(--line); }
 .guest-summary-total span,.guest-summary-total small { display:block; color:var(--muted); font-size:11px; }
 .guest-summary-total strong { display:block; margin:8px 0 7px; color:var(--accent-deep); font-size:34px; line-height:1; }
@@ -94,6 +93,8 @@ button { cursor:pointer; }
 .drag-launch .drag-fill,.drag-action .drag-fill { position:absolute; inset:0 auto 0 0; width:0; background:var(--accent); opacity:.95; pointer-events:none; }
 .drag-action .drag-fill { background:var(--accent); }
 .drag-launch .drag-label,.drag-action .drag-label { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--accent-deep); font-size:11px; font-weight:750; pointer-events:none; }
+.mode .drag-launch { margin-top:0; }
+.drag-launch .drag-label { font-size:13px; }
 .drag-action .drag-label { color:var(--accent-deep); }
 .drag-launch .drag-label.on-fill,.drag-action .drag-label.on-fill { color:#fff; }
 .drag-thumb { position:absolute; z-index:2; top:2px; left:2px; display:flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:5px; background:#fff; color:var(--accent-deep); box-shadow:0 2px 8px rgba(57,45,41,.18); cursor:grab; }

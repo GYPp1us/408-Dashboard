@@ -47,7 +47,8 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="open-quick-score"' in html
     assert 'id="quick-score-modal"' in html
     assert 'id="quick-score-form"' in html
-    assert "选择科目后滑动启动" in html
+    assert "<h2>快捷专注</h2>" not in html
+    assert "选择科目后滑动启动" not in html
     assert "sidebar" not in html
     assert "topnav" not in html
 
@@ -59,6 +60,8 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert 'event.preventDefault();' in javascript
     assert 'modal.showModal();' in javascript
     assert "不限时专注" not in javascript
+    assert '<span class="drag-label">${escapeHtml(mode.subject)}</span>' in javascript
+    assert '<span class="drag-label">滑动启动</span>' not in javascript
 
 
 def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authenticated_client):

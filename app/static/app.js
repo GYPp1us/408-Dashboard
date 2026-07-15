@@ -453,7 +453,7 @@
   function renderModes(modes) {
     const target = $("#focus-modes");
     if (!target) return;
-    target.innerHTML = modes.map((mode) => `<div class="mode"><strong>${escapeHtml(mode.subject)}</strong><div class="drag-launch" data-subject="${escapeHtml(mode.subject)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">滑动启动</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(mode.subject)}">→</span></div></div>`).join("");
+    target.innerHTML = modes.map((mode) => `<div class="mode"><div class="drag-launch" data-subject="${escapeHtml(mode.subject)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">${escapeHtml(mode.subject)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(mode.subject)}">→</span></div></div>`).join("");
     initDragLaunchers();
   }
 

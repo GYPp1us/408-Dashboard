@@ -53,11 +53,13 @@ def test_time_cards_use_window_duration_widths_and_compact_titles():
     javascript = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
     template = (ROOT / "app" / "templates" / "dashboard.html").read_text(encoding="utf-8")
 
-    assert "grid-template-columns:468px minmax(0,var(--morning-window)) minmax(0,var(--library-window))" in css
+    assert "grid-template-columns:468px minmax(280px,var(--morning-window)) minmax(0,var(--library-window))" in css
     assert ".time-card h2 { color:var(--muted); font-size:13px" in css
     assert ".time-card > strong { display:block; margin-top:5px" in css
     assert ".progress-meta { display:flex; justify-content:space-between; margin-top:10px" in css
     assert ".progress { position:relative; height:8px; margin-top:5px" in css
+    assert ".mode .drag-launch { margin-top:0" in css
+    assert ".drag-launch .drag-label { font-size:13px" in css
     assert "<h2>当前时间</h2>" not in template
     assert 'style.setProperty("--morning-window"' in javascript
     assert 'style.setProperty("--library-window"' in javascript
