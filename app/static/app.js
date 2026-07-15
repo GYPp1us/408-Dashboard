@@ -190,6 +190,9 @@
       ["lunch", data.windows.morning],
       ["library", data.windows.library],
     ];
+    const timeGrid = $(".time-grid");
+    timeGrid?.style.setProperty("--morning-window", `${Math.max(1, Number(data.windows.morning.total_seconds) || 1)}fr`);
+    timeGrid?.style.setProperty("--library-window", `${Math.max(1, Number(data.windows.library.total_seconds) || 1)}fr`);
     const fetchedAt = Date.now();
     const serverNowAt = Date.parse(data.now);
     const setWindow = (prefix, value, endAt, now) => {

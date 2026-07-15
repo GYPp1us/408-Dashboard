@@ -40,13 +40,15 @@ button { cursor:pointer; }
 .back-link { color:var(--accent-deep); }
 .panel { min-width:0; padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
 .panel h2 { margin:0; font-size:14px; }
-.time-grid { display:grid; grid-template-columns:1.25fr .85fr .85fr; gap:10px; }
-.time-card { min-height:136px; }
-.time-card h2,.section-heading h2 { color:#626e68; font-size:12px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; }
-.time-card > strong { display:block; margin-top:19px; font-size:40px; line-height:1; }
+.time-grid { --morning-window:14400fr; --library-window:30600fr; display:grid; grid-template-columns:360px minmax(0,var(--morning-window)) minmax(0,var(--library-window)); gap:10px; }
+.time-card { position:relative; min-height:136px; overflow:hidden; }
+.time-card h2 { position:absolute; z-index:1; top:10px; right:12px; color:rgba(98,110,104,.24); font-size:25px; font-weight:800; line-height:1; letter-spacing:0; white-space:nowrap; pointer-events:none; }
+.section-heading h2 { color:#626e68; font-size:12px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; }
+.time-card > :not(h2) { position:relative; z-index:2; }
+.time-card > strong { display:block; margin-top:8px; font-size:40px; line-height:1; }
 .current-time-card { position:relative; overflow:hidden; }
 .current-time-card::after { content:""; position:absolute; z-index:0; top:0; right:8px; bottom:0; width:50%; background:url("current-time-art.jpg") right center/auto 100% no-repeat; opacity:.8; pointer-events:none; }
-.current-time-card > * { position:relative; z-index:1; max-width:52%; }
+.current-time-card > :not(h2) { max-width:52%; }
 .current-time-card > strong { font-size:45px; }
 .time-card p { margin:8px 0 0; color:var(--muted); font-size:12px; }
 .time-card p b { color:var(--ink); }
