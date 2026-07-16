@@ -4,7 +4,7 @@ import re
 from flask import jsonify, redirect, render_template, request, session, url_for
 
 from .auth import admin_required, is_guest, login_required
-from .db import connect, get_focus_messages, get_settings, list_focus_modes, list_latest_scores, list_plans, list_scores, replace_focus_modes, save_focus_messages
+from .db import connect, finish_focus_session, get_focus_messages, get_settings, list_focus_modes, list_latest_scores, list_plans, list_scores, replace_focus_modes, save_focus_messages
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
 
 
@@ -48,45 +48,106 @@ def _now(timezone_name: str = "UTC") -> datetime:
     return current_time(timezone_name)
 
 
-def _row(connection, session_id: int):
-    row = connection.execute("SELECT * FROM focus_sessions WHERE id = ?", (session_id,)).fetchone()
-    return dict(row) if row else None
+def _pause_map(connection) -> dict[int, list[dict]]:
+    pauses: dict[int, list[dict]] = {}
+    for row in connection.execute("SELECT * FROM focus_pauses ORDER BY started_at"):
+        pauses.setdefault(row["session_id"], []).append(dict(row))
+    return pauses
 
 
-def _session_payload(row: dict | None) -> dict | None:
+def _session_segments(row: dict, pauses: list[dict], now: datetime) -> list[tuple[datetime, datetime]]:
+    start = datetime.fromisoformat(row["started_at"]).astimezone(now.tzinfo)
+    end = datetime.fromisoformat(row["ended_at"]).astimezone(now.tzinfo) if row.get("ended_at") else now
+    cursor = start
+    segments = []
+    for pause in pauses:
+        pause_start = datetime.fromisoformat(pause["started_at"]).astimezone(now.tzinfo)
+        pause_end = datetime.fromisoformat(pause["ended_at"]).astimezone(now.tzinfo) if pause.get("ended_at") else end
+        if pause_end <= cursor or pause_start >= end:
+            continue
+        pause_start = max(start, pause_start)
+        pause_end = min(end, pause_end)
+        if pause_start > cursor:
+            segments.append((cursor, pause_start))
+        cursor = max(cursor, pause_end)
+    if cursor < end:
+        segments.append((cursor, end))
+    return segments
+
+
+def _session_payload(row: dict | None, pauses: list[dict], now: datetime) -> dict | None:
     if not row:
         return None
-    return row
+    payload = dict(row)
+    closed_paused_seconds = 0
+    paused_at = None
+    for pause in pauses:
+        if pause.get("ended_at"):
+            closed_paused_seconds += max(0, int((datetime.fromisoformat(pause["ended_at"]) - datetime.fromisoformat(pause["started_at"])).total_seconds()))
+        else:
+            paused_at = pause["started_at"]
+    payload["paused_at"] = paused_at
+    payload["paused_seconds"] = closed_paused_seconds
+    payload["effective_seconds"] = sum(int((end - start).total_seconds()) for start, end in _session_segments(payload, pauses, now))
+    payload["focus_locked"] = bool(payload.get("focus_locked"))
+    payload["trusted"] = bool(payload.get("trusted", 1))
+    return payload
 
 
-def _focus_rows(connection, limit: int = 20) -> list[dict]:
+def _row(connection, session_id: int, now: datetime | None = None):
+    row = connection.execute("SELECT * FROM focus_sessions WHERE id = ?", (session_id,)).fetchone()
+    if not row:
+        return None
+    current = now or _now("UTC")
+    return _session_payload(dict(row), _pause_map(connection).get(session_id, []), current)
+
+
+def _focus_rows(connection, now: datetime, limit: int = 20, pauses: dict[int, list[dict]] | None = None) -> list[dict]:
     rows = connection.execute("SELECT * FROM focus_sessions ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
-    return [dict(row) for row in rows]
+    pause_rows = pauses if pauses is not None else _pause_map(connection)
+    return [_session_payload(dict(row), pause_rows.get(row["id"], []), now) for row in rows]
 
 
-def _focus_sessions(connection, now: datetime) -> list[tuple[str, datetime, datetime]]:
-    rows = connection.execute("SELECT subject, started_at, ended_at FROM focus_sessions ORDER BY started_at").fetchall()
+def _focus_sessions(connection, now: datetime, pauses: dict[int, list[dict]] | None = None) -> list[tuple[str, datetime, datetime]]:
+    rows = connection.execute("SELECT * FROM focus_sessions ORDER BY started_at").fetchall()
+    pause_rows = pauses if pauses is not None else _pause_map(connection)
     sessions = []
     for row in rows:
-        start = datetime.fromisoformat(row["started_at"]).astimezone(now.tzinfo)
-        end = datetime.fromisoformat(row["ended_at"]).astimezone(now.tzinfo) if row["ended_at"] else now
-        sessions.append((row["subject"], start, end))
+        for start, end in _session_segments(dict(row), pause_rows.get(row["id"], []), now):
+            sessions.append((row["subject"], start, end))
     return sessions
 
 
-def _today_focus_rows(connection, now: datetime) -> list[dict]:
+def _today_focus_rows(connection, now: datetime, pauses: dict[int, list[dict]] | None = None) -> list[dict]:
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
     rows = connection.execute("SELECT * FROM focus_sessions ORDER BY started_at").fetchall()
+    pause_rows = pauses if pauses is not None else _pause_map(connection)
     result = []
     for row in rows:
-        payload = dict(row)
+        row_data = dict(row)
+        payload = _session_payload(row_data, pause_rows.get(row["id"], []), now)
         start = datetime.fromisoformat(payload["started_at"]).astimezone(now.tzinfo)
         end = datetime.fromisoformat(payload["ended_at"]).astimezone(now.tzinfo) if payload["ended_at"] else now
         if end <= day_start or start >= day_end:
             continue
         payload["started_at"] = max(start, day_start).isoformat()
         payload["ended_at"] = min(end, day_end).isoformat() if payload["ended_at"] else None
+        payload["segments"] = []
+        for segment_start, segment_end in _session_segments(row_data, pause_rows.get(row["id"], []), now):
+            clipped_start = max(segment_start, day_start)
+            clipped_end = min(segment_end, day_end)
+            if clipped_end <= clipped_start:
+                continue
+            is_running = not row_data.get("ended_at") and not payload["paused_at"] and clipped_end >= now
+            payload["segments"].append({
+                "started_at": clipped_start.isoformat(),
+                "ended_at": None if is_running else clipped_end.isoformat(),
+            })
+        payload["effective_seconds"] = sum(
+            max(0, int(((datetime.fromisoformat(segment["ended_at"]) if segment["ended_at"] else now) - datetime.fromisoformat(segment["started_at"])).total_seconds()))
+            for segment in payload["segments"]
+        )
         result.append(payload)
     return result
 
@@ -118,6 +179,8 @@ def register_routes(app):
     @login_required
     def dashboard_api():
         connection = connect(app.config["DATABASE"])
+        connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active'", (_now("UTC").isoformat(),))
+        connection.commit()
         settings = get_settings(connection)
         now = _now(settings.get("timezone", "Asia/Shanghai"))
         try:
@@ -125,9 +188,13 @@ def register_routes(app):
                 "morning": calculate_window(now, settings["morning_start"], settings["lunch_start"]),
                 "library": calculate_window(now, settings["library_open"], settings["library_close"]),
             }
+            pauses = _pause_map(connection)
             active_row = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").fetchone()
-            focus_sessions = _focus_sessions(connection, now)
+            focus_sessions = _focus_sessions(connection, now, pauses)
             sessions = [(start, end) for _, start, end in focus_sessions]
+            today_rows = _today_focus_rows(connection, now, pauses)
+            today_focus = summarize_today_focus(sessions, now)
+            today_focus["count"] = len(today_rows)
             scores = score_metrics(list_latest_scores(connection))
             score_history = score_metrics(list_scores(connection))
             plans = list_plans(connection)
@@ -138,10 +205,14 @@ def register_routes(app):
             return jsonify({
                 "now": now.isoformat(),
                 "exam": {"date": settings["exam_date"], "remaining_seconds": seconds_until_exam(now, settings["exam_date"])},
-                "today_focus": summarize_today_focus(sessions, now),
+                "today_focus": today_focus,
                 "focus_investment": aggregate_focus_investment(focus_sessions, now),
                 "windows": windows,
-                "focus": {"active": _session_payload(dict(active_row) if active_row else None), "recent": _focus_rows(connection), "today": _today_focus_rows(connection, now)},
+                "focus": {
+                    "active": _session_payload(dict(active_row), pauses.get(active_row["id"], []), now) if active_row else None,
+                    "recent": _focus_rows(connection, now, pauses=pauses),
+                    "today": today_rows,
+                },
                 "focus_modes": list_focus_modes(connection),
                 "focus_messages": get_focus_messages(connection),
                 "heatmap": aggregate_focus_heatmap(sessions, now),
@@ -158,8 +229,13 @@ def register_routes(app):
     def focus_api():
         connection = connect(app.config["DATABASE"])
         try:
+            now = _now("UTC")
             active = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").fetchone()
-            return jsonify({"active": _session_payload(dict(active) if active else None), "recent": _focus_rows(connection)})
+            pauses = _pause_map(connection)
+            return jsonify({
+                "active": _session_payload(dict(active), pauses.get(active["id"], []), now) if active else None,
+                "recent": _focus_rows(connection, now, pauses=pauses),
+            })
         finally:
             connection.close()
 
@@ -185,15 +261,15 @@ def register_routes(app):
                 existing = connection.execute("SELECT * FROM focus_sessions WHERE client_token = ?", (client_token,)).fetchone()
                 if existing:
                     connection.commit()
-                    return jsonify(session=dict(existing), idempotent=True), 200
+                    return jsonify(session=_row(connection, existing["id"]), idempotent=True), 200
             active = connection.execute("SELECT id FROM focus_sessions WHERE status = 'active' LIMIT 1").fetchone()
             if active:
                 connection.rollback()
                 return jsonify(error="focus_already_active"), 409
             started_at = _now("UTC").isoformat()
             cursor = connection.execute(
-                "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status, client_token) VALUES (?, ?, ?, ?, 'active', ?)",
-                (subject, mode, planned_minutes, started_at, client_token or None),
+                "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status, client_token, last_foreground_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
+                (subject, mode, planned_minutes, started_at, client_token or None, started_at),
             )
             connection.commit()
             return jsonify(session=_row(connection, cursor.lastrowid)), 201
@@ -207,15 +283,76 @@ def register_routes(app):
         session_id = payload.get("session_id")
         connection = connect(app.config["DATABASE"])
         try:
+            connection.execute("BEGIN IMMEDIATE")
             if session_id is None:
                 row = connection.execute("SELECT id FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").fetchone()
                 session_id = row["id"] if row else None
             row = connection.execute("SELECT * FROM focus_sessions WHERE id = ? AND status = 'active'", (session_id,)).fetchone()
             if not row:
+                connection.rollback()
                 return jsonify(error="active_focus_not_found"), 404
-            connection.execute("UPDATE focus_sessions SET ended_at = ?, status = 'completed' WHERE id = ? AND status = 'active'", (_now("UTC").isoformat(), session_id))
+            ended_at = _now("UTC").isoformat()
+            finish_focus_session(connection, int(session_id), ended_at)
             connection.commit()
             return jsonify(session=_row(connection, int(session_id)))
+        finally:
+            connection.close()
+
+    @app.post("/api/focus/pause")
+    @admin_required
+    def pause_focus():
+        payload = request.get_json(silent=True) or {}
+        session_id = payload.get("session_id")
+        should_pause = payload.get("paused")
+        if not isinstance(should_pause, bool):
+            return jsonify(error="paused_boolean_required"), 400
+        connection = connect(app.config["DATABASE"])
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM focus_sessions WHERE id = ? AND status = 'active'", (session_id,)).fetchone()
+            if not row:
+                connection.rollback()
+                return jsonify(error="active_focus_not_found"), 404
+            open_pause = connection.execute("SELECT id FROM focus_pauses WHERE session_id = ? AND ended_at IS NULL", (session_id,)).fetchone()
+            now = _now("UTC").isoformat()
+            if should_pause and not open_pause:
+                connection.execute("INSERT INTO focus_pauses(session_id, started_at) VALUES (?, ?)", (session_id, now))
+                connection.execute("UPDATE focus_sessions SET interruption_count = interruption_count + 1, last_foreground_at = ? WHERE id = ?", (now, session_id))
+            elif not should_pause and open_pause:
+                connection.execute("UPDATE focus_pauses SET ended_at = ? WHERE id = ?", (now, open_pause["id"]))
+                connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE id = ?", (now, session_id))
+            connection.commit()
+            return jsonify(session=_row(connection, int(session_id)))
+        finally:
+            connection.close()
+
+    @app.post("/api/focus/lock")
+    @admin_required
+    def lock_focus():
+        payload = request.get_json(silent=True) or {}
+        session_id = payload.get("session_id")
+        connection = connect(app.config["DATABASE"])
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT id FROM focus_sessions WHERE id = ? AND status = 'active'", (session_id,)).fetchone()
+            if not row:
+                connection.rollback()
+                return jsonify(error="active_focus_not_found"), 404
+            connection.execute("UPDATE focus_sessions SET focus_locked = 1, trusted = 0 WHERE id = ?", (session_id,))
+            connection.commit()
+            return jsonify(session=_row(connection, int(session_id)))
+        finally:
+            connection.close()
+
+    @app.post("/api/focus/heartbeat")
+    @login_required
+    def focus_heartbeat():
+        now = _now("UTC").isoformat()
+        connection = connect(app.config["DATABASE"])
+        try:
+            connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active'", (now,))
+            connection.commit()
+            return jsonify(ok=True)
         finally:
             connection.close()
 

@@ -121,3 +121,22 @@ def test_focus_investment_handles_empty_data():
         "yesterday_seconds": 0,
         "subjects": [],
     }
+
+
+def test_focus_segments_exclude_closed_and_open_pauses():
+    from app.routes import _session_segments
+
+    now = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
+    row = {"started_at": (now - timedelta(hours=3)).isoformat(), "ended_at": None}
+    pauses = [
+        {"started_at": (now - timedelta(hours=2, minutes=30)).isoformat(), "ended_at": (now - timedelta(hours=2)).isoformat()},
+        {"started_at": (now - timedelta(minutes=30)).isoformat(), "ended_at": None},
+    ]
+
+    segments = _session_segments(row, pauses, now)
+
+    assert segments == [
+        (now - timedelta(hours=3), now - timedelta(hours=2, minutes=30)),
+        (now - timedelta(hours=2), now - timedelta(minutes=30)),
+    ]
+    assert sum(int((end - start).total_seconds()) for start, end in segments) == 2 * 3600

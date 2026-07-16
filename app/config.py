@@ -13,6 +13,8 @@ def default_config() -> dict:
         "HOST": os.environ.get("DASHBOARD_HOST", "127.0.0.1"),
         "PORT": int(os.environ.get("DASHBOARD_PORT", "43127")),
         "COOKIE_SECURE": os.environ.get("COOKIE_SECURE", "0") == "1",
+        "FOREGROUND_TIMEOUT_SECONDS": int(os.environ.get("FOREGROUND_TIMEOUT_SECONDS", "30")),
+        "FOREGROUND_MONITOR_INTERVAL": float(os.environ.get("FOREGROUND_MONITOR_INTERVAL", "0.5")),
         "SESSION_COOKIE_HTTPONLY": True,
         "SESSION_COOKIE_SAMESITE": "Lax",
     }

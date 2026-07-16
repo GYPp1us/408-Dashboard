@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from datetime import datetime, timedelta
 from typing import Any
 
 
@@ -23,7 +24,16 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
     ended_at TEXT,
     status TEXT NOT NULL,
     client_token TEXT UNIQUE,
-    interruption_count INTEGER NOT NULL DEFAULT 0
+    interruption_count INTEGER NOT NULL DEFAULT 0,
+    last_foreground_at TEXT,
+    focus_locked INTEGER NOT NULL DEFAULT 0,
+    trusted INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS focus_pauses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES focus_sessions(id) ON DELETE CASCADE,
+    started_at TEXT NOT NULL,
+    ended_at TEXT
 );
 CREATE TABLE IF NOT EXISTS scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,14 +118,23 @@ def connect(path: str) -> sqlite3.Connection:
 def init_db(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA)
     columns = {row[1] for row in connection.execute("PRAGMA table_info(focus_sessions)")}
-    if "client_token" not in columns:
+    migrations = {
+        "client_token": "TEXT",
+        "last_foreground_at": "TEXT",
+        "focus_locked": "INTEGER NOT NULL DEFAULT 0",
+        "trusted": "INTEGER NOT NULL DEFAULT 1",
+    }
+    for column, definition in migrations.items():
+        if column in columns:
+            continue
         try:
-            connection.execute("ALTER TABLE focus_sessions ADD COLUMN client_token TEXT")
+            connection.execute(f"ALTER TABLE focus_sessions ADD COLUMN {column} {definition}")
         except sqlite3.OperationalError as error:
             if "duplicate column name" not in str(error).lower():
                 raise
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_focus ON focus_sessions(status) WHERE status = 'active'")
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS unique_focus_client_token ON focus_sessions(client_token) WHERE client_token IS NOT NULL")
+    connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_open_pause_per_session ON focus_pauses(session_id) WHERE ended_at IS NULL")
     for key, value in DEFAULT_SETTINGS.items():
         connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
     if not connection.execute("SELECT 1 FROM focus_modes LIMIT 1").fetchone():
@@ -167,6 +186,43 @@ def save_focus_messages(connection: sqlite3.Connection, messages: list[dict[str,
     )
 
 
+def finish_focus_session(connection: sqlite3.Connection, session_id: int, ended_at: str) -> None:
+    connection.execute(
+        "UPDATE focus_pauses SET ended_at = ? WHERE session_id = ? AND ended_at IS NULL",
+        (ended_at, session_id),
+    )
+    connection.execute(
+        "UPDATE focus_sessions SET ended_at = ?, status = 'completed' WHERE id = ? AND status = 'active'",
+        (ended_at, session_id),
+    )
+
+
+def expire_unattended_focus(connection: sqlite3.Connection, now: datetime, timeout_seconds: int = 30) -> int | None:
+    cutoff = now - timedelta(seconds=timeout_seconds)
+    query = """
+        SELECT id, last_foreground_at
+        FROM focus_sessions
+        WHERE status = 'active'
+          AND focus_locked = 0
+          AND last_foreground_at IS NOT NULL
+          AND last_foreground_at <= ?
+        ORDER BY id DESC
+        LIMIT 1
+    """
+    if not connection.execute(query, (cutoff.isoformat(),)).fetchone():
+        return None
+    connection.execute("BEGIN IMMEDIATE")
+    row = connection.execute(query, (cutoff.isoformat(),)).fetchone()
+    if not row:
+        connection.commit()
+        return None
+    last_foreground_at = datetime.fromisoformat(row["last_foreground_at"])
+    ended_at = (last_foreground_at + timedelta(seconds=timeout_seconds)).isoformat()
+    finish_focus_session(connection, row["id"], ended_at)
+    connection.commit()
+    return int(row["id"])
+
+
 def list_scores(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     return _rows(connection, "SELECT id, subject, exam_date, score, target FROM scores ORDER BY id")
 
@@ -194,5 +250,5 @@ def clear_user_data(connection: sqlite3.Connection) -> None:
     connection.execute("DELETE FROM focus_sessions")
     connection.execute("DELETE FROM scores")
     connection.execute("DELETE FROM plans")
-    connection.execute("DELETE FROM sqlite_sequence WHERE name IN ('focus_sessions', 'scores', 'plans')")
+    connection.execute("DELETE FROM sqlite_sequence WHERE name IN ('focus_sessions', 'focus_pauses', 'scores', 'plans')")
     connection.commit()

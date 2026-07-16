@@ -41,6 +41,11 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="focus-compare-baseline"' not in html
     assert "−30m" in html and "+30m" in html
     assert 'id="focus-message-card"' in html
+    assert 'id="toggle-focus-pause"' in html
+    assert 'id="lock-focus"' in html
+    assert 'id="focus-trust-state"' in html
+    assert "持续计时 · 不设上限" not in html
+    assert "专注方式" not in html
     assert "<h2>专注进行中</h2>" not in html
     assert "<h2>今日专注节奏</h2>" not in html
     assert "lunch-start-label" in html
@@ -86,6 +91,12 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "recommendedFocusMessageIndex(active, Math.floor(elapsed / 200), focusMessages.length)" in javascript
     assert "function workWindowProgress(now, windows)" in javascript
     assert "Math.log1p(Math.abs(delta) / 60) / Math.log1p(480)" in javascript
+    assert "function focusElapsedSeconds(session, now = Date.now())" in javascript
+    assert 'api("/api/focus/pause"' in javascript
+    assert 'api("/api/focus/lock"' in javascript
+    assert 'fetch("/api/focus/heartbeat"' in javascript
+    assert 'document.body.dataset.page === "settings"' in javascript
+    assert "window.setInterval(sendForegroundHeartbeat, 500)" in javascript
 
 
 def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authenticated_client):

@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, focusMessageIndex: null };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, focusMessageIndex: null };
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
     idle: ["#d66c58", "#b25647", "#dd9073", "#97483e", "#c27758", "#e4a994", "#835144", "#d28a72"],
@@ -58,6 +58,16 @@
   };
   const formatMinutes = (minutes) => formatSeconds(Math.max(0, Math.round(minutes * 60)));
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+
+  function focusElapsedSeconds(session, now = Date.now()) {
+    if (!session?.started_at) return 0;
+    const end = session.ended_at ? Date.parse(session.ended_at) : session.paused_at ? Date.parse(session.paused_at) : now;
+    return Math.max(0, Math.floor((end - Date.parse(session.started_at)) / 1000) - Number(session.paused_seconds || 0));
+  }
+
+  function activeExtraSeconds(active, fetchedAt, now) {
+    return active && !active.paused_at ? Math.max(0, Math.floor((now - fetchedAt) / 1000)) : 0;
+  }
 
   function createClientToken() {
     const cryptoApi = window.crypto || window.msCrypto;
@@ -143,7 +153,7 @@
       const value = Math.max(0, Math.floor((state.examEndsAt - now) / 1000));
       $("#exam-days").textContent = `${Math.floor(value / 86400)} 天`;
       $("#exam-clock").textContent = formatSeconds(value % 86400);
-      const todaySeconds = Number(today.seconds || 0) + (active ? Math.max(0, Math.floor((now - todayFetchedAt) / 1000)) : 0);
+      const todaySeconds = Number(today.seconds || 0) + activeExtraSeconds(active, todayFetchedAt, now);
       $("#today-study").textContent = `${formatSeconds(todaySeconds)} / 08:00`;
       $("#today-progress").textContent = `完成度 ${Math.min(100, Math.round((todaySeconds / 28800) * 100))}%`;
       $("#focus-today")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 08:00`));
@@ -151,7 +161,7 @@
       $("#guest-today-target")?.replaceChildren(document.createTextNode(`8 小时目标 · ${Math.min(100, Math.round((todaySeconds / 28800) * 100))}%`));
     };
     setSecondTask("status", tick);
-    $("#current-state").textContent = active ? `专注中 · ${active.subject}` : "准备学习";
+    $("#current-state").textContent = active ? `${active.paused_at ? "已暂停" : "专注中"} · ${active.subject}` : "准备学习";
     $("#state-dot").classList.toggle("state-dot-active", Boolean(active));
   }
 
@@ -187,14 +197,15 @@
     const start = clockMinutes(value.start);
     const end = clockMinutes(value.end);
     const total = Math.max(1, end - start);
-    target.innerHTML = (sessions || []).map((session) => {
-      const sessionStart = Math.max(start, dateMinutes(session.started_at));
-      const sessionEnd = Math.min(end, session.ended_at ? dateMinutes(session.ended_at) : dateMinutes(Date.now()));
+    const segments = (sessions || []).flatMap((session) => (session.segments?.length ? session.segments : [session]).map((segment) => ({ ...segment, subject: session.subject })));
+    target.innerHTML = segments.map((segment) => {
+      const sessionStart = Math.max(start, dateMinutes(segment.started_at));
+      const sessionEnd = Math.min(end, segment.ended_at ? dateMinutes(segment.ended_at) : dateMinutes(Date.now()));
       if (sessionEnd <= sessionStart) return "";
       const left = ((sessionStart - start) / total) * 100;
       const width = ((sessionEnd - sessionStart) / total) * 100;
       const edgeClass = `${sessionStart <= start ? " at-start" : ""}${sessionEnd >= end ? " at-end" : ""}`;
-      return `<span class="${edgeClass.trim()}" style="left:${left}%;width:${width}%" title="${escapeHtml(session.subject)} · ${Math.max(1, Math.round(sessionEnd - sessionStart))} 分钟"></span>`;
+      return `<span class="${edgeClass.trim()}" style="left:${left}%;width:${width}%" title="${escapeHtml(segment.subject)} · ${Math.max(1, Math.round(sessionEnd - sessionStart))} 分钟"></span>`;
     }).join("");
   }
 
@@ -334,7 +345,7 @@
       legend.innerHTML = topSubjects.map((item, index) => `<span><i style="background:${palette[index]}"></i>${escapeHtml(item.subject)}<b>${Math.round((item.seconds / totalSeconds) * 1000) / 10}% · ${formatSeconds(item.seconds)}</b></span>`).join("");
     };
     const tick = (now) => {
-      const extraSeconds = active ? Math.max(0, Math.floor((now - fetchedAt) / 1000)) : 0;
+      const extraSeconds = activeExtraSeconds(active, fetchedAt, now);
       const currentSeconds = Number(baseline.current_seconds || 0) + extraSeconds;
       const dailyAverage = Math.floor(currentSeconds / 7);
       const previousAverage = Number(baseline.previous_daily_average_seconds || 0);
@@ -368,7 +379,7 @@
     const tick = (now) => {
       const investment = state.dashboard?.focus_investment || {};
       const fetchedAt = state.dashboardFetchedAt || now;
-      const extraSeconds = Math.max(0, Math.floor((now - fetchedAt) / 1000));
+      const extraSeconds = activeExtraSeconds(active, fetchedAt, now);
       const todaySeconds = Number(investment.today_seconds || 0) + extraSeconds;
       const yesterdayTotal = Number(investment.yesterday_seconds || 0);
       const yesterdayBaseline = Math.round(yesterdayTotal * workWindowProgress(new Date(now), state.dashboard?.windows));
@@ -385,7 +396,7 @@
       diffFill.style.width = `${diffWidth}%`;
       $("#focus-diff-track").setAttribute("aria-label", `今日与昨日工作窗折算基线相差 ${delta >= 0 ? "+" : "-"}${formatSeconds(Math.abs(delta))}`);
 
-      const elapsed = Math.max(0, Math.floor((now - Date.parse(active.started_at)) / 1000));
+      const elapsed = focusElapsedSeconds(active, now);
       const focusMessages = state.dashboard?.focus_messages?.length ? state.dashboard.focus_messages : fallbackFocusMessages;
       const messageIndex = recommendedFocusMessageIndex(active, Math.floor(elapsed / 200), focusMessages.length);
       if (messageIndex !== state.focusMessageIndex) {
@@ -412,12 +423,10 @@
     totalTarget.textContent = formatSeconds(today.seconds);
     $("#guest-today-target").textContent = `8 小时目标 · ${Math.min(100, Math.round((today.seconds / 28800) * 100))}%`;
     $("#guest-today-count").textContent = String(today.count || 0);
-    $("#guest-today-state").textContent = data.focus?.active ? `专注中` : "空闲";
+    $("#guest-today-state").textContent = data.focus?.active ? (data.focus.active.paused_at ? "已暂停" : "专注中") : "空闲";
     const totals = new Map();
     (data.focus?.today || []).forEach((item) => {
-      const startedAt = Date.parse(item.started_at);
-      const endedAt = item.ended_at ? Date.parse(item.ended_at) : Date.now();
-      totals.set(item.subject, (totals.get(item.subject) || 0) + Math.max(0, Math.floor((endedAt - startedAt) / 1000)));
+      totals.set(item.subject, (totals.get(item.subject) || 0) + Number(item.effective_seconds || 0));
     });
     const target = $("#guest-subject-list");
     target.innerHTML = totals.size
@@ -447,7 +456,7 @@
     overview.hidden = true;
     if (comparison) comparison.hidden = true;
     summary.hidden = false;
-    const duration = Math.max(0, Math.floor((Date.parse(session.ended_at) - Date.parse(session.started_at)) / 1000));
+    const duration = Number(session.effective_seconds ?? focusElapsedSeconds(session));
     $("#summary-session-time").textContent = formatSeconds(duration);
     const gap = 3600 - duration;
     $("#summary-goal-gap").textContent = gap > 0 ? `距 1 小时还差 ${Math.ceil(gap / 60)} 分钟` : gap < 0 ? `已达标 · 超出 ${Math.floor(Math.abs(gap) / 60)} 分钟` : "已达成 1 小时目标";
@@ -459,7 +468,7 @@
     }));
     const totals = new Map();
     (todaySessions || []).forEach((item) => {
-      const seconds = Math.max(0, Math.floor(((item.ended_at ? Date.parse(item.ended_at) : Date.now()) - Date.parse(item.started_at)) / 1000));
+      const seconds = Number(item.effective_seconds ?? focusElapsedSeconds(item));
       totals.set(item.subject, (totals.get(item.subject) || 0) + seconds);
     });
     if (!totals.size) totals.set(session.subject, duration);
@@ -658,6 +667,7 @@
       const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ subject: track.dataset.subject, mode: "专注", planned_minutes: 0, client_token: createClientToken() }) });
       const today = state.dashboard?.focus?.today || [];
       state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session, today: [...today.filter((item) => item.id !== session.session.id), session.session] } };
+      state.dashboardFetchedAt = Date.now();
       applyFocusState(session.session, true);
       showToast("专注已启动");
     } catch (error) {
@@ -675,10 +685,57 @@
     requestAnimationFrame(() => Flip.from(flipState, { duration: .42, ease: "power2.inOut", stagger: .015, absolute: false }));
   }
 
+  function updatePauseControl(active) {
+    const button = $("#toggle-focus-pause");
+    if (!button) return;
+    const paused = Boolean(active?.paused_at);
+    button.classList.toggle("is-paused", paused);
+    button.title = paused ? "继续专注" : "暂停专注";
+    button.setAttribute("aria-label", button.title);
+    $("#focus-pause-icon").textContent = paused ? "▶" : "Ⅱ";
+  }
+
+  async function toggleFocusPause() {
+    const active = state.dashboard?.focus?.active;
+    if (!active || state.pausing) return;
+    state.pausing = true;
+    const button = $("#toggle-focus-pause");
+    if (button) button.disabled = true;
+    try {
+      const paused = !active.paused_at;
+      await api("/api/focus/pause", { method: "POST", body: JSON.stringify({ session_id: active.id, paused }) });
+      await loadDashboard();
+      showToast(paused ? "专注已暂停" : "继续专注");
+    } catch (error) { showToast(error.message); }
+    finally {
+      state.pausing = false;
+      if (button) button.disabled = false;
+    }
+  }
+
+  function updateFocusLockControl(active) {
+    const status = $("#focus-trust-state");
+    const track = $("#lock-focus");
+    if (!status || !track) return;
+    const trusted = active?.trusted !== false;
+    const locked = Boolean(active?.focus_locked);
+    status.classList.toggle("untrusted", !trusted);
+    status.querySelector("b").textContent = trusted ? "受信" : "非受信";
+    track.classList.toggle("locked", locked);
+    track.querySelector(".drag-label").textContent = locked ? "专注已锁定" : "锁定专注";
+    const thumb = track.querySelector(".drag-thumb");
+    if (!window.gsap || !thumb) return;
+    const x = locked ? Math.max(1, track.clientWidth - thumb.offsetWidth - 4) : 0;
+    gsap.set(thumb, { x });
+    setDragProgress(track, thumb);
+    track.classList.toggle("locked", locked);
+  }
+
   function applyFocusState(active, animate = false) {
     if (animate) animateLayout();
     if (active) closeFocusSummary();
     document.body.classList.toggle("is-focusing", Boolean(active));
+    document.body.classList.toggle("is-paused", Boolean(active?.paused_at));
     syncScoreChartTheme(active);
     $("#idle-mode-view").hidden = Boolean(active);
     $("#active-mode-view").hidden = !active;
@@ -690,6 +747,7 @@
       removeSecondTask("focusComparison");
       state.focusMessageIndex = null;
       $("#focus-timer").textContent = "00:00:00";
+      updatePauseControl(null);
       const track = $("#end-focus");
       const thumb = track?.querySelector(".drag-thumb");
       if (track && thumb && window.gsap) {
@@ -700,22 +758,25 @@
       return;
     }
     renderFocusComparison(active);
+    updatePauseControl(active);
+    updateFocusLockControl(active);
     $("#focus-subject").textContent = `${active.subject} · 专注`;
     $("#focus-start").textContent = new Date(active.started_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     const tick = (now) => {
-      const elapsed = Math.max(0, Math.floor((now - Date.parse(active.started_at)) / 1000));
+      const elapsed = focusElapsedSeconds(active, now);
       $("#focus-timer").textContent = formatSeconds(elapsed);
-      $("#focus-window").textContent = "持续计时 · 不设上限";
+      $("#focus-window").textContent = "\u00a0";
     };
     setSecondTask("focus", tick);
     initDragEnd();
+    initDragLock();
   }
 
   function dashboardSignature(data) {
     const windowSignature = (value) => [value?.start, value?.end, value?.total_seconds];
     const active = data.focus?.active;
     return JSON.stringify({
-      active: active ? [active.id, active.subject, active.started_at, active.status] : null,
+      active: active ? [active.id, active.subject, active.started_at, active.status, active.paused_at, active.paused_seconds, active.focus_locked, active.trusted] : null,
       recent: (data.focus?.recent || []).map((item) => [item.id, item.status, item.ended_at]),
       scores: (data.score_history || []).map((item) => [item.id, item.subject, item.exam_date, item.score, item.target]),
       modes: (data.focus_modes || []).map((item) => [item.id, item.subject]),
@@ -761,6 +822,22 @@
   function startDashboardSync() {
     window.clearInterval(state.syncTimer);
     if (document.body.dataset.page !== "settings") state.syncTimer = window.setInterval(syncDashboard, 500);
+  }
+
+  function sendForegroundHeartbeat(allowHidden = false) {
+    if (!allowHidden && document.visibilityState !== "visible") return;
+    fetch("/api/focus/heartbeat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      keepalive: true,
+    }).catch(() => {});
+  }
+
+  function startForegroundHeartbeat() {
+    window.clearInterval(state.heartbeatTimer);
+    sendForegroundHeartbeat();
+    if (document.body.dataset.page === "settings") state.heartbeatTimer = window.setInterval(sendForegroundHeartbeat, 500);
   }
 
   async function endFocus() {
@@ -814,6 +891,52 @@
       gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
     }
     state.ending = false;
+  }
+
+  function initDragLock() {
+    const track = $("#lock-focus");
+    if (!track || !window.gsap || !window.Draggable || track.dataset.bound) return;
+    const thumb = track.querySelector(".drag-thumb");
+    track.dataset.bound = "1";
+    const drag = Draggable.create(thumb, {
+      type: "x",
+      bounds: track,
+      onPress() { if (state.locking || state.dashboard?.focus?.active?.focus_locked) this.endDrag?.(); },
+      onDrag() { setDragProgress(track, thumb); },
+      onRelease() {
+        const { max, ratio } = setDragProgress(track, thumb);
+        if (ratio >= .82 && !state.dashboard?.focus?.active?.focus_locked) {
+          track.classList.add("armed");
+          gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onComplete: () => commitFocusLock(track, thumb) });
+        } else if (!state.dashboard?.focus?.active?.focus_locked) {
+          gsap.to(thumb, { x: 0, duration: .58, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
+        }
+      }
+    })[0];
+    thumb.addEventListener("keydown", (event) => {
+      if ((event.key === "Enter" || event.key === " ") && !state.dashboard?.focus?.active?.focus_locked) {
+        event.preventDefault();
+        const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+        gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => commitFocusLock(track, thumb) });
+      }
+    });
+    drag.update();
+  }
+
+  async function commitFocusLock(track, thumb) {
+    const active = state.dashboard?.focus?.active;
+    if (!active || state.locking || active.focus_locked) return;
+    state.locking = true;
+    try {
+      await api("/api/focus/lock", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
+      await loadDashboard();
+      showToast("本段专注已锁定");
+    } catch (error) {
+      gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
+      showToast(error.message);
+    } finally {
+      state.locking = false;
+    }
   }
 
   async function loadSettings() {
@@ -904,12 +1027,18 @@
     startAlignedSecondClock();
     ensureWakeLock();
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible") {
+        sendForegroundHeartbeat(true);
+        return;
+      }
       ensureWakeLock();
+      sendForegroundHeartbeat();
       runSecondTasks(Date.now());
       syncDashboard();
     });
+    window.addEventListener("pagehide", () => sendForegroundHeartbeat(true));
     $("#close-focus-summary")?.addEventListener("click", closeFocusSummary);
+    $("#toggle-focus-pause")?.addEventListener("click", toggleFocusPause);
     bindQuickScore();
     bindSettingsForms();
     try {
@@ -917,5 +1046,6 @@
       else await loadDashboard();
     } catch (error) { showToast(error.message); }
     startDashboardSync();
+    startForegroundHeartbeat();
   });
 })();

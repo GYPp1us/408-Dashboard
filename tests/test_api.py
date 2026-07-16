@@ -81,6 +81,54 @@ def test_start_and_end_focus_session(authenticated_client):
     assert ended.get_json()["session"]["status"] == "completed"
 
 
+def test_focus_pause_resume_and_lock_are_persisted(authenticated_client):
+    started = authenticated_client.post("/api/focus/start", json={"subject": "数学", "mode": "专注"}).get_json()["session"]
+
+    paused = authenticated_client.post("/api/focus/pause", json={"session_id": started["id"], "paused": True})
+    paused_again = authenticated_client.post("/api/focus/pause", json={"session_id": started["id"], "paused": True})
+    assert paused.status_code == 200
+    assert paused.get_json()["session"]["paused_at"] is not None
+    assert paused_again.get_json()["session"]["interruption_count"] == 1
+
+    resumed = authenticated_client.post("/api/focus/pause", json={"session_id": started["id"], "paused": False})
+    assert resumed.get_json()["session"]["paused_at"] is None
+
+    locked = authenticated_client.post("/api/focus/lock", json={"session_id": started["id"]})
+    assert locked.status_code == 200
+    assert locked.get_json()["session"]["focus_locked"] is True
+    assert locked.get_json()["session"]["trusted"] is False
+    active = authenticated_client.get("/api/dashboard").get_json()["focus"]["active"]
+    assert active["focus_locked"] is True
+    assert active["trusted"] is False
+
+
+def test_guest_foreground_heartbeat_is_allowed(authenticated_client):
+    authenticated_client.post("/api/focus/start", json={"subject": "数学", "mode": "专注"})
+    authenticated_client.get("/guest")
+
+    heartbeat = authenticated_client.post("/api/focus/heartbeat", json={})
+
+    assert heartbeat.status_code == 200
+    assert heartbeat.get_json() == {"ok": True}
+
+
+def test_visible_dashboard_poll_refreshes_foreground_heartbeat(authenticated_client, app):
+    from app.db import connect
+
+    session_id = authenticated_client.post("/api/focus/start", json={"subject": "数学", "mode": "专注"}).get_json()["session"]["id"]
+    connection = connect(app.config["DATABASE"])
+    connection.execute("UPDATE focus_sessions SET last_foreground_at = '2026-01-01T00:00:00+00:00' WHERE id = ?", (session_id,))
+    connection.commit()
+    connection.close()
+
+    authenticated_client.get("/api/dashboard")
+
+    connection = connect(app.config["DATABASE"])
+    refreshed = connection.execute("SELECT last_foreground_at FROM focus_sessions WHERE id = ?", (session_id,)).fetchone()[0]
+    connection.close()
+    assert refreshed > "2026-01-01T00:00:00+00:00"
+
+
 def test_negative_focus_duration_is_rejected(authenticated_client):
     response = authenticated_client.post("/api/focus/start", json={
         "subject": "数学",

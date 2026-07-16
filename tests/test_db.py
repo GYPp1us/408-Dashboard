@@ -67,3 +67,65 @@ def test_database_preserves_custom_focus_content_on_reinitialization(tmp_path):
     assert {mode["name"] for mode in modes} == {"专注"}
     assert {mode["duration_minutes"] for mode in modes} == {0}
     assert get_focus_messages(connection) == [{"category": "提醒", "text": "只做当前题"}]
+
+
+def test_database_migrates_existing_focus_rows_as_trusted(tmp_path):
+    import sqlite3
+
+    from app.db import init_db
+
+    connection = sqlite3.connect(tmp_path / "legacy.sqlite3")
+    connection.row_factory = sqlite3.Row
+    connection.execute("""
+        CREATE TABLE focus_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            planned_minutes INTEGER NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            status TEXT NOT NULL,
+            client_token TEXT UNIQUE,
+            interruption_count INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    connection.execute("INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, ended_at, status) VALUES ('数学', '专注', 0, '2026-07-16T08:00:00+00:00', '2026-07-16T09:00:00+00:00', 'completed')")
+    connection.commit()
+
+    init_db(connection)
+
+    row = connection.execute("SELECT trusted, focus_locked, last_foreground_at FROM focus_sessions").fetchone()
+    assert dict(row) == {"trusted": 1, "focus_locked": 0, "last_foreground_at": None}
+    assert connection.execute("SELECT COUNT(*) FROM focus_pauses").fetchone()[0] == 0
+
+
+def test_foreground_timeout_ends_unlocked_focus_and_closes_pause(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from app.db import connect, expire_unattended_focus, init_db
+
+    connection = connect(str(tmp_path / "timeout.sqlite3"))
+    init_db(connection)
+    now = datetime(2026, 7, 17, 8, 0, tzinfo=timezone.utc)
+    last_foreground = now - timedelta(seconds=31)
+    cursor = connection.execute(
+        "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status, last_foreground_at) VALUES ('数学', '专注', 0, ?, 'active', ?)",
+        ((now - timedelta(minutes=10)).isoformat(), last_foreground.isoformat()),
+    )
+    connection.execute("INSERT INTO focus_pauses(session_id, started_at) VALUES (?, ?)", (cursor.lastrowid, (now - timedelta(seconds=40)).isoformat()))
+    connection.commit()
+
+    expired_id = expire_unattended_focus(connection, now, 30)
+
+    expected_end = (last_foreground + timedelta(seconds=30)).isoformat()
+    row = connection.execute("SELECT status, ended_at, trusted FROM focus_sessions WHERE id = ?", (expired_id,)).fetchone()
+    pause = connection.execute("SELECT ended_at FROM focus_pauses WHERE session_id = ?", (expired_id,)).fetchone()
+    assert dict(row) == {"status": "completed", "ended_at": expected_end, "trusted": 1}
+    assert pause["ended_at"] == expected_end
+
+    connection.execute(
+        "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status, last_foreground_at, focus_locked, trusted) VALUES ('数学', '专注', 0, ?, 'active', ?, 1, 0)",
+        ((now - timedelta(minutes=5)).isoformat(), last_foreground.isoformat()),
+    )
+    connection.commit()
+    assert expire_unattended_focus(connection, now, 30) is None

@@ -5,6 +5,7 @@ from flask import Flask
 from .config import default_config
 from .auth import register_auth
 from .db import connect, init_db
+from .focus_monitor import start_focus_monitor
 from .routes import register_routes
 
 
@@ -21,5 +22,6 @@ def create_app(overrides: dict | None = None) -> Flask:
     connection.close()
     register_auth(app)
     register_routes(app)
+    start_focus_monitor(app)
 
     return app
