@@ -88,9 +88,11 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".focus-comparison-view.behind .focus-compare-trend" in css
     assert ".focus-diff-track { position:relative; height:14px" in css
     assert ".focus-diff-track > span" in css and "border-radius:0" in css
-    assert "--diff-positive:#2ee6a6" in css and "--diff-negative:#ff5967" in css
-    assert ".focus-comparison-view.ahead .focus-diff-track > span { border-radius:0 4px 4px 0; background:var(--diff-positive)" in css
-    assert ".focus-comparison-view.behind .focus-diff-track > span { border-radius:4px 0 0 4px; background:var(--diff-negative)" in css
+    assert "--diff-positive" not in css and "--diff-negative" not in css
+    assert ".focus-comparison-view.ahead .focus-diff-track > span { border-radius:0 4px 4px 0; background:var(--accent)" in css
+    assert ".focus-comparison-view.behind .focus-diff-track > span { border-radius:4px 0 0 4px; background:#a8afb5" in css
+    assert ".focus-comparison-view.ahead .focus-compare-trend { background:#e7f3ef; color:var(--score-positive)" in css
+    assert ".focus-comparison-view.behind .focus-compare-trend { background:#faebe8; color:var(--score-negative)" in css
     assert ".focus-diff-scale span:nth-child(2) { left:22.2%" in css
     assert ".focus-diff-scale span:nth-child(4) { left:77.8%" in css
     assert ".focus-diff-track em" not in css

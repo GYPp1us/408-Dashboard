@@ -1,5 +1,5 @@
 @font-face { font-family:"Source Han Serif SC Medium"; src:local("Source Han Serif SC Medium"),local("思源宋体 SC Medium"),local("Source Han Serif SC"),local("思源宋体 SC"),local("Noto Serif SC"); font-style:normal; font-weight:500; font-display:swap; }
-:root { --ink:#20272f; --muted:#758079; --line:#dde3df; --paper:#f7f8f7; --surface:#fff; --accent:#d66c58; --accent-soft:#fcf2ef; --accent-deep:#a44b40; --accent-border:#e8cdc5; --accent-surface:#fef9f7; --accent-ring:#edd7d0; --accent-shadow:rgba(214,108,88,.16); --window-accent:#c98072; --diff-positive:#2ee6a6; --diff-negative:#ff5967; --heat-empty:#edf0ef; --heat-l1:#f3e0d9; --heat-l2:#e8beb2; --heat-l3:#d88f7a; --heat-l4:#b45a4a; --score-positive:#09685f; --score-negative:#b83c2c; --shadow:0 18px 46px rgba(36,46,42,.1); --font-serif:"Source Han Serif SC Medium","Source Han Serif SC","思源宋体 SC","Noto Serif SC","Noto Serif CJK SC","Songti SC","STSong",serif; }
+:root { --ink:#20272f; --muted:#758079; --line:#dde3df; --paper:#f7f8f7; --surface:#fff; --accent:#d66c58; --accent-soft:#fcf2ef; --accent-deep:#a44b40; --accent-border:#e8cdc5; --accent-surface:#fef9f7; --accent-ring:#edd7d0; --accent-shadow:rgba(214,108,88,.16); --window-accent:#c98072; --heat-empty:#edf0ef; --heat-l1:#f3e0d9; --heat-l2:#e8beb2; --heat-l3:#d88f7a; --heat-l4:#b45a4a; --score-positive:#09685f; --score-negative:#b83c2c; --shadow:0 18px 46px rgba(36,46,42,.1); --font-serif:"Source Han Serif SC Medium","Source Han Serif SC","思源宋体 SC","Noto Serif SC","Noto Serif CJK SC","Songti SC","STSong",serif; }
 * { box-sizing:border-box; }
 body { min-width:1100px; margin:0; background:#eef1f4; color:var(--ink); font-family:var(--font-serif); font-size:18px; font-weight:500; letter-spacing:0; }
 body.page-focus,body.is-focusing { --accent:#8067b3; --accent-soft:#f3f0f8; --accent-deep:#625087; --accent-border:#d8d0e6; --accent-surface:#faf9fc; --accent-ring:#e0daea; --accent-shadow:rgba(128,103,179,.16); --window-accent:#8879a6; --heat-l1:#ebe7f2; --heat-l2:#d3c8e3; --heat-l3:#a997c8; --heat-l4:#745f9c; }
@@ -161,8 +161,8 @@ button { cursor:pointer; }
 .focus-compare-value > span { grid-column:1 / 3; color:var(--muted); font-size:11px; }
 .focus-compare-value > strong { font-size:31px; line-height:1; }
 .focus-compare-trend { min-width:108px; padding:8px 10px; border-radius:5px; background:#edf0ef; color:var(--muted); font-size:13px; text-align:center; white-space:nowrap; }
-.focus-comparison-view.ahead .focus-compare-trend { background:#e7f3ef; color:var(--diff-positive); }
-.focus-comparison-view.behind .focus-compare-trend { background:#faebe8; color:var(--diff-negative); }
+.focus-comparison-view.ahead .focus-compare-trend { background:#e7f3ef; color:var(--score-positive); }
+.focus-comparison-view.behind .focus-compare-trend { background:#faebe8; color:var(--score-negative); }
 .focus-diff-scale { position:relative; height:12px; margin-top:14px; color:#96a19b; font-size:9px; }
 .focus-diff-scale span { position:absolute; top:0; transform:translateX(-50%); }
 .focus-diff-scale span:nth-child(1) { left:0; transform:none; }
@@ -173,8 +173,8 @@ button { cursor:pointer; }
 .focus-diff-track { position:relative; height:14px; margin-top:3px; overflow:hidden; border-radius:4px; background:#e5e9e7; }
 .focus-diff-track > i { position:absolute; z-index:2; top:-3px; bottom:-3px; left:50%; width:1px; background:#8f9994; }
 .focus-diff-track > span { position:absolute; top:0; left:50%; width:0; height:100%; border-radius:0; transition:left .35s ease,width .35s ease; }
-.focus-comparison-view.ahead .focus-diff-track > span { border-radius:0 4px 4px 0; background:var(--diff-positive); }
-.focus-comparison-view.behind .focus-diff-track > span { border-radius:4px 0 0 4px; background:var(--diff-negative); }
+.focus-comparison-view.ahead .focus-diff-track > span { border-radius:0 4px 4px 0; background:var(--accent); }
+.focus-comparison-view.behind .focus-diff-track > span { border-radius:4px 0 0 4px; background:#a8afb5; }
 .focus-message-stage { display:grid; padding-top:10px; }
 .focus-message-card { position:relative; display:grid; grid-template-columns:1fr auto; grid-template-rows:auto 1fr auto; height:96px; min-height:0; padding:11px 14px 9px 17px; overflow:hidden; border:1px solid var(--accent-border); border-radius:7px; background:var(--accent-surface); isolation:isolate; }
 .focus-message-card::before { content:""; position:absolute; z-index:-1; top:0; bottom:0; left:0; width:5px; background:var(--accent); }
