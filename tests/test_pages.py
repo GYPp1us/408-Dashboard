@@ -78,7 +78,8 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "subjectsWithActiveTime(baseline.today_subjects, extraSeconds)" in javascript
     assert "function renderFocusComparison(active)" in javascript
     assert javascript.count('{ category: "') == 30
-    assert "Math.floor(elapsed / 30) % focusMessages.length" in javascript
+    assert "function recommendedFocusMessageIndex(active, slot)" in javascript
+    assert "recommendedFocusMessageIndex(active, Math.floor(elapsed / 200))" in javascript
 
 
 def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authenticated_client):

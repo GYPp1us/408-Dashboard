@@ -84,5 +84,9 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".investment-trend.down { background:#faebe8; color:var(--score-negative)" in css
     assert ".focus-comparison-view.ahead .focus-compare-trend" in css
     assert ".focus-comparison-view.behind .focus-compare-trend" in css
+    assert ".focus-compare-row.today i { background:var(--accent)" in css
+    assert ".focus-comparison-view.ahead .focus-compare-row.today i" not in css
+    assert ".focus-comparison-view.behind .focus-compare-row.today i" not in css
+    assert ".focus-message-card" in css and "height:96px; min-height:0" in css
     assert ".focus-message-card::after { content:attr(data-index)" in css
     assert "@keyframes message-card-in" in css

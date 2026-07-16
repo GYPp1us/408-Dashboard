@@ -37,6 +37,13 @@
     { category: "视线提醒", text: "听见自己翻页的声音，比看计时数字更重要。" },
     { category: "视线提醒", text: "不用频繁确认时间，计时会替你记住。" },
   ];
+  function recommendedFocusMessageIndex(active, slot) {
+    const key = `${active.id || active.started_at}:${active.started_at}`;
+    let hash = 2166136261;
+    for (let index = 0; index < key.length; index += 1) hash = Math.imul(hash ^ key.charCodeAt(index), 16777619);
+    const steps = [7, 11, 13, 17, 19, 23, 29];
+    return ((hash >>> 0) % focusMessages.length + slot * steps[(hash >>> 8) % steps.length]) % focusMessages.length;
+  }
   const $ = (selector) => document.querySelector(selector);
   const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => themePalettes[active ? "focus" : "idle"];
   if (window.Chart) {
@@ -368,7 +375,7 @@
       $("#focus-compare-yesterday-bar").style.width = `${(yesterdaySeconds / maxSeconds) * 100}%`;
 
       const elapsed = Math.max(0, Math.floor((now - Date.parse(active.started_at)) / 1000));
-      const messageIndex = Math.floor(elapsed / 30) % focusMessages.length;
+      const messageIndex = recommendedFocusMessageIndex(active, Math.floor(elapsed / 200));
       if (messageIndex !== state.focusMessageIndex) {
         state.focusMessageIndex = messageIndex;
         const message = focusMessages[messageIndex];
