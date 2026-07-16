@@ -4,7 +4,7 @@ import re
 from flask import jsonify, redirect, render_template, request, session, url_for
 
 from .auth import admin_required, is_guest, login_required
-from .db import connect, get_settings, list_focus_modes, list_latest_scores, list_plans, list_scores
+from .db import connect, get_focus_messages, get_settings, list_focus_modes, list_latest_scores, list_plans, list_scores, replace_focus_modes, save_focus_messages
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
 
 
@@ -18,6 +18,30 @@ def _heatmap_hours(value: str) -> list[int]:
     if not hours or len(hours) != len(set(hours)) or any(hour not in HEATMAP_HOURS for hour in hours):
         raise ValueError("invalid_heatmap_visible_hours")
     return [hour for hour in HEATMAP_HOURS if hour in hours]
+
+
+def _focus_subjects(value) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("invalid_focus_subjects")
+    subjects = [str(subject).strip() for subject in value]
+    if not 1 <= len(subjects) <= 12 or any(not subject or len(subject) > 24 for subject in subjects) or len(subjects) != len(set(subjects)):
+        raise ValueError("invalid_focus_subjects")
+    return subjects
+
+
+def _focus_messages(value) -> list[dict[str, str]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 100:
+        raise ValueError("invalid_focus_messages")
+    messages = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("invalid_focus_messages")
+        category = str(item.get("category", "")).strip()
+        text = str(item.get("text", "")).strip()
+        if not category or not text or len(category) > 20 or len(text) > 120:
+            raise ValueError("invalid_focus_messages")
+        messages.append({"category": category, "text": text})
+    return messages
 
 
 def _now(timezone_name: str = "UTC") -> datetime:
@@ -119,6 +143,7 @@ def register_routes(app):
                 "windows": windows,
                 "focus": {"active": _session_payload(dict(active_row) if active_row else None), "recent": _focus_rows(connection), "today": _today_focus_rows(connection, now)},
                 "focus_modes": list_focus_modes(connection),
+                "focus_messages": get_focus_messages(connection),
                 "heatmap": aggregate_focus_heatmap(sessions, now),
                 "heatmap_visible_hours": heatmap_visible_hours,
                 "scores": scores,
@@ -201,6 +226,13 @@ def register_routes(app):
         try:
             if request.method == "PATCH":
                 payload = request.get_json(silent=True) or {}
+                try:
+                    if "focus_subjects" in payload:
+                        replace_focus_modes(connection, _focus_subjects(payload["focus_subjects"]))
+                    if "focus_messages" in payload:
+                        save_focus_messages(connection, _focus_messages(payload["focus_messages"]))
+                except ValueError as error:
+                    return jsonify(error=str(error)), 400
                 allowed = {"morning_start", "lunch_start", "library_open", "library_close", "exam_date", "timezone", "heatmap_visible_hours"}
                 for key, value in payload.items():
                     if key not in allowed:
@@ -220,7 +252,7 @@ def register_routes(app):
                             return jsonify(error="invalid_heatmap_visible_hours"), 400
                     connection.execute("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(value)))
                 connection.commit()
-            return jsonify(settings=get_settings(connection))
+            return jsonify(settings=get_settings(connection), focus_modes=list_focus_modes(connection), focus_messages=get_focus_messages(connection))
         finally:
             connection.close()
 

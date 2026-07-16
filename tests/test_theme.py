@@ -84,9 +84,18 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".investment-trend.down { background:#faebe8; color:var(--score-negative)" in css
     assert ".focus-comparison-view.ahead .focus-compare-trend" in css
     assert ".focus-comparison-view.behind .focus-compare-trend" in css
-    assert ".focus-compare-row.today i { background:var(--accent)" in css
-    assert ".focus-comparison-view.ahead .focus-compare-row.today i" not in css
-    assert ".focus-comparison-view.behind .focus-compare-row.today i" not in css
+    assert ".focus-diff-track > span" in css and "background:var(--accent)" in css
+    assert ".focus-comparison-view.ahead .focus-diff-track em" in css
+    assert ".focus-comparison-view.behind .focus-diff-track em" in css
+    assert ".focus-compare-trend { min-width:108px; padding:8px 10px" in css
     assert ".focus-message-card" in css and "height:96px; min-height:0" in css
     assert ".focus-message-card::after { content:attr(data-index)" in css
     assert "@keyframes message-card-in" in css
+
+
+def test_settings_page_uses_modern_two_column_editor_layout():
+    css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert ".settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr))" in css
+    assert ".settings-content-grid { display:grid; grid-template-columns:.72fr 1.28fr" in css
+    assert ".settings-editor textarea" in css and "min-height:190px" in css

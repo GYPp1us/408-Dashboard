@@ -5,7 +5,7 @@
     idle: ["#d66c58", "#b25647", "#dd9073", "#97483e", "#c27758", "#e4a994", "#835144", "#d28a72"],
     focus: ["#7a5bc7", "#5f42aa", "#987ddd", "#4d358c", "#876cbf", "#b09be7", "#614e87", "#9b84cf"],
   };
-  const focusMessages = [
+  const fallbackFocusMessages = [
     { category: "时间管理", text: "当前只处理一个问题，剩下的交给计划。" },
     { category: "时间管理", text: "先完成眼前这一步，再决定下一步。" },
     { category: "时间管理", text: "用完整的一小时，换一个真正清晰的知识点。" },
@@ -36,13 +36,14 @@
     { category: "视线提醒", text: "眼睛离开屏幕，注意力留在问题上。" },
     { category: "视线提醒", text: "听见自己翻页的声音，比看计时数字更重要。" },
     { category: "视线提醒", text: "不用频繁确认时间，计时会替你记住。" },
+    { category: "专注提醒", text: "忽略该忽略的，专注该专注的" },
   ];
-  function recommendedFocusMessageIndex(active, slot) {
+  function recommendedFocusMessageIndex(active, slot, messageCount) {
     const key = `${active.id || active.started_at}:${active.started_at}`;
     let hash = 2166136261;
     for (let index = 0; index < key.length; index += 1) hash = Math.imul(hash ^ key.charCodeAt(index), 16777619);
     const steps = [7, 11, 13, 17, 19, 23, 29];
-    return ((hash >>> 0) % focusMessages.length + slot * steps[(hash >>> 8) % steps.length]) % focusMessages.length;
+    return ((hash >>> 0) % messageCount + slot * steps[(hash >>> 8) % steps.length]) % messageCount;
   }
   const $ = (selector) => document.querySelector(selector);
   const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => themePalettes[active ? "focus" : "idle"];
@@ -161,6 +162,14 @@
   function clockMinutes(value) {
     const [hours, minutes] = String(value || "00:00").split(":").map(Number);
     return hours * 60 + minutes;
+  }
+
+  function workWindowProgress(now, windows) {
+    const current = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    const periods = [windows?.morning, windows?.library].filter(Boolean).map((windowValue) => [clockMinutes(windowValue.start) * 60, clockMinutes(windowValue.end) * 60]);
+    const total = periods.reduce((sum, [start, end]) => sum + Math.max(0, end - start), 0);
+    const elapsed = periods.reduce((sum, [start, end]) => sum + Math.max(0, Math.min(current, end) - start), 0);
+    return total ? Math.max(0, Math.min(1, elapsed / total)) : 0;
   }
 
   function dateMinutes(value) {
@@ -361,21 +370,25 @@
       const fetchedAt = state.dashboardFetchedAt || now;
       const extraSeconds = Math.max(0, Math.floor((now - fetchedAt) / 1000));
       const todaySeconds = Number(investment.today_seconds || 0) + extraSeconds;
-      const yesterdaySeconds = Number(investment.yesterday_same_time_seconds || 0);
-      const delta = todaySeconds - yesterdaySeconds;
-      const maxSeconds = Math.max(1, todaySeconds, yesterdaySeconds);
+      const yesterdayTotal = Number(investment.yesterday_seconds || 0);
+      const yesterdayBaseline = Math.round(yesterdayTotal * workWindowProgress(new Date(now), state.dashboard?.windows));
+      const delta = todaySeconds - yesterdayBaseline;
       view.classList.toggle("ahead", delta > 0);
       view.classList.toggle("behind", delta < 0);
       $("#focus-compare-time").textContent = `截至 ${new Date(now).toLocaleTimeString("zh-CN", { hour12: false })}`;
       $("#focus-compare-today").textContent = formatSeconds(todaySeconds);
-      $("#focus-compare-today-label").textContent = formatSeconds(todaySeconds);
-      $("#focus-compare-yesterday-label").textContent = formatSeconds(yesterdaySeconds);
-      $("#focus-compare-trend").textContent = delta > 0 ? `领先 ${formatSeconds(delta)}` : delta < 0 ? `落后 ${formatSeconds(Math.abs(delta))}` : "与昨日持平";
-      $("#focus-compare-today-bar").style.width = `${(todaySeconds / maxSeconds) * 100}%`;
-      $("#focus-compare-yesterday-bar").style.width = `${(yesterdaySeconds / maxSeconds) * 100}%`;
+      $("#focus-compare-baseline").textContent = formatSeconds(yesterdayBaseline);
+      $("#focus-compare-trend").textContent = delta > 0 ? `提前 +${formatSeconds(delta)}` : delta < 0 ? `落后 −${formatSeconds(Math.abs(delta))}` : "持平 ±00:00:00";
+      const logRatio = Math.min(1, Math.log1p(Math.abs(delta) / 60) / Math.log1p(480));
+      const diffWidth = logRatio * 50;
+      const diffFill = $("#focus-diff-fill");
+      diffFill.style.left = `${delta < 0 ? 50 - diffWidth : 50}%`;
+      diffFill.style.width = `${diffWidth}%`;
+      $("#focus-diff-track").setAttribute("aria-label", `今日与昨日工作窗折算基线相差 ${delta >= 0 ? "+" : "-"}${formatSeconds(Math.abs(delta))}`);
 
       const elapsed = Math.max(0, Math.floor((now - Date.parse(active.started_at)) / 1000));
-      const messageIndex = recommendedFocusMessageIndex(active, Math.floor(elapsed / 200));
+      const focusMessages = state.dashboard?.focus_messages?.length ? state.dashboard.focus_messages : fallbackFocusMessages;
+      const messageIndex = recommendedFocusMessageIndex(active, Math.floor(elapsed / 200), focusMessages.length);
       if (messageIndex !== state.focusMessageIndex) {
         state.focusMessageIndex = messageIndex;
         const message = focusMessages[messageIndex];
@@ -707,6 +720,7 @@
       recent: (data.focus?.recent || []).map((item) => [item.id, item.status, item.ended_at]),
       scores: (data.score_history || []).map((item) => [item.id, item.subject, item.exam_date, item.score, item.target]),
       modes: (data.focus_modes || []).map((item) => [item.id, item.subject]),
+      messages: (data.focus_messages || []).map((item) => [item.category, item.text]),
       windows: [windowSignature(data.windows?.morning), windowSignature(data.windows?.library)],
       exam: data.exam?.date,
       day: String(data.now || "").slice(0, 10),
@@ -808,6 +822,8 @@
     Object.entries(settings.settings).forEach(([key, value]) => { const input = document.querySelector(`[name="${key}"]`); if (input) input.value = value; });
     const visibleHours = new Set(String(settings.settings.heatmap_visible_hours || "").split(","));
     document.querySelectorAll("[data-heat-hour]").forEach((input) => { input.checked = visibleHours.has(input.dataset.heatHour); });
+    $("#focus-subjects").value = (settings.focus_modes || []).map((item) => item.subject).join("\n");
+    $("#focus-messages").value = (settings.focus_messages || []).map((item) => `${item.category} | ${item.text}`).join("\n");
     renderScores(scores.scores.map((item) => ({ ...item, gap: item.target - item.score, completion: item.score / item.target })), "#settings-scores");
   }
 
@@ -871,7 +887,14 @@
       }
       $("#heatmap-visible-hours").value = selectedHours.join(",");
       try {
-        await api("/api/settings", { method: "PATCH", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+        const payload = Object.fromEntries(new FormData(event.currentTarget));
+        payload.focus_subjects = $("#focus-subjects").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        payload.focus_messages = $("#focus-messages").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+          const parts = line.split(/[|｜]/);
+          return parts.length > 1 ? { category: parts.shift().trim(), text: parts.join("|").trim() } : { category: "专注提醒", text: line };
+        });
+        await api("/api/settings", { method: "PATCH", body: JSON.stringify(payload) });
+        await loadSettings();
         showToast("设置已保存");
       } catch (error) { showToast(error.message); }
     });

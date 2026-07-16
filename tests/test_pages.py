@@ -36,9 +36,11 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="investment-today-legend"' in html
     assert html.index("今日截至当前") < html.index("投入最多的三个科目") < html.index("近七天日均专注")
     assert 'id="focus-comparison-view"' in html
-    assert 'id="focus-compare-today-bar"' in html
-    assert 'id="focus-compare-yesterday-bar"' in html
+    assert 'id="focus-diff-track"' in html
+    assert 'id="focus-diff-fill"' in html
     assert 'id="focus-message-card"' in html
+    assert "<h2>专注进行中</h2>" not in html
+    assert "<h2>今日专注节奏</h2>" not in html
     assert "lunch-start-label" in html
     assert "library-history" in html
     assert "home-window-label" in html
@@ -77,9 +79,11 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "function renderFocusInvestment(investment, active)" in javascript
     assert "subjectsWithActiveTime(baseline.today_subjects, extraSeconds)" in javascript
     assert "function renderFocusComparison(active)" in javascript
-    assert javascript.count('{ category: "') == 30
-    assert "function recommendedFocusMessageIndex(active, slot)" in javascript
-    assert "recommendedFocusMessageIndex(active, Math.floor(elapsed / 200))" in javascript
+    assert "忽略该忽略的，专注该专注的" in javascript
+    assert "function recommendedFocusMessageIndex(active, slot, messageCount)" in javascript
+    assert "recommendedFocusMessageIndex(active, Math.floor(elapsed / 200), focusMessages.length)" in javascript
+    assert "function workWindowProgress(now, windows)" in javascript
+    assert "Math.log1p(Math.abs(delta) / 60) / Math.log1p(480)" in javascript
 
 
 def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authenticated_client):
@@ -133,9 +137,12 @@ def test_settings_is_small_low_frequency_entry(authenticated_client):
     html = authenticated_client.get("/settings").get_data(as_text=True)
 
     assert "设置" in html
-    assert "时间窗口" in html
+    assert "工作时间" in html
     assert "长期计划" not in html
     assert "数据中心" not in html
-    assert "热度图显示时段" in html
+    assert "热度图时段" in html
     assert 'name="heatmap_visible_hours"' in html
     assert html.count("data-heat-hour=") == 12
+    assert 'id="focus-subjects"' in html
+    assert 'id="focus-messages"' in html
+    assert "保存全部设置" in html

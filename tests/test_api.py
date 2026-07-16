@@ -44,9 +44,11 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
     assert payload["focus"]["today"] == []
     assert payload["focus_investment"]["daily_average_seconds"] == 0
     assert payload["focus_investment"]["today_subjects"] == []
-    assert payload["focus_investment"]["yesterday_same_time_seconds"] == 0
+    assert payload["focus_investment"]["yesterday_seconds"] == 0
     assert payload["focus_investment"]["subjects"] == []
     assert [mode["subject"] for mode in payload["focus_modes"]] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
+    assert len(payload["focus_messages"]) == 31
+    assert payload["focus_messages"][-1]["text"] == "忽略该忽略的，专注该专注的"
 
 
 def test_dashboard_score_history_keeps_all_submissions(authenticated_client):
@@ -128,6 +130,28 @@ def test_heatmap_visible_hours_are_validated_and_persisted(authenticated_client)
     assert invalid.status_code == 400
     assert empty.get_json() == {"error": "invalid_heatmap_visible_hours"}
     assert invalid.get_json() == {"error": "invalid_heatmap_visible_hours"}
+
+
+def test_focus_subjects_and_messages_are_validated_and_persisted(authenticated_client):
+    saved = authenticated_client.patch("/api/settings", json={
+        "focus_subjects": ["408三轮", "数学真题"],
+        "focus_messages": [
+            {"category": "提醒", "text": "忽略该忽略的，专注该专注的"},
+            {"category": "节奏", "text": "完成当前这一页"},
+        ],
+    })
+
+    assert saved.status_code == 200
+    assert [mode["subject"] for mode in saved.get_json()["focus_modes"]] == ["408三轮", "数学真题"]
+    assert saved.get_json()["focus_messages"][1]["text"] == "完成当前这一页"
+    dashboard = authenticated_client.get("/api/dashboard").get_json()
+    assert [mode["subject"] for mode in dashboard["focus_modes"]] == ["408三轮", "数学真题"]
+    assert dashboard["focus_messages"] == saved.get_json()["focus_messages"]
+
+    duplicate = authenticated_client.patch("/api/settings", json={"focus_subjects": ["数学", "数学"]})
+    empty_messages = authenticated_client.patch("/api/settings", json={"focus_messages": []})
+    assert duplicate.get_json() == {"error": "invalid_focus_subjects"}
+    assert empty_messages.get_json() == {"error": "invalid_focus_messages"}
 
 
 def test_guest_can_read_dashboard_but_cannot_mutate_data(client):

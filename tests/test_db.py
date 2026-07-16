@@ -1,5 +1,5 @@
 def test_database_seeds_default_settings_and_modes(tmp_path):
-    from app.db import connect, init_db, list_focus_modes, get_settings, list_scores, list_plans
+    from app.db import connect, get_focus_messages, init_db, list_focus_modes, get_settings, list_scores, list_plans
 
     connection = connect(str(tmp_path / "seed.sqlite3"))
     init_db(connection)
@@ -17,6 +17,8 @@ def test_database_seeds_default_settings_and_modes(tmp_path):
     assert [mode["subject"] for mode in modes] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
     assert [mode["duration_minutes"] for mode in modes] == [0, 0, 0, 0, 0, 0]
     assert {mode["name"] for mode in modes} == {"专注"}
+    assert len(get_focus_messages(connection)) == 31
+    assert get_focus_messages(connection)[-1]["text"] == "忽略该忽略的，专注该专注的"
     assert len(scores) == 0
     assert len(plans) == 0
 
@@ -49,21 +51,19 @@ def test_clear_user_data_preserves_modes_and_settings(tmp_path):
     assert len(list_focus_modes(connection)) == 6
 
 
-def test_database_replaces_legacy_focus_modes_in_fixed_order(tmp_path):
-    from app.db import connect, init_db, list_focus_modes
+def test_database_preserves_custom_focus_content_on_reinitialization(tmp_path):
+    from app.db import connect, get_focus_messages, init_db, list_focus_modes, replace_focus_modes, save_focus_messages
 
     connection = connect(str(tmp_path / "legacy-modes.sqlite3"))
     init_db(connection)
-    connection.execute("DELETE FROM focus_modes")
-    connection.executemany(
-        "INSERT INTO focus_modes(name, subject, duration_minutes) VALUES ('旧模式', ?, 50)",
-        [("专业课",), ("数学",), ("英语",), ("自定义",)],
-    )
+    replace_focus_modes(connection, ["专业课", "数学", "自定义"])
+    save_focus_messages(connection, [{"category": "提醒", "text": "只做当前题"}])
     connection.commit()
 
     init_db(connection)
 
     modes = list_focus_modes(connection)
-    assert [mode["subject"] for mode in modes] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
+    assert [mode["subject"] for mode in modes] == ["专业课", "数学", "自定义"]
     assert {mode["name"] for mode in modes} == {"专注"}
     assert {mode["duration_minutes"] for mode in modes} == {0}
+    assert get_focus_messages(connection) == [{"category": "提醒", "text": "只做当前题"}]
