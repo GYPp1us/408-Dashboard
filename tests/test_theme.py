@@ -8,7 +8,7 @@ def test_dashboard_colors_follow_focus_state_except_score_deltas():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
     javascript = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
 
-    assert "body.page-focus,body.is-focusing { --accent:#7a5bc7" in css
+    assert "body.page-focus,body.is-focusing { --accent:#8067b3" in css
     assert ":root { --ink:#20272f" in css and "--accent:#d66c58" in css
     assert "idle: [\"#d66c58\", \"#b25647\", \"#dd9073\"" in javascript
     assert "#ef5b3f" not in css
@@ -18,7 +18,7 @@ def test_dashboard_colors_follow_focus_state_except_score_deltas():
     assert ".heat-cell.l1{background:var(--heat-l1)}" in css
     assert "--score-positive:#09685f" in css
     assert "--score-negative:#b83c2c" in css
-    assert 'focus: ["#7a5bc7"' in javascript
+    assert 'focus: ["#8067b3"' in javascript
     assert "#148b7d" not in css
     assert "#148b7d" not in javascript
 
@@ -61,7 +61,7 @@ def test_time_cards_use_window_duration_widths_and_compact_titles():
     assert ".time-card h2 { color:var(--muted); font-size:13px" in css
     assert ".time-card > strong { display:block; margin-top:5px" in css
     assert ".progress-meta { display:flex; justify-content:space-between; margin-top:10px" in css
-    assert ".progress { position:relative; height:8px; margin-top:5px" in css
+    assert ".progress { position:relative; height:14px; margin-top:5px; overflow:hidden; border-radius:4px" in css
     assert ".mode .drag-launch { margin-top:0" in css
     assert ".drag-launch .drag-label { font-size:13px" in css
     assert "<h2>当前时间</h2>" not in template
@@ -84,9 +84,13 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".investment-trend.down { background:#faebe8; color:var(--score-negative)" in css
     assert ".focus-comparison-view.ahead .focus-compare-trend" in css
     assert ".focus-comparison-view.behind .focus-compare-trend" in css
-    assert ".focus-diff-track > span" in css and "background:var(--accent)" in css
-    assert ".focus-comparison-view.ahead .focus-diff-track em" in css
-    assert ".focus-comparison-view.behind .focus-diff-track em" in css
+    assert ".focus-diff-track { position:relative; height:14px" in css
+    assert ".focus-diff-track > span" in css and "border-radius:0" in css
+    assert ".focus-comparison-view.ahead .focus-diff-track > span { border-radius:0 4px 4px 0; background:var(--score-positive)" in css
+    assert ".focus-comparison-view.behind .focus-diff-track > span { border-radius:4px 0 0 4px; background:var(--score-negative)" in css
+    assert ".focus-diff-track em" not in css
+    assert ".score-row em.good { color:var(--score-positive)" in css
+    assert ".score-row em.bad { color:var(--score-negative)" in css
     assert ".focus-compare-trend { min-width:108px; padding:8px 10px" in css
     assert ".focus-message-card" in css and "height:96px; min-height:0" in css
     assert ".focus-message-card::after { content:attr(data-index)" in css

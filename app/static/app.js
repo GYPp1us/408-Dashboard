@@ -3,7 +3,7 @@
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
     idle: ["#d66c58", "#b25647", "#dd9073", "#97483e", "#c27758", "#e4a994", "#835144", "#d28a72"],
-    focus: ["#7a5bc7", "#5f42aa", "#987ddd", "#4d358c", "#876cbf", "#b09be7", "#614e87", "#9b84cf"],
+    focus: ["#8067b3", "#685295", "#9a86c3", "#59447f", "#8b77aa", "#b4a5d1", "#706186", "#9f8db8"],
   };
   const fallbackFocusMessages = [
     { category: "时间管理", text: "当前只处理一个问题，剩下的交给计划。" },
