@@ -14,7 +14,9 @@ def test_dashboard_colors_follow_focus_state_except_score_deltas():
     assert "#ef5b3f" not in css
     assert "#ef5b3f" not in javascript
     assert ".progress i" in css and "background:#a8afb5" in css
-    assert ".progress-history span" in css and "background:var(--accent)" in css
+    assert "--window-accent:#c98072" in css
+    assert "--window-accent:#8879a6" in css
+    assert ".progress-history span" in css and "background:var(--window-accent)" in css
     assert ".heat-cell.l1{background:var(--heat-l1)}" in css
     assert "--score-positive:#09685f" in css
     assert "--score-negative:#b83c2c" in css
@@ -86,8 +88,11 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".focus-comparison-view.behind .focus-compare-trend" in css
     assert ".focus-diff-track { position:relative; height:14px" in css
     assert ".focus-diff-track > span" in css and "border-radius:0" in css
-    assert ".focus-comparison-view.ahead .focus-diff-track > span { border-radius:0 4px 4px 0; background:var(--score-positive)" in css
-    assert ".focus-comparison-view.behind .focus-diff-track > span { border-radius:4px 0 0 4px; background:var(--score-negative)" in css
+    assert "--diff-positive:#2ee6a6" in css and "--diff-negative:#ff5967" in css
+    assert ".focus-comparison-view.ahead .focus-diff-track > span { border-radius:0 4px 4px 0; background:var(--diff-positive)" in css
+    assert ".focus-comparison-view.behind .focus-diff-track > span { border-radius:4px 0 0 4px; background:var(--diff-negative)" in css
+    assert ".focus-diff-scale span:nth-child(2) { left:22.2%" in css
+    assert ".focus-diff-scale span:nth-child(4) { left:77.8%" in css
     assert ".focus-diff-track em" not in css
     assert ".score-row em.good { color:var(--score-positive)" in css
     assert ".score-row em.bad { color:var(--score-negative)" in css

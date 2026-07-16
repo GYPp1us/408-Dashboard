@@ -38,6 +38,8 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="focus-comparison-view"' in html
     assert 'id="focus-diff-track"' in html
     assert 'id="focus-diff-fill"' in html
+    assert 'id="focus-compare-baseline"' not in html
+    assert "−30m" in html and "+30m" in html
     assert 'id="focus-message-card"' in html
     assert "<h2>专注进行中</h2>" not in html
     assert "<h2>今日专注节奏</h2>" not in html
