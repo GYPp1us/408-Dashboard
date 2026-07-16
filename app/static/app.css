@@ -219,16 +219,16 @@ button { cursor:pointer; }
 .settings-grid .heat-hour-options label { display:flex; align-items:center; gap:6px; margin:0; color:var(--ink); font-size:11px; }
 .settings-grid .heat-hour-options input { width:14px; height:14px; margin:0; padding:0; accent-color:var(--accent); }
 .active-mode-view { position:relative; animation:focus-enter .42s ease both; }
-.focus-pause-button { position:absolute; top:0; right:0; display:grid; width:34px; height:30px; padding:0; place-items:center; border:1px solid var(--accent-border); border-radius:5px; background:var(--accent-soft); color:var(--accent-deep); font-size:14px; line-height:1; }
+.focus-pause-button { position:absolute; top:0; right:0; display:grid; width:52px; height:30px; padding:0; place-items:center; border:1px solid var(--accent-border); border-radius:5px; background:var(--accent-soft); color:var(--accent-deep); font-size:11px; font-weight:750; line-height:1; }
 .focus-pause-button.is-paused { background:var(--accent); color:#fff; }
 .focus-pause-button:disabled { cursor:wait; opacity:.62; }
 .active-mode-view h3 { margin:12px 0 0; font-size:22px; }
 .active-mode-view > strong { display:block; margin-top:18px; color:var(--accent-deep); font-size:44px; line-height:1; }
 .focus-window { min-height:15px; margin-top:10px; color:var(--accent-deep); font-size:11px; }
 .focus-lock-row { display:grid; grid-template-columns:1fr 1fr; align-items:center; gap:8px; margin-top:8px; }
-.focus-trust-state { display:flex; align-items:center; justify-content:space-between; min-width:0; height:32px; padding:0 8px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); color:var(--muted); font-size:10px; }
-.focus-trust-state b { color:var(--score-positive); font-size:11px; }
-.focus-trust-state.untrusted b { color:var(--score-negative); }
+.focus-trust-state { display:flex; align-items:center; justify-content:center; gap:7px; min-width:0; height:32px; padding:0 8px; border-radius:5px; background:#e7f3ef; color:var(--score-positive); font-size:10px; white-space:nowrap; }
+.focus-trust-state b { color:inherit; font-size:11px; }
+.focus-trust-state.untrusted { background:#faebe8; color:var(--score-negative); }
 .focus-lock-row .drag-action { margin-top:0; }
 .drag-lock.locked { pointer-events:none; }
 .drag-lock.locked .drag-label { color:#fff; }

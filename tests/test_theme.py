@@ -110,3 +110,11 @@ def test_settings_page_uses_modern_two_column_editor_layout():
     assert ".settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr))" in css
     assert ".settings-content-grid { display:grid; grid-template-columns:.72fr 1.28fr" in css
     assert ".settings-editor textarea" in css and "min-height:190px" in css
+
+
+def test_pause_and_trust_controls_use_text_and_status_box_styles():
+    css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert ".focus-pause-button" in css and "width:52px" in css
+    assert ".focus-trust-state" in css and "background:#e7f3ef; color:var(--score-positive)" in css
+    assert ".focus-trust-state.untrusted { background:#faebe8; color:var(--score-negative)" in css

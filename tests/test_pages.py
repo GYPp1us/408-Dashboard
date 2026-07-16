@@ -42,6 +42,7 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "−30m" in html and "+30m" in html
     assert 'id="focus-message-card"' in html
     assert 'id="toggle-focus-pause"' in html
+    assert 'id="focus-pause-icon">暂停</span>' in html
     assert 'id="lock-focus"' in html
     assert 'id="focus-trust-state"' in html
     assert "持续计时 · 不设上限" not in html
@@ -94,6 +95,7 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "function focusElapsedSeconds(session, now = Date.now())" in javascript
     assert 'api("/api/focus/pause"' in javascript
     assert 'api("/api/focus/lock"' in javascript
+    assert 'paused ? "继续" : "暂停"' in javascript
     assert 'fetch("/api/focus/heartbeat"' in javascript
     assert 'document.body.dataset.page === "settings"' in javascript
     assert "window.setInterval(sendForegroundHeartbeat, 500)" in javascript

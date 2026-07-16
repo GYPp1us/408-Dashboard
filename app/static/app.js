@@ -692,7 +692,7 @@
     button.classList.toggle("is-paused", paused);
     button.title = paused ? "继续专注" : "暂停专注";
     button.setAttribute("aria-label", button.title);
-    $("#focus-pause-icon").textContent = paused ? "▶" : "Ⅱ";
+    $("#focus-pause-icon").textContent = paused ? "继续" : "暂停";
   }
 
   async function toggleFocusPause() {
