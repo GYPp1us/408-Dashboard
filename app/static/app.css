@@ -155,10 +155,10 @@ button { cursor:pointer; }
 .investment-legend i { flex:0 0 auto; width:7px; height:7px; border-radius:2px; }
 .investment-legend b { margin-left:auto; color:var(--ink); font-size:10px; }
 .focus-comparison-view { min-height:500px; animation:focus-enter .42s ease both; }
-.focus-compare-time { margin-bottom:2px; color:var(--muted); font-size:10px; text-align:right; }
 .focus-compare-overview { padding:12px 0 16px; border-bottom:1px solid var(--line); }
 .focus-compare-value { display:grid; grid-template-columns:1fr auto; align-items:end; gap:4px 10px; }
-.focus-compare-value > span { grid-column:1 / 3; color:var(--muted); font-size:11px; }
+.focus-compare-value > span { grid-column:1; grid-row:1; color:var(--muted); font-size:11px; }
+.focus-compare-time { grid-column:2; grid-row:1; color:var(--muted); font-size:11px; text-align:right; }
 .focus-compare-value > strong { font-size:31px; line-height:1; }
 .focus-compare-trend { min-width:108px; padding:8px 10px; border-radius:5px; background:#edf0ef; color:var(--muted); font-size:13px; text-align:center; white-space:nowrap; }
 .focus-comparison-view.ahead .focus-compare-trend { background:#e7f3ef; color:var(--score-positive); }

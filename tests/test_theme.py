@@ -118,3 +118,10 @@ def test_pause_and_trust_controls_use_text_and_status_box_styles():
     assert ".focus-pause-button" in css and "width:52px" in css
     assert ".focus-trust-state" in css and "background:#e7f3ef; color:var(--score-positive)" in css
     assert ".focus-trust-state.untrusted { background:#faebe8; color:var(--score-negative)" in css
+
+
+def test_focus_comparison_labels_share_the_same_header_row():
+    css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert ".focus-compare-value > span { grid-column:1; grid-row:1" in css
+    assert ".focus-compare-time { grid-column:2; grid-row:1" in css

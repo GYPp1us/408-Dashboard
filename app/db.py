@@ -204,6 +204,11 @@ def expire_unattended_focus(connection: sqlite3.Connection, now: datetime, timeo
         FROM focus_sessions
         WHERE status = 'active'
           AND focus_locked = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM focus_pauses
+              WHERE focus_pauses.session_id = focus_sessions.id
+                AND focus_pauses.ended_at IS NULL
+          )
           AND last_foreground_at IS NOT NULL
           AND last_foreground_at <= ?
         ORDER BY id DESC

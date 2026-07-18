@@ -99,7 +99,7 @@ def test_database_migrates_existing_focus_rows_as_trusted(tmp_path):
     assert connection.execute("SELECT COUNT(*) FROM focus_pauses").fetchone()[0] == 0
 
 
-def test_foreground_timeout_ends_unlocked_focus_and_closes_pause(tmp_path):
+def test_foreground_timeout_ends_running_focus_but_skips_paused_and_locked_focus(tmp_path):
     from datetime import datetime, timedelta, timezone
 
     from app.db import connect, expire_unattended_focus, init_db
@@ -112,17 +112,24 @@ def test_foreground_timeout_ends_unlocked_focus_and_closes_pause(tmp_path):
         "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status, last_foreground_at) VALUES ('数学', '专注', 0, ?, 'active', ?)",
         ((now - timedelta(minutes=10)).isoformat(), last_foreground.isoformat()),
     )
-    connection.execute("INSERT INTO focus_pauses(session_id, started_at) VALUES (?, ?)", (cursor.lastrowid, (now - timedelta(seconds=40)).isoformat()))
     connection.commit()
 
     expired_id = expire_unattended_focus(connection, now, 30)
 
     expected_end = (last_foreground + timedelta(seconds=30)).isoformat()
     row = connection.execute("SELECT status, ended_at, trusted FROM focus_sessions WHERE id = ?", (expired_id,)).fetchone()
-    pause = connection.execute("SELECT ended_at FROM focus_pauses WHERE session_id = ?", (expired_id,)).fetchone()
     assert dict(row) == {"status": "completed", "ended_at": expected_end, "trusted": 1}
-    assert pause["ended_at"] == expected_end
 
+    paused = connection.execute(
+        "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status, last_foreground_at) VALUES ('数学', '专注', 0, ?, 'active', ?)",
+        ((now - timedelta(minutes=5)).isoformat(), last_foreground.isoformat()),
+    )
+    connection.execute("INSERT INTO focus_pauses(session_id, started_at) VALUES (?, ?)", (paused.lastrowid, (now - timedelta(seconds=40)).isoformat()))
+    connection.commit()
+    assert expire_unattended_focus(connection, now, 30) is None
+
+    connection.execute("UPDATE focus_pauses SET ended_at = ? WHERE session_id = ? AND ended_at IS NULL", (now.isoformat(), paused.lastrowid))
+    connection.execute("UPDATE focus_sessions SET ended_at = ?, status = 'completed' WHERE id = ?", (now.isoformat(), paused.lastrowid))
     connection.execute(
         "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status, last_foreground_at, focus_locked, trusted) VALUES ('数学', '专注', 0, ?, 'active', ?, 1, 0)",
         ((now - timedelta(minutes=5)).isoformat(), last_foreground.isoformat()),

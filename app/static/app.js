@@ -386,7 +386,6 @@
       const delta = todaySeconds - yesterdayBaseline;
       view.classList.toggle("ahead", delta > 0);
       view.classList.toggle("behind", delta < 0);
-      $("#focus-compare-time").textContent = `截至 ${new Date(now).toLocaleTimeString("zh-CN", { hour12: false })}`;
       $("#focus-compare-today").textContent = formatSeconds(todaySeconds);
       $("#focus-compare-trend").textContent = delta > 0 ? `提前 +${formatSeconds(delta)}` : delta < 0 ? `落后 −${formatSeconds(Math.abs(delta))}` : "持平 ±00:00:00";
       const logRatio = Math.min(1, Math.log1p(Math.abs(delta) / 60) / Math.log1p(480));
