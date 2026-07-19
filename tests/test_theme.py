@@ -47,13 +47,15 @@ def test_heatmap_scale_and_current_time_art_are_fixed():
 def test_status_bar_uses_stacked_date_and_tall_score_billboard():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
 
+    assert ".status-bar { display:grid; grid-template-columns:minmax(220px,1fr) max-content minmax(250px,320px) max-content max-content" in css
     assert ".status-title { display:grid" in css
-    assert "justify-items:end" in css and "text-align:right" in css
+    assert ".status-title { display:grid; grid-template-columns:9px minmax(0,1fr); grid-template-rows:auto auto; align-items:center; gap:2px 8px; min-width:0; text-align:left" in css
     assert ".status-title i { grid-row:1 / 3" in css
-    assert ".exam-countdown { display:flex; align-items:baseline; justify-content:flex-end" in css
+    assert ".exam-countdown { display:flex; align-items:baseline; gap:7px" in css
     assert ".score-window { flex:1; height:38px" in css
-    assert ".score-row { display:flex; align-items:center; justify-content:flex-end" in css
-    assert ".today-study { display:flex; flex-direction:column; align-items:flex-end" in css
+    assert ".score-row { display:flex; align-items:center; gap:10px" in css
+    assert ".today-study { display:flex; flex-direction:column; align-items:flex-start" in css
+    assert ".current-state { display:flex; align-items:center; gap:6px" in css
     assert "translateY(-152px)" in css
 
 
