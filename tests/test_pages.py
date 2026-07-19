@@ -57,6 +57,7 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "library-history" in html
     assert "home-window-label" in html
     assert "home-window-countdown" in html
+    assert html.index('class="current-window"') < html.index('id="current-time"')
     assert "上午学习窗口 · 距离午休" not in html
     assert "focus-summary" in html
     assert "session-goal-chart" in html

@@ -48,9 +48,12 @@ def test_status_bar_uses_stacked_date_and_tall_score_billboard():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
 
     assert ".status-title { display:grid" in css
+    assert "justify-items:end" in css and "text-align:right" in css
     assert ".status-title i { grid-row:1 / 3" in css
+    assert ".exam-countdown { display:flex; align-items:baseline; justify-content:flex-end" in css
     assert ".score-window { flex:1; height:38px" in css
-    assert ".score-row" in css and "height:38px" in css
+    assert ".score-row { display:flex; align-items:center; justify-content:flex-end" in css
+    assert ".today-study { display:flex; flex-direction:column; align-items:flex-end" in css
     assert "translateY(-152px)" in css
 
 
@@ -62,6 +65,8 @@ def test_time_cards_use_window_duration_widths_and_compact_titles():
     assert "grid-template-columns:468px minmax(280px,var(--morning-window)) minmax(0,var(--library-window))" in css
     assert ".time-card h2 { color:var(--muted); font-size:13px" in css
     assert ".time-card > strong { display:block; margin-top:5px" in css
+    assert ".current-time-card > strong { margin-top:5px" in css
+    assert ".current-time-card .current-window { margin:0" in css
     assert ".progress-meta { display:flex; justify-content:space-between; margin-top:10px" in css
     assert ".progress { position:relative; height:14px; margin-top:5px; overflow:hidden; border-radius:4px" in css
     assert ".mode .drag-launch { margin-top:0" in css
@@ -98,7 +103,7 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".focus-diff-track em" not in css
     assert ".score-row em.good { color:var(--score-positive)" in css
     assert ".score-row em.bad { color:var(--score-negative)" in css
-    assert ".focus-compare-trend { min-width:108px; padding:8px 10px" in css
+    assert ".focus-compare-trend { width:100%; padding:0 10px" in css
     assert ".focus-message-card" in css and "height:96px; min-height:0" in css
     assert ".focus-message-card::after { content:attr(data-index)" in css
     assert "@keyframes message-card-in" in css
@@ -123,5 +128,8 @@ def test_pause_and_trust_controls_use_text_and_status_box_styles():
 def test_focus_comparison_labels_share_the_same_header_row():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
 
+    assert ".focus-compare-value { display:grid; grid-template-columns:repeat(2,minmax(0,1fr))" in css
     assert ".focus-compare-value > span { grid-column:1; grid-row:1" in css
     assert ".focus-compare-time { grid-column:2; grid-row:1" in css
+    assert ".focus-compare-value > strong,.focus-compare-trend { display:flex; grid-row:2; align-items:center; height:38px" in css
+    assert ".focus-compare-trend { width:100%; padding:0 10px" in css
