@@ -141,7 +141,18 @@ $env:COOKIE_SECURE = "0"
 
 打开 `http://127.0.0.1:43127`。浏览器通常会把 `localhost` 和 `127.0.0.1` 视为本地可信环境，但通过 `http://192.168.x.x` 等局域网地址访问时，持续唤醒等 API 仍可能被禁用。
 
-## 8. 测试
+## 8. 数据迁移
+
+管理员可以在设置页生成一次性迁移码。总服务器使用该迁移码拉取完整学习数据：
+
+```http
+GET /api/migration/export
+X-Migration-Code: <一次性迁移码>
+```
+
+迁移码有效期为 15 分钟，成功拉取后立即失效。接口返回版本化 JSON 数据包，包含设置、专注模式、全部专注与暂停记录、成绩和计划，不包含管理员密码或登录会话。生产环境必须通过 HTTPS 调用该接口。
+
+## 9. 测试
 
 ```bash
 cd /opt/408-dashboard/current
@@ -149,7 +160,7 @@ PYTHONPATH=. /opt/408-dashboard/venv/bin/python -m pytest tests/ -q
 node --check app/static/app.js
 ```
 
-## 9. 更新版本
+## 10. 更新版本
 
 ```bash
 cd /opt/408-dashboard/current
@@ -163,7 +174,7 @@ sudo systemctl status 408-dashboard.service --no-pager -l
 
 更新前建议先备份数据库。
 
-## 10. 数据备份与恢复
+## 11. 数据备份与恢复
 
 在线备份：
 
@@ -183,7 +194,7 @@ sudo chown www-data:www-data /opt/408-dashboard/shared/data/dashboard.sqlite3
 sudo systemctl start 408-dashboard.service
 ```
 
-## 11. 常用排查命令
+## 12. 常用排查命令
 
 ```bash
 systemctl status 408-dashboard.service --no-pager -l
