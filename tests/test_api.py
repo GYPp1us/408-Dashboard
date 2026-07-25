@@ -109,7 +109,88 @@ def test_guest_foreground_heartbeat_is_allowed(authenticated_client):
     heartbeat = authenticated_client.post("/api/focus/heartbeat", json={})
 
     assert heartbeat.status_code == 200
-    assert heartbeat.get_json() == {"ok": True}
+    assert heartbeat.get_json()["ok"] is True
+
+
+def test_foreground_heartbeat_recovers_only_timeout_ended_session(authenticated_client, app):
+    from datetime import datetime, timedelta, timezone
+
+    from app.db import connect, expire_unattended_focus
+
+    session_id = authenticated_client.post("/api/focus/start", json={"subject": "数学", "mode": "专注"}).get_json()["session"]["id"]
+    now = datetime.now(timezone.utc)
+    connection = connect(app.config["DATABASE"])
+    connection.execute(
+        "UPDATE focus_sessions SET last_foreground_at = ? WHERE id = ?",
+        ((now - timedelta(seconds=31)).isoformat(), session_id),
+    )
+    connection.commit()
+    assert expire_unattended_focus(connection, now, 30) == session_id
+    connection.close()
+
+    recovered = authenticated_client.post("/api/focus/heartbeat", json={
+        "session_id": session_id,
+        "allow_recovery": True,
+    }).get_json()
+    assert recovered["recovered"] is True
+    assert recovered["status"] == "active"
+
+    authenticated_client.post("/api/focus/end", json={"session_id": session_id})
+    not_recovered = authenticated_client.post("/api/focus/heartbeat", json={
+        "session_id": session_id,
+        "allow_recovery": True,
+    }).get_json()
+    assert not_recovered["recovered"] is False
+    assert not_recovered["status"] == "completed"
+
+
+def test_hidden_page_does_not_recover_timeout_ended_session(authenticated_client, app):
+    from datetime import datetime, timedelta, timezone
+
+    from app.db import connect, expire_unattended_focus
+
+    session_id = authenticated_client.post("/api/focus/start", json={"subject": "408", "mode": "专注"}).get_json()["session"]["id"]
+    now = datetime.now(timezone.utc)
+    connection = connect(app.config["DATABASE"])
+    connection.execute(
+        "UPDATE focus_sessions SET last_foreground_at = ? WHERE id = ?",
+        ((now - timedelta(seconds=31)).isoformat(), session_id),
+    )
+    connection.commit()
+    expire_unattended_focus(connection, now, 30)
+    connection.close()
+
+    heartbeat = authenticated_client.post("/api/focus/heartbeat", json={
+        "session_id": session_id,
+        "allow_recovery": False,
+    }).get_json()
+    assert heartbeat["recovered"] is False
+    assert heartbeat["status"] == "completed"
+
+
+def test_migration_code_exports_all_business_data_once(authenticated_client):
+    session_id = authenticated_client.post("/api/focus/start", json={"subject": "数学", "mode": "专注"}).get_json()["session"]["id"]
+    authenticated_client.post("/api/focus/end", json={"session_id": session_id})
+    authenticated_client.post("/api/scores", json={"subject": "数学", "score": 100, "target": 130})
+
+    issued = authenticated_client.post("/api/migration/code", json={})
+    assert issued.status_code == 200
+    code = issued.get_json()["code"]
+
+    missing = authenticated_client.get("/api/migration/export")
+    exported = authenticated_client.get("/api/migration/export", headers={"X-Migration-Code": code})
+    repeated = authenticated_client.get("/api/migration/export", headers={"X-Migration-Code": code})
+
+    assert missing.status_code == 401
+    assert exported.status_code == 200
+    assert repeated.status_code == 401
+    package = exported.get_json()
+    assert package["format"] == "408-dashboard-migration"
+    assert package["version"] == 1
+    assert len(package["source_instance_id"]) == 32
+    assert package["focus_sessions"][0]["id"] == session_id
+    assert package["scores"][0]["subject"] == "数学"
+    assert "migration_instance_id" not in package["settings"]
 
 
 def test_visible_dashboard_poll_refreshes_foreground_heartbeat(authenticated_client, app):

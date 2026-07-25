@@ -47,6 +47,8 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="focus-pause-icon">暂停</span>' in html
     assert 'id="lock-focus"' in html
     assert 'id="focus-trust-state"' in html
+    assert 'id="sync-warning"' in html
+    assert 'aria-label="正在检测连接"' in html
     assert "持续计时 · 不设上限" not in html
     assert "专注方式" not in html
     assert "专注投入概览" not in html
@@ -104,6 +106,9 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert 'fetch("/api/focus/heartbeat"' in javascript
     assert 'document.body.dataset.page === "settings"' in javascript
     assert "window.setInterval(sendForegroundHeartbeat, 500)" in javascript
+    assert "setSyncLost(true)" in javascript
+    assert 'state.syncLost ? "失去同步"' in javascript
+    assert "allow_recovery" in javascript
 
 
 def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authenticated_client):
@@ -166,3 +171,5 @@ def test_settings_is_small_low_frequency_entry(authenticated_client):
     assert 'id="focus-subjects"' in html
     assert 'id="focus-messages"' in html
     assert "保存全部设置" in html
+    assert 'id="generate-migration-code"' in html
+    assert 'id="migration-code"' in html
