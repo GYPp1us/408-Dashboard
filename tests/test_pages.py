@@ -18,7 +18,7 @@ def authenticated_client(tmp_path):
 
 
 def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_client):
-    html = authenticated_client.get("/").get_data(as_text=True)
+    html = authenticated_client.get("/owner").get_data(as_text=True)
 
     assert "<small>今日有效学习</small>" not in html
     assert "<small>近期模拟考</small>" not in html
@@ -34,6 +34,12 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="investment-subject-stack"' in html
     assert 'id="investment-today-stack"' in html
     assert 'id="investment-today-legend"' in html
+    assert 'data-investment-range="week"' in html
+    assert 'data-investment-range="all"' in html
+    assert 'id="settle-today"' in html
+    assert 'id="daily-achievement"' in html
+    assert 'id="settlement-fireworks"' in html
+    assert "7h 标准" in html
     assert html.index("今日截至当前") < html.index("投入最多的三个科目") < html.index("近七天日均专注")
     assert 'id="focus-comparison-view"' in html
     assert 'id="focus-diff-track"' in html
@@ -100,6 +106,9 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "function focusElapsedSeconds(session, now = Date.now())" in javascript
     assert 'api("/api/focus/pause"' in javascript
     assert 'api("/api/focus/lock"' in javascript
+    assert 'api("/api/daily-settlement"' in javascript
+    assert "DAILY_TARGET_SECONDS = 7 * 3600" in javascript
+    assert "function playSettlementFireworks()" in javascript
     assert 'paused ? "继续" : "暂停"' in javascript
     assert 'fetch("/api/focus/heartbeat"' in javascript
     assert 'document.body.dataset.page === "settings"' in javascript
@@ -150,7 +159,7 @@ def test_focus_page_uses_single_dashboard_route(authenticated_client):
     response = authenticated_client.get("/focus")
 
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/")
+    assert response.headers["Location"].endswith("/owner")
 
 
 def test_settings_is_small_low_frequency_entry(authenticated_client):
@@ -166,3 +175,18 @@ def test_settings_is_small_low_frequency_entry(authenticated_client):
     assert 'id="focus-subjects"' in html
     assert 'id="focus-messages"' in html
     assert "保存全部设置" in html
+    assert 'role="tab"' in html
+    assert 'data-settings-panel="system"' in html
+    assert 'data-settings-panel="account"' in html
+
+
+def test_settings_tabs_are_client_side_and_confirm_destructive_actions(authenticated_client):
+    html = authenticated_client.get("/settings").get_data(as_text=True)
+    javascript = authenticated_client.get("/static/app.js").get_data(as_text=True)
+
+    assert 'data-settings-tab="system"' in html
+    assert 'data-settings-tab="account"' in html
+    assert "function bindSettingsTabs()" in javascript
+    assert "window.history.replaceState" in javascript
+    assert "function requestConfirmation" in javascript
+    assert "data-confirm-title=\"退出登录\"" in authenticated_client.get("/settings?tab=account").get_data(as_text=True)

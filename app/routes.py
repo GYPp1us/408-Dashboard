@@ -1,15 +1,19 @@
 from datetime import datetime, timedelta, timezone
 import re
 
-from flask import jsonify, redirect, render_template, request, session, url_for
+import secrets
+import sqlite3
 
-from .auth import admin_required, is_guest, login_required
-from .db import connect, finish_focus_session, get_focus_messages, get_settings, list_focus_modes, list_latest_scores, list_plans, list_scores, replace_focus_modes, save_focus_messages
+from flask import abort, jsonify, redirect, render_template, request, session, url_for
+
+from .auth import admin_required, current_user_id, is_guest, login_required, user_required
+from .db import add_friend, connect, finish_focus_session, get_daily_settlement, get_focus_messages, get_settings, get_user, get_user_by_username, issue_invitation, list_focus_modes, list_friends, list_invitations, list_latest_scores, list_plans, list_public_users, list_scores, remove_friend, replace_focus_modes, save_focus_messages
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
 
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 HEATMAP_HOURS = tuple(range(0, 24, 2))
+DAILY_TARGET_SECONDS = 7 * 3600
 
 
 def _heatmap_hours(value: str) -> list[int]:
@@ -102,14 +106,25 @@ def _row(connection, session_id: int, now: datetime | None = None):
     return _session_payload(dict(row), _pause_map(connection).get(session_id, []), current)
 
 
-def _focus_rows(connection, now: datetime, limit: int = 20, pauses: dict[int, list[dict]] | None = None) -> list[dict]:
-    rows = connection.execute("SELECT * FROM focus_sessions ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
+def _focus_rows(connection, now: datetime, limit: int = 20, pauses: dict[int, list[dict]] | None = None, user_id: int | None = None) -> list[dict]:
+    query = "SELECT * FROM focus_sessions"
+    params: tuple = ()
+    if user_id is not None:
+        query += " WHERE user_id = ?"
+        params = (user_id,)
+    query += " ORDER BY started_at DESC LIMIT ?"
+    rows = connection.execute(query, (*params, limit)).fetchall()
     pause_rows = pauses if pauses is not None else _pause_map(connection)
     return [_session_payload(dict(row), pause_rows.get(row["id"], []), now) for row in rows]
 
 
-def _focus_sessions(connection, now: datetime, pauses: dict[int, list[dict]] | None = None) -> list[tuple[str, datetime, datetime]]:
-    rows = connection.execute("SELECT * FROM focus_sessions ORDER BY started_at").fetchall()
+def _focus_sessions(connection, now: datetime, pauses: dict[int, list[dict]] | None = None, user_id: int | None = None) -> list[tuple[str, datetime, datetime]]:
+    query = "SELECT * FROM focus_sessions"
+    params: tuple = ()
+    if user_id is not None:
+        query += " WHERE user_id = ?"
+        params = (user_id,)
+    rows = connection.execute(query + " ORDER BY started_at", params).fetchall()
     pause_rows = pauses if pauses is not None else _pause_map(connection)
     sessions = []
     for row in rows:
@@ -118,10 +133,13 @@ def _focus_sessions(connection, now: datetime, pauses: dict[int, list[dict]] | N
     return sessions
 
 
-def _today_focus_rows(connection, now: datetime, pauses: dict[int, list[dict]] | None = None) -> list[dict]:
+def _today_focus_rows(connection, now: datetime, pauses: dict[int, list[dict]] | None = None, user_id: int | None = None) -> list[dict]:
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
-    rows = connection.execute("SELECT * FROM focus_sessions ORDER BY started_at").fetchall()
+    if user_id is None:
+        rows = connection.execute("SELECT * FROM focus_sessions ORDER BY started_at").fetchall()
+    else:
+        rows = connection.execute("SELECT * FROM focus_sessions WHERE user_id = ? ORDER BY started_at", (user_id,)).fetchall()
     pause_rows = pauses if pauses is not None else _pause_map(connection)
     result = []
     for row in rows:
@@ -152,36 +170,123 @@ def _today_focus_rows(connection, now: datetime, pauses: dict[int, list[dict]] |
     return result
 
 
+def _focus_day_metrics(focus_sessions: list[tuple[str, datetime, datetime]], day_start: datetime) -> tuple[int, dict[str, int]]:
+    day_end = day_start + timedelta(days=1)
+    subject_totals: dict[str, int] = {}
+    for subject, start, end in focus_sessions:
+        overlap_start = max(start.astimezone(day_start.tzinfo), day_start)
+        overlap_end = min(end.astimezone(day_start.tzinfo), day_end)
+        seconds = max(0, int((overlap_end - overlap_start).total_seconds()))
+        if seconds:
+            subject_totals[subject] = subject_totals.get(subject, 0) + seconds
+    return sum(subject_totals.values()), subject_totals
+
+
+def _viewer_user_id(connection) -> int | None:
+    if is_guest() and session.get("profile_user_id") is not None:
+        return int(session["profile_user_id"])
+    user_id = current_user_id()
+    if user_id is not None:
+        return user_id
+    if is_guest():
+        row = connection.execute("SELECT id FROM users WHERE role = 'site_owner' ORDER BY id LIMIT 1").fetchone()
+        return int(row["id"]) if row else None
+    return None
+
+
+def _friend_diff_payload(connection, now: datetime, user_id: int | None) -> list[dict]:
+    if user_id is None or is_guest():
+        return []
+    pauses = _pause_map(connection)
+    own_seconds = summarize_today_focus([(start, end) for _, start, end in _focus_sessions(connection, now, pauses, user_id)], now)["seconds"]
+    result = []
+    for friend in list_friends(connection, user_id):
+        friend_seconds = summarize_today_focus([(start, end) for _, start, end in _focus_sessions(connection, now, pauses, friend["id"])], now)["seconds"]
+        result.append({
+            "id": friend["id"],
+            "username": friend["username"],
+            "today_seconds": friend_seconds,
+            "delta_seconds": own_seconds - friend_seconds,
+        })
+    return result
+
+
 def register_routes(app):
     @app.get("/")
     def dashboard():
-        if not session.get("authenticated") or is_guest():
-            return redirect(url_for("guest_dashboard"))
-        return render_template("dashboard.html", page_name="home", is_guest=False)
+        connection = connect(app.config["DATABASE"])
+        try:
+            users = list_public_users(connection)
+        finally:
+            connection.close()
+        return render_template("site_home.html", page_name="site", users=users)
 
-    @app.get("/guest")
+    @app.get("/guest", strict_slashes=False)
     def guest_dashboard():
         session.clear()
         session["authenticated"] = True
         session["role"] = "guest"
+        session.pop("profile_user_id", None)
         return render_template("dashboard.html", page_name="home", is_guest=True)
+
+    @app.get("/<username>/guest", strict_slashes=False)
+    def profile_guest(username):
+        connection = connect(app.config["DATABASE"])
+        try:
+            user = get_user_by_username(connection, username)
+        finally:
+            connection.close()
+        if not user:
+            abort(404)
+        if not session.get("authenticated"):
+            session.clear()
+            session["authenticated"] = True
+            session["role"] = "guest"
+        session["viewing_as_guest"] = True
+        session["profile_user_id"] = user["id"]
+        session["profile_username"] = user["username"]
+        return render_template("dashboard.html", page_name="home", is_guest=True, profile_user=user)
+
+    @app.get("/<username>", strict_slashes=False)
+    def user_dashboard(username):
+        connection = connect(app.config["DATABASE"])
+        try:
+            user = get_user_by_username(connection, username)
+        finally:
+            connection.close()
+        if not user:
+            abort(404)
+        if not session.get("authenticated") or is_guest() or session.get("username", "").casefold() != user["username"].casefold():
+            return redirect(url_for("profile_guest", username=user["username"]))
+        return render_template("dashboard.html", page_name="home", is_guest=False)
 
     @app.get("/focus")
     def focus_compatibility_redirect():
+        if session.get("authenticated") and not is_guest() and session.get("username"):
+            return redirect(url_for("user_dashboard", username=session["username"]))
         return redirect(url_for("dashboard"))
 
+    @app.get("/account")
+    @user_required
+    def account_page():
+        return render_template("settings.html", page_name="account", settings_tab="account", is_guest=False)
+
     @app.get("/settings")
-    @admin_required
+    @user_required
     def settings_page():
-        return render_template("settings.html", page_name="settings", is_guest=False)
+        tab = request.args.get("tab", "system").strip().lower()
+        if tab not in {"system", "account"}:
+            tab = "system"
+        return render_template("settings.html", page_name="settings", settings_tab=tab, is_guest=False)
 
     @app.get("/api/dashboard")
     @login_required
     def dashboard_api():
         connection = connect(app.config["DATABASE"])
-        connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active'", (_now("UTC").isoformat(),))
+        viewer_id = _viewer_user_id(connection)
+        connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active' AND user_id = ?", (_now("UTC").isoformat(), viewer_id))
         connection.commit()
-        settings = get_settings(connection)
+        settings = get_settings(connection, viewer_id)
         now = _now(settings.get("timezone", "Asia/Shanghai"))
         try:
             windows = {
@@ -189,15 +294,17 @@ def register_routes(app):
                 "library": calculate_window(now, settings["library_open"], settings["library_close"]),
             }
             pauses = _pause_map(connection)
-            active_row = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").fetchone()
-            focus_sessions = _focus_sessions(connection, now, pauses)
+            active_row = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' AND user_id = ? ORDER BY id DESC LIMIT 1", (viewer_id,)).fetchone()
+            settlement_date = now.date().isoformat()
+            daily_settlement = get_daily_settlement(connection, viewer_id, settlement_date)
+            focus_sessions = _focus_sessions(connection, now, pauses, viewer_id)
             sessions = [(start, end) for _, start, end in focus_sessions]
-            today_rows = _today_focus_rows(connection, now, pauses)
+            today_rows = _today_focus_rows(connection, now, pauses, viewer_id)
             today_focus = summarize_today_focus(sessions, now)
             today_focus["count"] = len(today_rows)
-            scores = score_metrics(list_latest_scores(connection))
-            score_history = score_metrics(list_scores(connection))
-            plans = list_plans(connection)
+            scores = score_metrics(list_latest_scores(connection, viewer_id))
+            score_history = score_metrics(list_scores(connection, viewer_id))
+            plans = list_plans(connection, viewer_id)
             try:
                 heatmap_visible_hours = _heatmap_hours(settings.get("heatmap_visible_hours", ""))
             except (TypeError, ValueError):
@@ -207,19 +314,28 @@ def register_routes(app):
                 "exam": {"date": settings["exam_date"], "remaining_seconds": seconds_until_exam(now, settings["exam_date"])},
                 "today_focus": today_focus,
                 "focus_investment": aggregate_focus_investment(focus_sessions, now),
+                "daily_settlement": daily_settlement,
+                "can_settle_today": bool(
+                    not is_guest()
+                    and windows["library"]["state"] == "complete"
+                    and active_row is None
+                    and daily_settlement is None
+                ),
                 "windows": windows,
                 "focus": {
                     "active": _session_payload(dict(active_row), pauses.get(active_row["id"], []), now) if active_row else None,
-                    "recent": _focus_rows(connection, now, pauses=pauses),
+                    "recent": _focus_rows(connection, now, pauses=pauses, user_id=viewer_id),
                     "today": today_rows,
                 },
-                "focus_modes": list_focus_modes(connection),
-                "focus_messages": get_focus_messages(connection),
+                "focus_modes": list_focus_modes(connection, viewer_id),
+                "focus_messages": get_focus_messages(connection, viewer_id),
                 "heatmap": aggregate_focus_heatmap(sessions, now),
                 "heatmap_visible_hours": heatmap_visible_hours,
                 "scores": scores,
                 "score_history": score_history,
                 "plans": plans,
+                "friends": _friend_diff_payload(connection, now, viewer_id),
+                "viewer": get_user(connection, viewer_id),
             })
         finally:
             connection.close()
@@ -230,17 +346,18 @@ def register_routes(app):
         connection = connect(app.config["DATABASE"])
         try:
             now = _now("UTC")
-            active = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").fetchone()
+            viewer_id = _viewer_user_id(connection)
+            active = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' AND user_id = ? ORDER BY id DESC LIMIT 1", (viewer_id,)).fetchone()
             pauses = _pause_map(connection)
             return jsonify({
                 "active": _session_payload(dict(active), pauses.get(active["id"], []), now) if active else None,
-                "recent": _focus_rows(connection, now, pauses=pauses),
+                "recent": _focus_rows(connection, now, pauses=pauses, user_id=viewer_id),
             })
         finally:
             connection.close()
 
     @app.post("/api/focus/start")
-    @admin_required
+    @user_required
     def start_focus():
         payload = request.get_json(silent=True) or {}
         subject = str(payload.get("subject", "")).strip()
@@ -257,27 +374,103 @@ def register_routes(app):
         connection = connect(app.config["DATABASE"])
         try:
             connection.execute("BEGIN IMMEDIATE")
+            settings = get_settings(connection, current_user_id())
+            local_date = _now(settings.get("timezone", "Asia/Shanghai")).date().isoformat()
+            if get_daily_settlement(connection, current_user_id(), local_date):
+                connection.rollback()
+                return jsonify(error="daily_focus_already_settled"), 409
             if client_token:
                 existing = connection.execute("SELECT * FROM focus_sessions WHERE client_token = ?", (client_token,)).fetchone()
                 if existing:
                     connection.commit()
                     return jsonify(session=_row(connection, existing["id"]), idempotent=True), 200
-            active = connection.execute("SELECT id FROM focus_sessions WHERE status = 'active' LIMIT 1").fetchone()
+            active = connection.execute("SELECT id FROM focus_sessions WHERE status = 'active' AND user_id = ? LIMIT 1", (current_user_id(),)).fetchone()
             if active:
                 connection.rollback()
                 return jsonify(error="focus_already_active"), 409
             started_at = _now("UTC").isoformat()
             cursor = connection.execute(
-                "INSERT INTO focus_sessions(subject, mode, planned_minutes, started_at, status, client_token, last_foreground_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
-                (subject, mode, planned_minutes, started_at, client_token or None, started_at),
+                "INSERT INTO focus_sessions(user_id, subject, mode, planned_minutes, started_at, status, client_token, last_foreground_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
+                (current_user_id(), subject, mode, planned_minutes, started_at, client_token or None, started_at),
             )
             connection.commit()
             return jsonify(session=_row(connection, cursor.lastrowid)), 201
         finally:
             connection.close()
 
+    @app.post("/api/daily-settlement")
+    @user_required
+    def settle_today():
+        connection = connect(app.config["DATABASE"])
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            user_id = current_user_id()
+            settings = get_settings(connection, user_id)
+            now = _now(settings.get("timezone", "Asia/Shanghai"))
+            settlement_date = now.date().isoformat()
+            existing = get_daily_settlement(connection, user_id, settlement_date)
+            if existing:
+                connection.commit()
+                return jsonify(settlement=existing, idempotent=True), 200
+            library_window = calculate_window(now, settings["library_open"], settings["library_close"])
+            active = connection.execute(
+                "SELECT id FROM focus_sessions WHERE status = 'active' AND user_id = ? LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if library_window["state"] != "complete":
+                connection.rollback()
+                return jsonify(error="settlement_not_available"), 409
+            if active:
+                connection.rollback()
+                return jsonify(error="focus_still_active"), 409
+            pauses = _pause_map(connection)
+            focus_sessions = _focus_sessions(connection, now, pauses, user_id)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_seconds, today_subject_totals = _focus_day_metrics(focus_sessions, today_start)
+            yesterday_seconds, _ = _focus_day_metrics(focus_sessions, today_start - timedelta(days=1))
+            today_rows = _today_focus_rows(connection, now, pauses, user_id)
+            top_subject, top_subject_seconds = (None, 0)
+            if today_subject_totals:
+                top_subject, top_subject_seconds = sorted(
+                    today_subject_totals.items(), key=lambda item: (-item[1], item[0])
+                )[0]
+            payload = {
+                "user_id": user_id,
+                "settlement_date": settlement_date,
+                "settled_at": _now("UTC").isoformat(),
+                "total_seconds": today_seconds,
+                "yesterday_seconds": yesterday_seconds,
+                "delta_seconds": today_seconds - yesterday_seconds,
+                "target_seconds": DAILY_TARGET_SECONDS,
+                "completion": round(today_seconds / DAILY_TARGET_SECONDS, 4),
+                "session_count": len(today_rows),
+                "top_subject": top_subject,
+                "top_subject_seconds": top_subject_seconds,
+            }
+            cursor = connection.execute(
+                """INSERT INTO daily_settlements(
+                    user_id, settlement_date, settled_at, total_seconds, yesterday_seconds,
+                    delta_seconds, target_seconds, completion, session_count,
+                    top_subject, top_subject_seconds
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tuple(payload[key] for key in (
+                    "user_id", "settlement_date", "settled_at", "total_seconds", "yesterday_seconds",
+                    "delta_seconds", "target_seconds", "completion", "session_count",
+                    "top_subject", "top_subject_seconds",
+                )),
+            )
+            connection.commit()
+            payload["id"] = cursor.lastrowid
+            return jsonify(settlement=payload), 201
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            existing = get_daily_settlement(connection, current_user_id(), settlement_date)
+            return jsonify(settlement=existing, idempotent=True), 200
+        finally:
+            connection.close()
+
     @app.post("/api/focus/end")
-    @admin_required
+    @user_required
     def end_focus():
         payload = request.get_json(silent=True) or {}
         session_id = payload.get("session_id")
@@ -285,9 +478,9 @@ def register_routes(app):
         try:
             connection.execute("BEGIN IMMEDIATE")
             if session_id is None:
-                row = connection.execute("SELECT id FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").fetchone()
+                row = connection.execute("SELECT id FROM focus_sessions WHERE status = 'active' AND user_id = ? ORDER BY id DESC LIMIT 1", (current_user_id(),)).fetchone()
                 session_id = row["id"] if row else None
-            row = connection.execute("SELECT * FROM focus_sessions WHERE id = ? AND status = 'active'", (session_id,)).fetchone()
+            row = connection.execute("SELECT * FROM focus_sessions WHERE id = ? AND user_id = ? AND status = 'active'", (session_id, current_user_id())).fetchone()
             if not row:
                 connection.rollback()
                 return jsonify(error="active_focus_not_found"), 404
@@ -299,7 +492,7 @@ def register_routes(app):
             connection.close()
 
     @app.post("/api/focus/pause")
-    @admin_required
+    @user_required
     def pause_focus():
         payload = request.get_json(silent=True) or {}
         session_id = payload.get("session_id")
@@ -309,7 +502,7 @@ def register_routes(app):
         connection = connect(app.config["DATABASE"])
         try:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT * FROM focus_sessions WHERE id = ? AND status = 'active'", (session_id,)).fetchone()
+            row = connection.execute("SELECT * FROM focus_sessions WHERE id = ? AND user_id = ? AND status = 'active'", (session_id, current_user_id())).fetchone()
             if not row:
                 connection.rollback()
                 return jsonify(error="active_focus_not_found"), 404
@@ -327,14 +520,14 @@ def register_routes(app):
             connection.close()
 
     @app.post("/api/focus/lock")
-    @admin_required
+    @user_required
     def lock_focus():
         payload = request.get_json(silent=True) or {}
         session_id = payload.get("session_id")
         connection = connect(app.config["DATABASE"])
         try:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT id FROM focus_sessions WHERE id = ? AND status = 'active'", (session_id,)).fetchone()
+            row = connection.execute("SELECT id FROM focus_sessions WHERE id = ? AND user_id = ? AND status = 'active'", (session_id, current_user_id())).fetchone()
             if not row:
                 connection.rollback()
                 return jsonify(error="active_focus_not_found"), 404
@@ -350,14 +543,14 @@ def register_routes(app):
         now = _now("UTC").isoformat()
         connection = connect(app.config["DATABASE"])
         try:
-            connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active'", (now,))
+            connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active' AND user_id = ?", (now, current_user_id()))
             connection.commit()
             return jsonify(ok=True)
         finally:
             connection.close()
 
     @app.route("/api/settings", methods=["GET", "PATCH"])
-    @admin_required
+    @user_required
     def settings_api():
         connection = connect(app.config["DATABASE"])
         try:
@@ -365,9 +558,9 @@ def register_routes(app):
                 payload = request.get_json(silent=True) or {}
                 try:
                     if "focus_subjects" in payload:
-                        replace_focus_modes(connection, _focus_subjects(payload["focus_subjects"]))
+                        replace_focus_modes(connection, _focus_subjects(payload["focus_subjects"]), current_user_id())
                     if "focus_messages" in payload:
-                        save_focus_messages(connection, _focus_messages(payload["focus_messages"]))
+                        save_focus_messages(connection, _focus_messages(payload["focus_messages"]), current_user_id())
                 except ValueError as error:
                     return jsonify(error=str(error)), 400
                 allowed = {"morning_start", "lunch_start", "library_open", "library_close", "exam_date", "timezone", "heatmap_visible_hours"}
@@ -387,9 +580,86 @@ def register_routes(app):
                             value = ",".join(str(hour) for hour in _heatmap_hours(value))
                         except (TypeError, ValueError):
                             return jsonify(error="invalid_heatmap_visible_hours"), 400
-                    connection.execute("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(value)))
+                    connection.execute(
+                        "INSERT INTO user_settings(user_id, key, value) VALUES (?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value",
+                        (current_user_id(), key, str(value)),
+                    )
                 connection.commit()
-            return jsonify(settings=get_settings(connection), focus_modes=list_focus_modes(connection), focus_messages=get_focus_messages(connection))
+            user_id = current_user_id()
+            return jsonify(settings=get_settings(connection, user_id), focus_modes=list_focus_modes(connection, user_id), focus_messages=get_focus_messages(connection, user_id))
+        finally:
+            connection.close()
+
+    @app.route("/api/invitations", methods=["GET", "POST"])
+    @admin_required
+    def invitations_api():
+        connection = connect(app.config["DATABASE"])
+        try:
+            if request.method == "POST":
+                owner_id = current_user_id()
+                while True:
+                    code = secrets.token_urlsafe(7).replace("-", "").replace("_", "")[:10].upper()
+                    if not connection.execute("SELECT 1 FROM invitations WHERE code = ?", (code,)).fetchone():
+                        break
+                issue_invitation(connection, owner_id, code, _now("UTC").isoformat())
+                connection.commit()
+            invitations = list_invitations(connection, current_user_id())
+            for invitation in invitations:
+                invitation["url"] = url_for("register", code=invitation["code"], _external=True)
+            return jsonify(invitations=invitations)
+        finally:
+            connection.close()
+
+    @app.get("/api/friends/search")
+    @user_required
+    def search_friends():
+        query = request.args.get("q", "").strip()
+        if len(query) < 1:
+            return jsonify(users=[])
+        connection = connect(app.config["DATABASE"])
+        try:
+            users = connection.execute(
+                "SELECT id, username FROM users WHERE id != ? AND username LIKE ? COLLATE NOCASE ORDER BY username COLLATE NOCASE LIMIT 10",
+                (current_user_id(), f"%{query}%"),
+            ).fetchall()
+            friend_ids = {row["id"] for row in list_friends(connection, current_user_id())}
+            return jsonify(users=[{"id": row["id"], "username": row["username"], "is_friend": row["id"] in friend_ids} for row in users])
+        finally:
+            connection.close()
+
+    @app.route("/api/friends", methods=["GET", "POST"])
+    @user_required
+    def friends_api():
+        connection = connect(app.config["DATABASE"])
+        try:
+            if request.method == "POST":
+                payload = request.get_json(silent=True) or {}
+                friend = get_user_by_username(connection, str(payload.get("username", "")).strip())
+                if not friend:
+                    return jsonify(error="user_not_found"), 404
+                try:
+                    add_friend(connection, current_user_id(), friend["id"], _now("UTC").isoformat())
+                except ValueError as error:
+                    return jsonify(error=str(error)), 400
+                except sqlite3.IntegrityError:
+                    return jsonify(error="already_friend"), 409
+                connection.commit()
+            friends = list_friends(connection, current_user_id())
+            return jsonify(friends=friends)
+        finally:
+            connection.close()
+
+    @app.delete("/api/friends/<username>")
+    @user_required
+    def delete_friend(username):
+        connection = connect(app.config["DATABASE"])
+        try:
+            friend = get_user_by_username(connection, username)
+            if not friend:
+                return jsonify(error="user_not_found"), 404
+            remove_friend(connection, current_user_id(), friend["id"])
+            connection.commit()
+            return jsonify(ok=True)
         finally:
             connection.close()
 
@@ -409,9 +679,9 @@ def register_routes(app):
                     return jsonify(error="invalid_score_payload"), 400
                 if not payload.get("subject") or score < 0 or target <= 0:
                     return jsonify(error="invalid_score_payload"), 400
-                connection.execute("INSERT INTO scores(subject, exam_date, score, target) VALUES (?, ?, ?, ?)", (payload["subject"], payload.get("exam_date", _now().date().isoformat()), score, target))
+                connection.execute("INSERT INTO scores(user_id, subject, exam_date, score, target) VALUES (?, ?, ?, ?, ?)", (current_user_id(), payload["subject"], payload.get("exam_date", _now().date().isoformat()), score, target))
                 connection.commit()
-            return jsonify(scores=score_metrics(list_latest_scores(connection)))
+            return jsonify(scores=score_metrics(list_latest_scores(connection, current_user_id())))
         finally:
             connection.close()
 
@@ -431,8 +701,8 @@ def register_routes(app):
                     return jsonify(error="invalid_plan_payload"), 400
                 if not payload.get("week_start") or not payload.get("subject") or not payload.get("title") or target_minutes <= 0 or completed_minutes < 0:
                     return jsonify(error="invalid_plan_payload"), 400
-                connection.execute("INSERT INTO plans(week_start, subject, title, target_minutes, completed_minutes) VALUES (?, ?, ?, ?, ?)", (payload["week_start"], payload["subject"], payload["title"], target_minutes, completed_minutes))
+                connection.execute("INSERT INTO plans(user_id, week_start, subject, title, target_minutes, completed_minutes) VALUES (?, ?, ?, ?, ?, ?)", (current_user_id(), payload["week_start"], payload["subject"], payload["title"], target_minutes, completed_minutes))
                 connection.commit()
-            return jsonify(plans=list_plans(connection))
+            return jsonify(plans=list_plans(connection, current_user_id()))
         finally:
             connection.close()

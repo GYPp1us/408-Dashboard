@@ -104,6 +104,13 @@ def test_focus_investment_compares_rolling_weeks_and_summarizes_subjects():
         {"subject": "英语二轮", "seconds": 5 * 3600},
         {"subject": "408二轮", "seconds": 2 * 3600},
     ]
+    assert result["all_time_seconds"] == 14 * 3600 + 7 * 3600
+    assert result["all_time_subjects"] == [
+        {"subject": "政治一轮", "seconds": 7 * 3600},
+        {"subject": "数学二轮", "seconds": 7 * 3600},
+        {"subject": "英语二轮", "seconds": 5 * 3600},
+        {"subject": "408二轮", "seconds": 2 * 3600},
+    ]
 
 
 def test_focus_investment_handles_empty_data():
@@ -120,6 +127,8 @@ def test_focus_investment_handles_empty_data():
         "today_subjects": [],
         "yesterday_seconds": 0,
         "subjects": [],
+        "all_time_seconds": 0,
+        "all_time_subjects": [],
     }
 
 

@@ -1,9 +1,11 @@
 (() => {
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, focusMessageIndex: null };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, focusMessageIndex: null, confirmResolver: null, investmentRange: "week" };
+  const DAILY_TARGET_SECONDS = 7 * 3600;
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
     idle: ["#d66c58", "#b25647", "#dd9073", "#97483e", "#c27758", "#e4a994", "#835144", "#d28a72"],
     focus: ["#8067b3", "#685295", "#9a86c3", "#59447f", "#8b77aa", "#b4a5d1", "#706186", "#9f8db8"],
+    settled: ["#6f8f78", "#557763", "#8aa891", "#486653", "#789c81", "#abc0ad", "#5d8068", "#94ae99"],
   };
   const fallbackFocusMessages = [
     { category: "时间管理", text: "当前只处理一个问题，剩下的交给计划。" },
@@ -46,7 +48,7 @@
     return ((hash >>> 0) % messageCount + slot * steps[(hash >>> 8) % steps.length]) % messageCount;
   }
   const $ = (selector) => document.querySelector(selector);
-  const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => themePalettes[active ? "focus" : "idle"];
+  const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => themePalettes[active ? "focus" : state.dashboard?.daily_settlement ? "settled" : "idle"];
   if (window.Chart) {
     Chart.defaults.font.family = appFontFamily;
     Chart.defaults.font.size = 14;
@@ -57,6 +59,7 @@
     return [Math.floor(value / 3600), Math.floor((value % 3600) / 60), value % 60].map((part) => String(part).padStart(2, "0")).join(":");
   };
   const formatMinutes = (minutes) => formatSeconds(Math.max(0, Math.round(minutes * 60)));
+  const formatSignedSeconds = (seconds) => `${seconds > 0 ? "+" : seconds < 0 ? "−" : "±"}${formatSeconds(Math.abs(seconds))}`;
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 
   function focusElapsedSeconds(session, now = Date.now()) {
@@ -143,6 +146,53 @@
     showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2400);
   }
 
+  function requestConfirmation({ title = "请确认操作", message = "此操作无法撤销。", label = "确认", tone = "primary" } = {}) {
+    const modal = $("#confirm-action-modal");
+    if (!modal) return Promise.resolve(window.confirm(message));
+    if (state.confirmResolver) resolveConfirmation(false);
+    $("#confirm-action-title").textContent = title;
+    $("#confirm-action-message").textContent = message;
+    const submit = $("#confirm-action-submit");
+    submit.textContent = label;
+    submit.classList.remove("ui-button--primary", "ui-button--danger");
+    submit.classList.add(tone === "danger" ? "ui-button--danger" : "ui-button--primary");
+    modal.showModal();
+    return new Promise((resolve) => { state.confirmResolver = resolve; });
+  }
+
+  function resolveConfirmation(confirmed) {
+    const resolve = state.confirmResolver;
+    state.confirmResolver = null;
+    $("#confirm-action-modal")?.close();
+    resolve?.(confirmed);
+  }
+
+  function bindConfirmations() {
+    const modal = $("#confirm-action-modal");
+    if (modal) {
+      $("#confirm-action-cancel")?.addEventListener("click", () => resolveConfirmation(false));
+      $("#confirm-action-submit")?.addEventListener("click", () => resolveConfirmation(true));
+      modal.addEventListener("cancel", (event) => { event.preventDefault(); resolveConfirmation(false); });
+      modal.addEventListener("close", () => { if (state.confirmResolver) resolveConfirmation(false); });
+    }
+    document.querySelectorAll("form[data-confirm]").forEach((form) => form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const confirmed = await requestConfirmation({ title: form.dataset.confirmTitle, message: form.dataset.confirmMessage, label: form.dataset.confirmLabel, tone: form.dataset.confirmTone });
+      if (confirmed) HTMLFormElement.prototype.submit.call(form);
+    }));
+  }
+
+  function bindButtonMotion() {
+    document.addEventListener("pointerdown", (event) => {
+      const button = event.target.closest("button, .ui-button");
+      if (!button || button.disabled) return;
+      button.classList.remove("button-pressed");
+      void button.offsetWidth;
+      button.classList.add("button-pressed");
+      window.setTimeout(() => button.classList.remove("button-pressed"), 260);
+    });
+  }
+
   function renderStatus(data) {
     const remaining = Number(data.exam?.remaining_seconds || 0);
     state.examEndsAt = Date.now() + remaining * 1000;
@@ -154,15 +204,41 @@
       $("#exam-days").textContent = `${Math.floor(value / 86400)} 天`;
       $("#exam-clock").textContent = formatSeconds(value % 86400);
       const todaySeconds = Number(today.seconds || 0) + activeExtraSeconds(active, todayFetchedAt, now);
-      $("#today-study").textContent = `${formatSeconds(todaySeconds)} / 08:00`;
-      $("#today-progress").textContent = `完成度 ${Math.min(100, Math.round((todaySeconds / 28800) * 100))}%`;
-      $("#focus-today")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 08:00`));
+      $("#today-study").textContent = `${formatSeconds(todaySeconds)} / 07:00`;
+      $("#today-progress").textContent = `完成度 ${Math.min(100, Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 100))}%`;
+      $("#focus-today")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 07:00`));
       $("#guest-today-total")?.replaceChildren(document.createTextNode(formatSeconds(todaySeconds)));
-      $("#guest-today-target")?.replaceChildren(document.createTextNode(`8 小时目标 · ${Math.min(100, Math.round((todaySeconds / 28800) * 100))}%`));
+      $("#guest-today-target")?.replaceChildren(document.createTextNode(`7 小时目标 · ${Math.min(100, Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 100))}%`));
     };
     setSecondTask("status", tick);
     $("#current-state").textContent = active ? `${active.paused_at ? "已暂停" : "专注中"} · ${active.subject}` : "准备学习";
     $("#state-dot").classList.toggle("state-dot-active", Boolean(active));
+  }
+
+  function renderFriendDiffBoard(friends) {
+    const board = $("#friend-diff-board");
+    if (!board) return;
+    window.clearInterval(state.friendTickerTimer);
+    state.friendTickerTimer = null;
+    if (!friends?.length) {
+      board.hidden = true;
+      board.replaceChildren();
+      return;
+    }
+    board.hidden = false;
+    const rows = friends.map((friend) => {
+      const delta = Number(friend.delta_seconds || 0);
+      const relation = delta > 0 ? `领先 ${formatSignedSeconds(delta)}` : delta < 0 ? `落后 ${formatSignedSeconds(Math.abs(delta))}` : "持平 ±00:00:00";
+      const tone = delta > 0 ? "ahead" : delta < 0 ? "behind" : "";
+      return `<div class="friend-diff-row"><span>好友 · ${escapeHtml(friend.username)}</span><b>${formatSeconds(friend.today_seconds)}</b><em class="${tone}">${relation}</em></div>`;
+    }).join("");
+    board.innerHTML = `<div class="friend-diff-head"><span>好友 diff</span><small>今日累计 · 与你相比</small></div><div class="friend-diff-window"><div class="friend-diff-track">${rows}</div></div>`;
+    const track = board.querySelector(".friend-diff-track");
+    let index = 0;
+    state.friendTickerTimer = window.setInterval(() => {
+      index = (index + 1) % friends.length;
+      track.style.transform = `translateY(-${index * 38}px)`;
+    }, 4000);
   }
 
   function renderClock() {
@@ -318,7 +394,7 @@
     const renderTargetStack = (selector, seconds) => {
       const target = $(selector);
       if (!target) return;
-      const percent = Math.max(0, Math.min(100, (seconds / 28800) * 100));
+      const percent = Math.max(0, Math.min(100, (seconds / DAILY_TARGET_SECONDS) * 100));
       target.innerHTML = `<span class="stack-primary" style="width:${percent}%"></span><span class="stack-rest" style="width:${100 - percent}%"></span>`;
     };
     const subjectsWithActiveTime = (items, extraSeconds) => {
@@ -356,12 +432,16 @@
       trend.textContent = trendSeconds > 0 ? `↑ ${formatSeconds(trendSeconds)}` : trendSeconds < 0 ? `↓ ${formatSeconds(Math.abs(trendSeconds))}` : "较前 7 天持平";
       renderTargetStack("#investment-average-stack", dailyAverage);
 
-      $("#investment-week-total").textContent = formatSeconds(currentSeconds);
-      renderSubjectStack("#investment-subject-stack", "#investment-subject-legend", subjectsWithActiveTime(baseline.subjects, extraSeconds), currentSeconds);
+      const allTime = state.investmentRange === "all";
+      const rangeSeconds = Number(allTime ? baseline.all_time_seconds : baseline.current_seconds || 0) + extraSeconds;
+      const rangeSubjects = allTime ? baseline.all_time_subjects : baseline.subjects;
+      $("#investment-week-total").textContent = formatSeconds(rangeSeconds);
+      $("#investment-range-note").textContent = allTime ? "全部记录累计" : "近 7 天累计";
+      renderSubjectStack("#investment-subject-stack", "#investment-subject-legend", subjectsWithActiveTime(rangeSubjects, extraSeconds), rangeSeconds);
 
       const todaySeconds = Number(baseline.today_seconds || 0) + extraSeconds;
       $("#investment-today-total").textContent = formatSeconds(todaySeconds);
-      $("#investment-today-percent").textContent = `${Math.round((todaySeconds / 28800) * 1000) / 10}%`;
+      $("#investment-today-percent").textContent = `${Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 1000) / 10}%`;
       renderSubjectStack("#investment-today-stack", "#investment-today-legend", subjectsWithActiveTime(baseline.today_subjects, extraSeconds), todaySeconds);
     };
     removeSecondTask("investment");
@@ -420,7 +500,7 @@
     if (!totalTarget) return;
     const today = data.today_focus || { seconds: 0, count: 0 };
     totalTarget.textContent = formatSeconds(today.seconds);
-    $("#guest-today-target").textContent = `8 小时目标 · ${Math.min(100, Math.round((today.seconds / 28800) * 100))}%`;
+    $("#guest-today-target").textContent = `7 小时目标 · ${Math.min(100, Math.round((today.seconds / DAILY_TARGET_SECONDS) * 100))}%`;
     $("#guest-today-count").textContent = String(today.count || 0);
     $("#guest-today-state").textContent = data.focus?.active ? (data.focus.active.paused_at ? "已暂停" : "专注中") : "空闲";
     const totals = new Map();
@@ -617,6 +697,41 @@
     initDragLaunchers();
   }
 
+  function renderDailySettlement(data) {
+    const banner = $("#daily-settlement-banner");
+    const achievement = $("#daily-achievement");
+    const modes = $("#focus-modes");
+    const settlement = data.daily_settlement;
+    if (banner) banner.hidden = !data.can_settle_today;
+    if (modes) modes.hidden = Boolean(settlement);
+    if (!achievement) return;
+    achievement.hidden = !settlement;
+    if (!settlement) {
+      achievement.replaceChildren();
+      return;
+    }
+    const total = Number(settlement.total_seconds || 0);
+    const target = Number(settlement.target_seconds || DAILY_TARGET_SECONDS);
+    const completion = Math.min(100, Math.round((total / target) * 100));
+    const delta = Number(settlement.delta_seconds || 0);
+    const evaluation = completion >= 100 ? "目标达成" : completion >= 80 ? "接近目标" : completion >= 50 ? "稳步推进" : "保留节奏";
+    const deltaText = delta > 0 ? `比昨天多 ${formatSeconds(delta)}` : delta < 0 ? `比昨天少 ${formatSeconds(Math.abs(delta))}` : "与昨天持平";
+    const subject = settlement.top_subject ? `${escapeHtml(settlement.top_subject)} · ${formatSeconds(settlement.top_subject_seconds || 0)}` : "今天还没有专注记录";
+    achievement.innerHTML = `<div class="section-heading"><h2>当日成就</h2><span>已结算 · ${escapeHtml(settlement.settlement_date)}</span></div><div class="achievement-total"><span>今日有效专注</span><strong>${formatSeconds(total)}</strong><b>${completion}% · ${evaluation}</b></div><div class="achievement-list"><div><span>昨日差值</span><b class="${delta >= 0 ? "good" : "bad"}">${escapeHtml(deltaText)}</b></div><div><span>专注次数</span><b>${Number(settlement.session_count || 0)} 次</b></div><div><span>主要投入</span><b>${subject}</b></div></div>`;
+  }
+
+  function bindInvestmentRange() {
+    document.querySelectorAll("[data-investment-range]").forEach((button) => button.addEventListener("click", () => {
+      state.investmentRange = button.dataset.investmentRange === "all" ? "all" : "week";
+      document.querySelectorAll("[data-investment-range]").forEach((item) => {
+        const selected = item.dataset.investmentRange === state.investmentRange;
+        item.classList.toggle("is-active", selected);
+        item.setAttribute("aria-pressed", String(selected));
+      });
+      if (state.dashboard) renderFocusInvestment(state.dashboard.focus_investment, state.dashboard.focus.active);
+    }));
+  }
+
   function setDragProgress(track, thumb) {
     const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
     const ratio = Math.max(0, Math.min(1, (Number(gsap.getProperty(thumb, "x")) || 0) / max));
@@ -780,11 +895,14 @@
       scores: (data.score_history || []).map((item) => [item.id, item.subject, item.exam_date, item.score, item.target]),
       modes: (data.focus_modes || []).map((item) => [item.id, item.subject]),
       messages: (data.focus_messages || []).map((item) => [item.category, item.text]),
+      settlement: data.daily_settlement ? [data.daily_settlement.id, data.daily_settlement.settlement_date, data.daily_settlement.total_seconds] : null,
+      canSettle: Boolean(data.can_settle_today),
       windows: [windowSignature(data.windows?.morning), windowSignature(data.windows?.library)],
       exam: data.exam?.date,
       day: String(data.now || "").slice(0, 10),
       heatmap: data.heatmap,
       heatmapVisibleHours: data.heatmap_visible_hours,
+      friends: (data.friends || []).map((friend) => [friend.id, friend.today_seconds, friend.delta_seconds]),
     });
   }
 
@@ -792,7 +910,9 @@
     state.dashboard = data;
     state.dashboardFetchedAt = Date.now();
     state.dashboardSignature = dashboardSignature(data);
-    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderGuestSummary(data);
+    document.body.classList.toggle("is-settled", Boolean(data.daily_settlement));
+    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderFriendDiffBoard(data.friends); renderGuestSummary(data);
+    renderDailySettlement(data);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
   }
@@ -802,7 +922,7 @@
   }
 
   async function syncDashboard() {
-    if (document.body.dataset.page === "settings" || document.visibilityState !== "visible" || state.syncing) return;
+    if (document.body.dataset.page !== "home" || document.visibilityState !== "visible" || state.syncing) return;
     state.syncing = true;
     try {
       const data = await api("/api/dashboard");
@@ -820,7 +940,7 @@
 
   function startDashboardSync() {
     window.clearInterval(state.syncTimer);
-    if (document.body.dataset.page !== "settings") state.syncTimer = window.setInterval(syncDashboard, 500);
+    if (document.body.dataset.page === "home") state.syncTimer = window.setInterval(syncDashboard, 500);
   }
 
   function sendForegroundHeartbeat(allowHidden = false) {
@@ -835,6 +955,7 @@
 
   function startForegroundHeartbeat() {
     window.clearInterval(state.heartbeatTimer);
+    if (document.body.dataset.page === "account") return;
     sendForegroundHeartbeat();
     if (document.body.dataset.page === "settings") state.heartbeatTimer = window.setInterval(sendForegroundHeartbeat, 500);
   }
@@ -892,6 +1013,105 @@
     state.ending = false;
   }
 
+  async function commitDailySettlement(track, thumb) {
+    if (state.settling || !state.dashboard?.can_settle_today) return;
+    state.settling = true;
+    track.classList.add("armed");
+    try {
+      await api("/api/daily-settlement", { method: "POST", body: "{}" });
+      await loadDashboard();
+      playSettlementFireworks();
+      showToast("今日已结算");
+    } catch (error) {
+      gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
+      showToast(error.message);
+    } finally {
+      state.settling = false;
+    }
+  }
+
+  function initDragSettlement() {
+    const track = $("#settle-today");
+    if (!track || !window.gsap || !window.Draggable || track.dataset.bound) return;
+    const thumb = track.querySelector(".drag-thumb");
+    track.dataset.bound = "1";
+    const drag = Draggable.create(thumb, {
+      type: "x",
+      bounds: track,
+      onPress() { if (state.settling) this.endDrag?.(); },
+      onDrag() { setDragProgress(track, thumb); },
+      onRelease() {
+        const { max, ratio } = setDragProgress(track, thumb);
+        if (ratio >= .82) {
+          track.classList.add("armed");
+          gsap.to(thumb, { x: max, duration: .42, ease: "power2.out", onComplete: () => commitDailySettlement(track, thumb) });
+        } else {
+          gsap.to(thumb, { x: 0, duration: .5, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
+        }
+      },
+    })[0];
+    thumb.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+      gsap.to(thumb, { x: max, duration: .42, ease: "power2.out", onUpdate: () => setDragProgress(track, thumb), onComplete: () => commitDailySettlement(track, thumb) });
+    });
+    drag.update();
+  }
+
+  function playSettlementFireworks() {
+    const canvas = $("#settlement-fireworks");
+    if (!canvas || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    const resize = () => {
+      canvas.width = Math.floor(window.innerWidth * ratio);
+      canvas.height = Math.floor(window.innerHeight * ratio);
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    };
+    resize();
+    const colors = ["#6f8f78", "#b88b63", "#9a86c3", "#d7a45c"];
+    const particles = [];
+    const bursts = [
+      { x: window.innerWidth * .28, y: window.innerHeight * .28, color: colors[0], at: 120 },
+      { x: window.innerWidth * .58, y: window.innerHeight * .2, color: colors[1], at: 280 },
+      { x: window.innerWidth * .78, y: window.innerHeight * .38, color: colors[2], at: 430 },
+    ];
+    let startedAt = performance.now();
+    let frame;
+    const launch = (burst) => {
+      for (let index = 0; index < 28; index += 1) {
+        const angle = (Math.PI * 2 * index) / 28 + Math.random() * .08;
+        const speed = 1.8 + Math.random() * 2.8;
+        particles.push({ x: burst.x, y: burst.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1, color: burst.color, size: 1 + Math.random() * 1.5 });
+      }
+    };
+    const draw = (now) => {
+      const elapsed = now - startedAt;
+      context.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      bursts.filter((burst) => !burst.launched && elapsed >= burst.at).forEach((burst) => { burst.launched = true; launch(burst); });
+      particles.forEach((particle) => {
+        particle.x += particle.vx;
+        particle.y += particle.vy;
+        particle.vy += .035;
+        particle.vx *= .988;
+        particle.vy *= .988;
+        particle.life -= .018;
+        context.globalAlpha = Math.max(0, particle.life);
+        context.fillStyle = particle.color;
+        context.fillRect(particle.x, particle.y, particle.size, particle.size);
+      });
+      context.globalAlpha = 1;
+      if (elapsed < 1800) frame = requestAnimationFrame(draw);
+      else { context.clearRect(0, 0, window.innerWidth, window.innerHeight); window.removeEventListener("resize", resize); }
+    };
+    frame = requestAnimationFrame(draw);
+    window.setTimeout(() => { if (frame) cancelAnimationFrame(frame); }, 2200);
+  }
+
   function initDragLock() {
     const track = $("#lock-focus");
     if (!track || !window.gsap || !window.Draggable || track.dataset.bound) return;
@@ -925,6 +1145,11 @@
   async function commitFocusLock(track, thumb) {
     const active = state.dashboard?.focus?.active;
     if (!active || state.locking || active.focus_locked) return;
+    const confirmed = await requestConfirmation({ title: "锁定本段专注", message: "锁定后本段记录将标记为非受信，且不能恢复受信状态。确定继续？", label: "锁定专注", tone: "danger" });
+    if (!confirmed) {
+      gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
+      return;
+    }
     state.locking = true;
     try {
       await api("/api/focus/lock", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
@@ -939,6 +1164,7 @@
   }
 
   async function loadSettings() {
+    if (!$("#settings-form")) return;
     const [settings, scores] = await Promise.all([api("/api/settings"), api("/api/scores")]);
     Object.entries(settings.settings).forEach(([key, value]) => { const input = document.querySelector(`[name="${key}"]`); if (input) input.value = value; });
     const visibleHours = new Set(String(settings.settings.heatmap_visible_hours || "").split(","));
@@ -946,6 +1172,56 @@
     $("#focus-subjects").value = (settings.focus_modes || []).map((item) => item.subject).join("\n");
     $("#focus-messages").value = (settings.focus_messages || []).map((item) => `${item.category} | ${item.text}`).join("\n");
     renderScores(scores.scores.map((item) => ({ ...item, gap: item.target - item.score, completion: item.score / item.target })), "#settings-scores");
+  }
+
+  function renderFriends(friends) {
+    const target = $("#friend-list");
+    if (!target) return;
+    target.innerHTML = friends.length ? friends.map((friend) => `<div class="friend-row"><div><b>@${escapeHtml(friend.username)}</b><small>${escapeHtml(friend.email || "已建立好友关系")}</small></div><button class="ui-button ui-button--danger ui-button--sm" type="button" data-remove-friend="${escapeHtml(friend.username)}">移除</button></div>`).join("") : '<div class="loading-row">暂无好友，先搜索一个用户名。</div>';
+    target.querySelectorAll("[data-remove-friend]").forEach((button) => button.addEventListener("click", async () => {
+      const confirmed = await requestConfirmation({ title: "移除好友", message: `确定移除好友 @${button.dataset.removeFriend}？双方的好友差值板将不再显示对方。`, label: "移除好友", tone: "danger" });
+      if (!confirmed) return;
+      try { await api(`/api/friends/${encodeURIComponent(button.dataset.removeFriend)}`, { method: "DELETE" }); await loadFriends(); showToast("好友已移除"); } catch (error) { showToast(error.message); }
+    }));
+  }
+
+  async function loadFriends() {
+    if (!$("#friend-list")) return;
+    const data = await api("/api/friends");
+    renderFriends(data.friends || []);
+  }
+
+  async function searchFriends(event) {
+    event.preventDefault();
+    const query = $("#friend-search-input")?.value.trim();
+    const target = $("#friend-search-results");
+    if (!query || !target) return;
+    try {
+      const data = await api(`/api/friends/search?q=${encodeURIComponent(query)}`);
+      target.innerHTML = (data.users || []).map((user) => `<div class="friend-result"><div><b>@${escapeHtml(user.username)}</b><small>${user.is_friend ? "已是好友" : "可添加"}</small></div>${user.is_friend ? "" : `<button class="ui-button ui-button--secondary ui-button--sm" type="button" data-add-friend="${escapeHtml(user.username)}">添加</button>`}</div>`).join("") || '<div class="loading-row">没有匹配的用户名。</div>';
+      target.querySelectorAll("[data-add-friend]").forEach((button) => button.addEventListener("click", async () => {
+        try { await api("/api/friends", { method: "POST", body: JSON.stringify({ username: button.dataset.addFriend }) }); await loadFriends(); await searchFriends({ preventDefault() {} }); showToast("好友已添加"); } catch (error) { showToast(error.message); }
+      }));
+    } catch (error) { showToast(error.message); }
+  }
+
+  async function loadInvitations() {
+    const target = $("#invitation-list");
+    if (!target) return;
+    const data = await api("/api/invitations");
+    target.innerHTML = data.invitations.length ? data.invitations.map((item) => `<div class="invitation-row ${item.used_by ? "is-used" : ""}"><div><code>${escapeHtml(item.code)}</code><small>${item.used_by ? "已使用" : "可注册"}</small></div>${item.used_by ? "" : `<button class="ui-button ui-button--quiet ui-button--sm" type="button" data-copy-invite="${escapeHtml(item.url)}">复制注册链接</button>`}</div>`).join("") : '<div class="loading-row">还没有邀请码。</div>';
+    target.querySelectorAll("[data-copy-invite]").forEach((button) => button.addEventListener("click", async () => { await navigator.clipboard?.writeText(button.dataset.copyInvite); showToast("注册链接已复制"); }));
+  }
+
+  async function loadAccount() {
+    if (!$("#friend-list") && !$("#invitation-list")) return;
+    await loadFriends();
+    await loadInvitations();
+  }
+
+  function bindAccountForms() {
+    $("#friend-search-form")?.addEventListener("submit", searchFriends);
+    $("#create-invitation")?.addEventListener("click", async () => { try { await api("/api/invitations", { method: "POST", body: "{}" }); await loadInvitations(); showToast("邀请码已生成"); } catch (error) { showToast(error.message); } });
   }
 
   function openQuickScore() {
@@ -1022,6 +1298,30 @@
     document.querySelector('[data-form="score"]')?.addEventListener("submit", submitScoreForm);
   }
 
+  function bindSettingsTabs() {
+    const tabs = document.querySelectorAll(".settings-tabs [data-settings-tab]");
+    const panels = document.querySelectorAll("[data-settings-panel]");
+    if (!tabs.length || !panels.length) return;
+    const selectTab = (name) => {
+      tabs.forEach((tab) => {
+        const selected = tab.dataset.settingsTab === name;
+        tab.classList.toggle("is-active", selected);
+        tab.setAttribute("aria-selected", String(selected));
+      });
+      panels.forEach((panel) => panel.classList.toggle("is-hidden", panel.dataset.settingsPanel !== name));
+      document.body.dataset.settingsTab = name;
+      const url = new URL(window.location.href);
+      url.pathname = "/settings";
+      url.search = `?tab=${encodeURIComponent(name)}`;
+      window.history.replaceState({}, "", url);
+    };
+    tabs.forEach((tab) => tab.addEventListener("click", async () => {
+      selectTab(tab.dataset.settingsTab);
+      if (tab.dataset.settingsTab === "account") await loadAccount();
+      else await loadSettings();
+    }));
+  }
+
   document.addEventListener("DOMContentLoaded", async () => {
     startAlignedSecondClock();
     ensureWakeLock();
@@ -1039,10 +1339,19 @@
     $("#close-focus-summary")?.addEventListener("click", closeFocusSummary);
     $("#toggle-focus-pause")?.addEventListener("click", toggleFocusPause);
     bindQuickScore();
+    bindInvestmentRange();
+    initDragSettlement();
     bindSettingsForms();
+    bindSettingsTabs();
+    bindAccountForms();
+    bindConfirmations();
+    bindButtonMotion();
     try {
-      if (document.body.dataset.page === "settings") await loadSettings();
-      else await loadDashboard();
+      if (document.body.dataset.page === "settings") {
+        await loadSettings();
+        await loadAccount();
+      } else if (document.body.dataset.page === "account") await loadAccount();
+      else if (document.body.dataset.page === "home") await loadDashboard();
     } catch (error) { showToast(error.message); }
     startDashboardSync();
     startForegroundHeartbeat();

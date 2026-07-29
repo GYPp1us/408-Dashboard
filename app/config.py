@@ -9,6 +9,8 @@ def default_config() -> dict:
     return {
         "SECRET_KEY": os.environ.get("DASHBOARD_SECRET_KEY", "dev-only-secret"),
         "ADMIN_PASSWORD": os.environ.get("DASHBOARD_ADMIN_PASSWORD", ""),
+        "ADMIN_USERNAME": os.environ.get("DASHBOARD_ADMIN_USERNAME", "owner"),
+        "ADMIN_EMAIL": os.environ.get("DASHBOARD_ADMIN_EMAIL", "admin@localhost"),
         "DATABASE": os.environ.get("DASHBOARD_DATABASE", str(BASE_DIR / "data" / "dashboard.sqlite3")),
         "HOST": os.environ.get("DASHBOARD_HOST", "127.0.0.1"),
         "PORT": int(os.environ.get("DASHBOARD_PORT", "43127")),

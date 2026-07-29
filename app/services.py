@@ -98,6 +98,15 @@ def aggregate_focus_investment(sessions: Iterable[tuple[str, datetime, datetime]
         {"subject": subject, "seconds": seconds}
         for subject, seconds in sorted(current_subjects.items(), key=lambda item: (-item[1], item[0]))
     ]
+    all_subject_totals: dict[str, int] = {}
+    for subject, session_start, session_end in session_rows:
+        seconds = max(0, int((session_end.astimezone(now.tzinfo) - session_start.astimezone(now.tzinfo)).total_seconds()))
+        if seconds:
+            all_subject_totals[subject] = all_subject_totals.get(subject, 0) + seconds
+    all_subjects = [
+        {"subject": subject, "seconds": seconds}
+        for subject, seconds in sorted(all_subject_totals.items(), key=lambda item: (-item[1], item[0]))
+    ]
     today_subjects = [
         {"subject": subject, "seconds": seconds}
         for subject, seconds in sorted(today_subject_totals.items(), key=lambda item: (-item[1], item[0]))
@@ -111,6 +120,8 @@ def aggregate_focus_investment(sessions: Iterable[tuple[str, datetime, datetime]
         "today_subjects": today_subjects,
         "yesterday_seconds": yesterday_seconds,
         "subjects": subjects,
+        "all_time_seconds": sum(all_subject_totals.values()),
+        "all_time_subjects": all_subjects,
     }
 
 

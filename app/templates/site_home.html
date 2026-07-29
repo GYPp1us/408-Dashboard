@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}408 Focus Console · 个人备考社区{% endblock %}
+{% block content %}
+<section class="site-home-hero"><div><span class="site-kicker">408 FOCUS CONSOLE</span><h1>把每一次专注，留在自己的主页里。</h1><p>低干扰的备考控制台，记录时间、成绩与和朋友一起保持的节奏。</p></div><div class="site-home-actions">{% if auth_user %}<a class="ui-button ui-button--primary primary site-action" href="{{ url_for('user_dashboard', username=auth_user.username) }}">进入我的主页</a><a class="ui-button ui-button--secondary outline-button" href="{{ url_for('account_page') }}">账户与好友</a>{% else %}<a class="ui-button ui-button--primary primary site-action" href="{{ url_for('login') }}">登录</a><a class="ui-button ui-button--secondary outline-button" href="{{ url_for('register') }}">使用邀请码注册</a>{% endif %}</div></section>
+<section class="site-users-section"><div class="section-heading"><div><h2>公开主页</h2><span>按用户名访问；未登录访问会进入该用户的访客视图</span></div><b>{{ users|length }} 位用户</b></div><div class="site-user-grid">{% for user in users %}<a class="site-user-card" href="{{ url_for('user_dashboard', username=user.username) }}"><span class="site-user-avatar">{{ user.username[:1] }}</span><div><strong>{{ user.username }}</strong><small>{{ "站长" if user.role == "site_owner" else "备考用户" }} · 查看主页</small></div><i>→</i></a>{% else %}<div class="site-empty">还没有用户主页。</div>{% endfor %}</div></section>
+{% endblock %}

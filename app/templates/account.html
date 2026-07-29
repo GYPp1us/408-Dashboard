@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}账户与好友 · 408 Focus Console{% endblock %}
+{% block content %}
+<div class="page-head settings-page-head"><div><h1>账户与好友</h1><p>{{ auth_user.username }} · 通过用户名建立好友关系</p></div><a class="back-link" href="{{ url_for('user_dashboard', username=auth_user.username) }}">返回主页</a></div>
+<section class="account-grid">
+  <article class="panel account-panel"><div class="account-panel-head"><span>FRIENDS</span><div><h2>好友列表</h2><small>好友 diff 只展示今日累计专注时长</small></div></div><form id="friend-search-form" class="friend-search-form"><input id="friend-search-input" placeholder="输入用户名索引" autocomplete="off"><button class="primary" type="submit">搜索</button></form><div id="friend-search-results" class="friend-search-results"></div><div id="friend-list" class="friend-list"><div class="loading-row">正在读取好友...</div></div></article>
+  {% if auth_user.role == 'site_owner' %}<article class="panel account-panel"><div class="account-panel-head"><span>INVITE</span><div><h2>发放邀请码</h2><small>每个邀请码只能注册一次</small></div></div><button id="create-invitation" class="primary account-action" type="button">生成邀请码</button><div id="invitation-list" class="invitation-list"><div class="loading-row">正在读取邀请码...</div></div></article>{% endif %}
+</section>
+{% endblock %}

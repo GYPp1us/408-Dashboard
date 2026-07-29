@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>注册账户 · 408 Focus Console</title>
+  <style>
+    @font-face { font-family:"Source Han Serif SC Medium"; src:local("Source Han Serif SC Medium"),local("Source Han Serif SC"),local("Noto Serif SC"); font-display:swap; }
+    body { margin:0; display:grid; min-height:100vh; place-items:center; background:#eef1f4; color:#20272f; font-family:"Source Han Serif SC Medium","Source Han Serif SC","Noto Serif SC",serif; font-size:18px; }
+    main { width:min(390px,calc(100vw - 40px)); padding:28px; border:1px solid #dde3df; border-radius:10px; background:#fff; box-shadow:0 18px 46px rgba(36,46,42,.1); }
+    h1 { margin:0; font-size:24px; } p { color:#758079; font-size:14px; } label { display:block; margin:16px 0 6px; color:#626e68; font-size:13px; } input { width:100%; height:38px; box-sizing:border-box; padding:0 10px; border:1px solid #d6ddd9; border-radius:6px; font:inherit; } button { width:100%; height:38px; margin-top:18px; border:1px solid #c35f4e; border-radius:7px; background:#d66c58; color:#fff; font:inherit; font-weight:700; cursor:pointer; transition:transform .18s ease,box-shadow .18s ease,background .18s ease; } button:hover { background:#c96050; box-shadow:0 6px 16px rgba(214,108,88,.22); transform:translateY(-1px); } button:active { transform:translateY(1px) scale(.98); box-shadow:none; } button:focus-visible { outline:3px solid #f0c9c0; outline-offset:2px; } .error { padding:9px; border-radius:6px; background:#fcf2ef; color:#b83c2c; font-size:13px; } .form-link { margin:16px 0 0; text-align:center; } a { color:#a44b40; text-decoration:none; }
+  </style>
+</head>
+<body><main><h1>创建个人账户</h1><p>使用站长发放的邀请码加入控制台</p>{% if error %}<div class="error">{{ error }}</div>{% endif %}<form method="post"><label for="invite_code">邀请码</label><input id="invite_code" name="invite_code" value="{{ code|e }}" required><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required><label for="email">邮箱</label><input id="email" name="email" type="email" autocomplete="email" required><label for="password">密码（至少 8 位）</label><input id="password" name="password" type="password" autocomplete="new-password" required><button type="submit">注册并进入主页</button></form><p class="form-link"><a href="{{ url_for('login') }}">已有账户？返回登录</a></p></main></body>
+</html>

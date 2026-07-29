@@ -15,12 +15,12 @@ def client(tmp_path):
     return app.test_client()
 
 
-def test_root_redirects_to_guest_without_password(client):
+def test_root_is_public_site_home_and_guest_dashboard_still_works(client):
     response = client.get("/")
 
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/guest")
-    guest = client.get(response.headers["Location"])
+    assert response.status_code == 200
+    assert "site-home-hero" in response.get_data(as_text=True)
+    guest = client.get("/guest/")
     assert guest.status_code == 200
     assert 'data-role="guest"' in guest.get_data(as_text=True)
     assert client.get("/api/dashboard").status_code == 200
@@ -37,7 +37,7 @@ def test_successful_login_sets_cookie_and_redirects(client):
     response = client.post("/login", data={"password": "test-password"})
 
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/")
+    assert response.headers["Location"].endswith("/owner")
     cookie = response.headers["Set-Cookie"]
     assert "HttpOnly" in cookie
     assert "SameSite=Lax" in cookie
@@ -63,8 +63,8 @@ def test_guest_dashboard_needs_no_password_and_admin_switch_requires_login(clien
 
     login = client.post("/login", data={"password": "test-password", "next": "/admin"})
     assert login.headers["Location"].endswith("/admin")
-    assert client.get("/admin").headers["Location"].endswith("/")
-    assert 'data-role="admin"' in client.get("/").get_data(as_text=True)
+    assert client.get("/admin").headers["Location"].endswith("/owner")
+    assert 'data-role="admin"' in client.get("/owner").get_data(as_text=True)
 
 
 def test_entering_guest_clears_admin_authentication(client):

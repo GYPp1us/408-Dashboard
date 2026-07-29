@@ -46,6 +46,8 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
     assert payload["focus_investment"]["today_subjects"] == []
     assert payload["focus_investment"]["yesterday_seconds"] == 0
     assert payload["focus_investment"]["subjects"] == []
+    assert payload["focus_investment"]["all_time_seconds"] == 0
+    assert payload["focus_investment"]["all_time_subjects"] == []
     assert [mode["subject"] for mode in payload["focus_modes"]] == ["408二轮", "数学二轮", "英语二轮", "政治一轮", "408模拟", "数学模拟"]
     assert len(payload["focus_messages"]) == 31
     assert payload["focus_messages"][-1]["text"] == "忽略该忽略的，专注该专注的"
@@ -79,6 +81,37 @@ def test_start_and_end_focus_session(authenticated_client):
     ended = authenticated_client.post("/api/focus/end", json={"session_id": session_id})
     assert ended.status_code == 200
     assert ended.get_json()["session"]["status"] == "completed"
+
+
+def test_daily_settlement_snapshots_seven_hour_goal_and_is_idempotent(authenticated_client):
+    authenticated_client.patch("/api/settings", json={"library_close": "00:00"})
+    started = authenticated_client.post("/api/focus/start", json={"subject": "数学", "mode": "专注"}).get_json()["session"]
+    authenticated_client.post("/api/focus/end", json={"session_id": started["id"]})
+
+    settled = authenticated_client.post("/api/daily-settlement", json={})
+    assert settled.status_code == 201
+    payload = settled.get_json()["settlement"]
+    assert payload["target_seconds"] == 7 * 3600
+    assert payload["session_count"] == 1
+
+    repeated = authenticated_client.post("/api/daily-settlement", json={})
+    assert repeated.status_code == 200
+    assert repeated.get_json()["idempotent"] is True
+    dashboard = authenticated_client.get("/api/dashboard").get_json()
+    assert dashboard["daily_settlement"]["id"] == payload["id"]
+    assert dashboard["can_settle_today"] is False
+    blocked = authenticated_client.post("/api/focus/start", json={"subject": "英语", "mode": "专注"})
+    assert blocked.status_code == 409
+    assert blocked.get_json() == {"error": "daily_focus_already_settled"}
+
+
+def test_daily_settlement_rejects_an_active_focus(authenticated_client):
+    authenticated_client.patch("/api/settings", json={"library_close": "00:00"})
+    started = authenticated_client.post("/api/focus/start", json={"subject": "数学", "mode": "专注"}).get_json()["session"]
+    response = authenticated_client.post("/api/daily-settlement", json={})
+    assert response.status_code == 409
+    assert response.get_json() == {"error": "focus_still_active"}
+    authenticated_client.post("/api/focus/end", json={"session_id": started["id"]})
 
 
 def test_focus_pause_resume_and_lock_are_persisted(authenticated_client):
@@ -155,7 +188,7 @@ def test_focus_page_is_compatibility_redirect(authenticated_client):
     response = authenticated_client.get("/focus")
 
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/")
+    assert response.headers["Location"].endswith("/owner")
 
 
 def test_settings_patch_validates_time_values(authenticated_client):
