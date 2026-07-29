@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, focusMessageIndex: null, confirmResolver: null, investmentRange: "week" };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, focusMessageIndex: null, confirmResolver: null, investmentRange: "week" };
   const DAILY_TARGET_SECONDS = 7 * 3600;
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
@@ -191,6 +191,21 @@
       button.classList.add("button-pressed");
       window.setTimeout(() => button.classList.remove("button-pressed"), 260);
     });
+  }
+
+  async function copyText(value) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.append(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
   }
 
   function renderStatus(data) {
@@ -833,8 +848,9 @@
     if (!status || !track) return;
     const trusted = active?.trusted !== false;
     const locked = Boolean(active?.focus_locked);
-    status.classList.toggle("untrusted", !trusted);
-    status.querySelector("b").textContent = trusted ? "受信" : "非受信";
+    status.classList.toggle("untrusted", !trusted && !state.syncLost);
+    status.classList.toggle("sync-lost", state.syncLost);
+    status.querySelector("b").textContent = state.syncLost ? "失去同步" : trusted ? "受信" : "非受信";
     track.classList.toggle("locked", locked);
     track.querySelector(".drag-label").textContent = locked ? "专注已锁定" : "锁定专注";
     const thumb = track.querySelector(".drag-thumb");
@@ -847,7 +863,12 @@
 
   function applyFocusState(active, animate = false) {
     if (animate) animateLayout();
-    if (active) closeFocusSummary();
+    if (active) {
+      state.focusRecoverySessionId = active.id;
+      closeFocusSummary();
+    } else if (!state.heartbeatFailureSince) {
+      state.focusRecoverySessionId = null;
+    }
     document.body.classList.toggle("is-focusing", Boolean(active));
     document.body.classList.toggle("is-paused", Boolean(active?.paused_at));
     syncScoreChartTheme(active);
@@ -943,21 +964,77 @@
     if (document.body.dataset.page === "home") state.syncTimer = window.setInterval(syncDashboard, 500);
   }
 
-  function sendForegroundHeartbeat(allowHidden = false) {
-    if (!allowHidden && document.visibilityState !== "visible") return;
-    fetch("/api/focus/heartbeat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-      keepalive: true,
-    }).catch(() => {});
+  function setSyncLost(lost) {
+    state.syncLost = lost;
+    const warning = $("#sync-warning");
+    if (warning) warning.hidden = !lost;
+    const dot = $("#state-dot");
+    dot?.classList.toggle("state-dot-offline", lost);
+    if (dot) {
+      const label = lost ? "连接异常，正在重连" : "连接正常";
+      dot.title = label;
+      dot.setAttribute("aria-label", label);
+    }
+    updateFocusLockControl(state.dashboard?.focus?.active);
+  }
+
+  function markHeartbeatFailure() {
+    if (state.heartbeatFailureSince) return;
+    state.heartbeatFailureSince = Date.now();
+    if (state.focusRecoverySessionId == null) state.focusRecoverySessionId = state.dashboard?.focus?.active?.id ?? null;
+    window.clearTimeout(state.heartbeatFailureTimer);
+    state.heartbeatFailureTimer = window.setTimeout(() => {
+      if (state.heartbeatFailureSince) setSyncLost(true);
+    }, 10000);
+  }
+
+  function markHeartbeatSuccess() {
+    state.heartbeatFailureSince = null;
+    window.clearTimeout(state.heartbeatFailureTimer);
+    setSyncLost(false);
+    state.foregroundContinuous = document.visibilityState === "visible";
+  }
+
+  async function sendForegroundHeartbeat(allowHidden = false) {
+    if ((!allowHidden && document.visibilityState !== "visible") || state.heartbeatInFlight) return;
+    state.heartbeatInFlight = true;
+    const sessionId = state.focusRecoverySessionId ?? state.dashboard?.focus?.active?.id ?? null;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2000);
+    try {
+      const response = await fetch("/api/focus/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          allow_recovery: Boolean(sessionId) && document.visibilityState === "visible" && state.foregroundContinuous,
+        }),
+        keepalive: true,
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`heartbeat_${response.status}`);
+      const result = await response.json();
+      markHeartbeatSuccess();
+      if (result.recovered) {
+        await loadDashboard();
+        showToast("连接已恢复，继续以受信模式专注");
+      } else if (sessionId && result.status === "completed") {
+        state.focusRecoverySessionId = null;
+        syncDashboard();
+      }
+    } catch (_error) {
+      markHeartbeatFailure();
+    } finally {
+      window.clearTimeout(timeout);
+      state.heartbeatInFlight = false;
+    }
   }
 
   function startForegroundHeartbeat() {
     window.clearInterval(state.heartbeatTimer);
     if (document.body.dataset.page === "account") return;
     sendForegroundHeartbeat();
-    if (document.body.dataset.page === "settings") state.heartbeatTimer = window.setInterval(sendForegroundHeartbeat, 500);
+    state.heartbeatTimer = window.setInterval(sendForegroundHeartbeat, 500);
   }
 
   async function endFocus() {
@@ -965,6 +1042,7 @@
     if (!active) return false;
     try {
       const result = await api("/api/focus/end", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
+      state.focusRecoverySessionId = null;
       await loadDashboard();
       showFocusSummary(result.session, state.dashboard?.focus?.today || []);
       showToast("本段专注已结束");
@@ -1224,6 +1302,28 @@
     $("#create-invitation")?.addEventListener("click", async () => { try { await api("/api/invitations", { method: "POST", body: "{}" }); await loadInvitations(); showToast("邀请码已生成"); } catch (error) { showToast(error.message); } });
   }
 
+  async function generateMigrationCode() {
+    const button = $("#generate-migration-code");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      const result = await api("/api/migration/code", { method: "POST", body: "{}" });
+      $("#migration-code").textContent = result.code;
+      $("#migration-code-expiry").textContent = `有效期至 ${new Date(result.expires_at).toLocaleTimeString("zh-CN")}`;
+      $("#migration-code-box").hidden = false;
+      try {
+        await copyText(result.code);
+        showToast("迁移码已生成并复制");
+      } catch (_error) {
+        showToast("迁移码已生成，请手动复制");
+      }
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      button.disabled = false;
+  }
+  }
+
   function openQuickScore() {
     const modal = $("#quick-score-modal");
     if (!modal || modal.open) return;
@@ -1296,6 +1396,15 @@
       } catch (error) { showToast(error.message); }
     });
     document.querySelector('[data-form="score"]')?.addEventListener("submit", submitScoreForm);
+    $("#generate-migration-code")?.addEventListener("click", generateMigrationCode);
+    $("#copy-migration-code")?.addEventListener("click", async () => {
+      try {
+        await copyText($("#migration-code")?.textContent || "");
+        showToast("迁移码已复制");
+      } catch (_error) {
+        showToast("复制失败，请手动选择迁移码");
+      }
+    });
   }
 
   function bindSettingsTabs() {
@@ -1327,6 +1436,7 @@
     ensureWakeLock();
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "visible") {
+        state.foregroundContinuous = false;
         sendForegroundHeartbeat(true);
         return;
       }

@@ -1,4 +1,6 @@
+import hashlib
 import json
+import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -104,6 +106,13 @@ CREATE TABLE IF NOT EXISTS daily_settlements (
     top_subject_seconds INTEGER NOT NULL DEFAULT 0,
     UNIQUE(user_id, settlement_date)
 );
+CREATE TABLE IF NOT EXISTS migration_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT
+);
 """
 
 DEFAULT_FOCUS_MESSAGES = [
@@ -178,6 +187,7 @@ def init_db(connection: sqlite3.Connection) -> None:
         "last_foreground_at": "TEXT",
         "focus_locked": "INTEGER NOT NULL DEFAULT 0",
         "trusted": "INTEGER NOT NULL DEFAULT 1",
+        "ended_reason": "TEXT",
     }
     for column, definition in migrations.items():
         if column in columns:
@@ -198,6 +208,10 @@ def init_db(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE INDEX IF NOT EXISTS daily_settlements_user_date ON daily_settlements(user_id, settlement_date)")
     for key, value in DEFAULT_SETTINGS.items():
         connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
+    connection.execute(
+        "INSERT OR IGNORE INTO settings(key, value) VALUES ('migration_instance_id', ?)",
+        (secrets.token_hex(16),),
+    )
     if not connection.execute("SELECT 1 FROM focus_modes LIMIT 1").fetchone():
         connection.executemany("INSERT INTO focus_modes(name, subject, duration_minutes) VALUES (?, ?, ?)", DEFAULT_MODES)
     connection.commit()
@@ -407,14 +421,14 @@ def save_focus_messages(connection: sqlite3.Connection, messages: list[dict[str,
         )
 
 
-def finish_focus_session(connection: sqlite3.Connection, session_id: int, ended_at: str) -> None:
+def finish_focus_session(connection: sqlite3.Connection, session_id: int, ended_at: str, reason: str = "manual") -> None:
     connection.execute(
         "UPDATE focus_pauses SET ended_at = ? WHERE session_id = ? AND ended_at IS NULL",
         (ended_at, session_id),
     )
     connection.execute(
-        "UPDATE focus_sessions SET ended_at = ?, status = 'completed' WHERE id = ? AND status = 'active'",
-        (ended_at, session_id),
+        "UPDATE focus_sessions SET ended_at = ?, status = 'completed', ended_reason = ? WHERE id = ? AND status = 'active'",
+        (ended_at, reason, session_id),
     )
 
 
@@ -444,12 +458,107 @@ def expire_unattended_focus(connection: sqlite3.Connection, now: datetime, timeo
         return None
     last_foreground_at = datetime.fromisoformat(row["last_foreground_at"])
     ended_at = (last_foreground_at + timedelta(seconds=timeout_seconds)).isoformat()
-    finish_focus_session(connection, row["id"], ended_at)
+    finish_focus_session(connection, row["id"], ended_at, "foreground_timeout")
     connection.commit()
     return int(row["id"])
 
 
+def record_foreground_heartbeat(
+    connection: sqlite3.Connection,
+    now: datetime,
+    session_id: int | None = None,
+    allow_recovery: bool = False,
+) -> dict[str, Any]:
+    now_value = now.isoformat()
+    connection.execute("BEGIN IMMEDIATE")
+    active = connection.execute(
+        "SELECT id FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    recovered = False
+    if active:
+        connection.execute(
+            "UPDATE focus_sessions SET last_foreground_at = ? WHERE id = ?",
+            (now_value, active["id"]),
+        )
+        session_id = int(active["id"])
+    elif session_id is not None and allow_recovery:
+        row = connection.execute(
+            "SELECT id FROM focus_sessions WHERE id = ? AND status = 'completed' AND ended_reason = 'foreground_timeout'",
+            (session_id,),
+        ).fetchone()
+        if row:
+            connection.execute(
+                "UPDATE focus_sessions SET status = 'active', ended_at = NULL, ended_reason = NULL, last_foreground_at = ? WHERE id = ?",
+                (now_value, session_id),
+            )
+            recovered = True
+    row = connection.execute(
+        "SELECT id, status, ended_reason FROM focus_sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone() if session_id is not None else None
+    connection.commit()
+    return {
+        "ok": True,
+        "session_id": int(row["id"]) if row else None,
+        "status": row["status"] if row else None,
+        "ended_reason": row["ended_reason"] if row else None,
+        "recovered": recovered,
+    }
+
+
+def create_migration_code(connection: sqlite3.Connection, now: datetime, lifetime_seconds: int = 900) -> dict[str, str]:
+    code = secrets.token_urlsafe(24)
+    expires_at = now + timedelta(seconds=lifetime_seconds)
+    connection.execute(
+        "INSERT INTO migration_tokens(code_hash, created_at, expires_at) VALUES (?, ?, ?)",
+        (hashlib.sha256(code.encode("utf-8")).hexdigest(), now.isoformat(), expires_at.isoformat()),
+    )
+    connection.commit()
+    return {"code": code, "expires_at": expires_at.isoformat()}
+
+
+def consume_migration_code(connection: sqlite3.Connection, code: str, now: datetime) -> bool:
+    code_hash = hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
+    connection.execute("BEGIN IMMEDIATE")
+    row = connection.execute(
+        "SELECT id FROM migration_tokens WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?",
+        (code_hash, now.isoformat()),
+    ).fetchone()
+    if not row:
+        connection.rollback()
+        return False
+    connection.execute("UPDATE migration_tokens SET used_at = ? WHERE id = ?", (now.isoformat(), row["id"]))
+    connection.commit()
+    return True
+
+
+def export_migration_data(connection: sqlite3.Connection, now: datetime) -> dict[str, Any]:
+    connection.execute("BEGIN")
+    try:
+        settings = get_settings(connection)
+        instance_id = settings.pop("migration_instance_id")
+        package = {
+            "format": "408-dashboard-migration",
+            "version": 1,
+            "source_instance_id": instance_id,
+            "exported_at": now.isoformat(),
+            "settings": settings,
+            "focus_modes": list_focus_modes(connection),
+            "focus_sessions": _rows(connection, "SELECT * FROM focus_sessions ORDER BY id"),
+            "focus_pauses": _rows(connection, "SELECT * FROM focus_pauses ORDER BY id"),
+            "scores": list_scores(connection),
+            "plans": list_plans(connection),
+        }
+        connection.commit()
+        return package
+    except Exception:
+        connection.rollback()
+        raise
+
+
 def list_scores(connection: sqlite3.Connection, user_id: int | None = None) -> list[dict[str, Any]]:
+    if user_id is None:
+        return _rows(connection, "SELECT id, subject, exam_date, score, target FROM scores ORDER BY id")
     return _rows(connection, "SELECT id, subject, exam_date, score, target FROM scores WHERE user_id = ? ORDER BY id", (user_id,))
 
 
@@ -468,6 +577,8 @@ def list_latest_scores(connection: sqlite3.Connection, user_id: int | None = Non
 
 
 def list_plans(connection: sqlite3.Connection, user_id: int | None = None) -> list[dict[str, Any]]:
+    if user_id is None:
+        return _rows(connection, "SELECT id, week_start, subject, title, target_minutes, completed_minutes FROM plans ORDER BY week_start")
     return _rows(connection, "SELECT id, week_start, subject, title, target_minutes, completed_minutes FROM plans WHERE user_id = ? ORDER BY week_start", (user_id,))
 
 

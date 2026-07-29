@@ -7,7 +7,7 @@ import sqlite3
 from flask import abort, jsonify, redirect, render_template, request, session, url_for
 
 from .auth import admin_required, current_user_id, is_guest, login_required, user_required
-from .db import add_friend, connect, finish_focus_session, get_daily_settlement, get_focus_messages, get_settings, get_user, get_user_by_username, issue_invitation, list_focus_modes, list_friends, list_invitations, list_latest_scores, list_plans, list_public_users, list_scores, remove_friend, replace_focus_modes, save_focus_messages
+from .db import add_friend, connect, consume_migration_code, create_migration_code, export_migration_data, finish_focus_session, get_daily_settlement, get_focus_messages, get_settings, get_user, get_user_by_username, issue_invitation, list_focus_modes, list_friends, list_invitations, list_latest_scores, list_plans, list_public_users, list_scores, record_foreground_heartbeat, remove_friend, replace_focus_modes, save_focus_messages
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
 
 
@@ -540,12 +540,46 @@ def register_routes(app):
     @app.post("/api/focus/heartbeat")
     @login_required
     def focus_heartbeat():
-        now = _now("UTC").isoformat()
+        payload = request.get_json(silent=True) or {}
+        try:
+            session_id = int(payload["session_id"]) if payload.get("session_id") is not None else None
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_session_id"), 400
         connection = connect(app.config["DATABASE"])
         try:
-            connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active' AND user_id = ?", (now, current_user_id()))
-            connection.commit()
-            return jsonify(ok=True)
+            return jsonify(record_foreground_heartbeat(
+                connection,
+                _now("UTC"),
+                session_id=session_id,
+                allow_recovery=payload.get("allow_recovery") is True,
+            ))
+        finally:
+            connection.close()
+
+    @app.post("/api/migration/code")
+    @admin_required
+    def migration_code():
+        connection = connect(app.config["DATABASE"])
+        try:
+            return jsonify(create_migration_code(connection, _now("UTC")))
+        finally:
+            connection.close()
+
+    @app.get("/api/migration/export")
+    def migration_export():
+        code = request.headers.get("X-Migration-Code", "").strip()
+        if not code:
+            return jsonify(error="migration_code_required"), 401
+        connection = connect(app.config["DATABASE"])
+        try:
+            now = _now("UTC")
+            if not consume_migration_code(connection, code, now):
+                return jsonify(error="invalid_or_expired_migration_code"), 401
+            package = export_migration_data(connection, now)
+            response = jsonify(package)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Content-Disposition"] = 'attachment; filename="408-dashboard-migration.json"'
+            return response
         finally:
             connection.close()
 
