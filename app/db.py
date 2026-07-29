@@ -200,7 +200,11 @@ def init_db(connection: sqlite3.Connection) -> None:
     for table in ("scores", "plans"):
         table_columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
         if "user_id" not in table_columns:
-            connection.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER REFERENCES users(id)")
+            try:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER REFERENCES users(id)")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error).lower():
+                    raise
     connection.execute("DROP INDEX IF EXISTS one_active_focus")
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_focus_per_user ON focus_sessions(user_id) WHERE status = 'active' AND user_id IS NOT NULL")
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS unique_focus_client_token ON focus_sessions(client_token) WHERE client_token IS NOT NULL")
