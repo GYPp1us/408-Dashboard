@@ -7,8 +7,8 @@ import sqlite3
 from flask import abort, jsonify, redirect, render_template, request, session, url_for
 
 from .auth import admin_required, current_user_id, is_guest, login_required, user_required
-from .db import add_friend, connect, consume_migration_code, create_migration_code, export_migration_data, finish_focus_session, get_daily_settlement, get_focus_messages, get_settings, get_user, get_user_by_username, issue_invitation, list_focus_modes, list_friends, list_invitations, list_latest_scores, list_plans, list_public_users, list_scores, record_foreground_heartbeat, remove_friend, replace_focus_modes, save_focus_messages
-from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, score_metrics, seconds_until_exam, summarize_today_focus
+from .db import add_friend, connect, consume_migration_code, create_focus_item, create_migration_code, create_subject, delete_focus_item, delete_subject, export_migration_data, finish_focus_session, get_daily_settlement, get_focus_item, get_focus_item_by_name, get_focus_messages, get_settings, get_subject, get_subject_by_name, get_user, get_user_by_username, issue_invitation, list_focus_items, list_focus_modes, list_friends, list_invitations, list_latest_scores, list_plans, list_public_users, list_scores, list_subjects, record_foreground_heartbeat, remove_friend, reorder_focus_items, save_focus_messages, update_focus_item, update_subject
+from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -22,15 +22,6 @@ def _heatmap_hours(value: str) -> list[int]:
     if not hours or len(hours) != len(set(hours)) or any(hour not in HEATMAP_HOURS for hour in hours):
         raise ValueError("invalid_heatmap_visible_hours")
     return [hour for hour in HEATMAP_HOURS if hour in hours]
-
-
-def _focus_subjects(value) -> list[str]:
-    if not isinstance(value, list):
-        raise ValueError("invalid_focus_subjects")
-    subjects = [str(subject).strip() for subject in value]
-    if not 1 <= len(subjects) <= 12 or any(not subject or len(subject) > 24 for subject in subjects) or len(subjects) != len(set(subjects)):
-        raise ValueError("invalid_focus_subjects")
-    return subjects
 
 
 def _focus_messages(value) -> list[dict[str, str]]:
@@ -314,6 +305,7 @@ def register_routes(app):
                 "exam": {"date": settings["exam_date"], "remaining_seconds": seconds_until_exam(now, settings["exam_date"])},
                 "today_focus": today_focus,
                 "focus_investment": aggregate_focus_investment(focus_sessions, now),
+                "focus_leaderboard": focus_leaderboard(focus_sessions, now),
                 "daily_settlement": daily_settlement,
                 "can_settle_today": bool(
                     not is_guest()
@@ -327,7 +319,9 @@ def register_routes(app):
                     "recent": _focus_rows(connection, now, pauses=pauses, user_id=viewer_id),
                     "today": today_rows,
                 },
+                "focus_items": list_focus_items(connection, viewer_id) if viewer_id is not None else [],
                 "focus_modes": list_focus_modes(connection, viewer_id),
+                "subjects": list_subjects(connection, viewer_id) if viewer_id is not None else [],
                 "focus_messages": get_focus_messages(connection, viewer_id),
                 "heatmap": aggregate_focus_heatmap(sessions, now),
                 "heatmap_visible_hours": heatmap_visible_hours,
@@ -360,7 +354,8 @@ def register_routes(app):
     @user_required
     def start_focus():
         payload = request.get_json(silent=True) or {}
-        subject = str(payload.get("subject", "")).strip()
+        focus_item_id = payload.get("focus_item_id")
+        legacy_focus_item = str(payload.get("focus_item", payload.get("subject", ""))).strip()
         mode = str(payload.get("mode", "")).strip()
         client_token = str(payload.get("client_token", "")).strip()
         try:
@@ -369,8 +364,15 @@ def register_routes(app):
             planned_minutes = 0
         if planned_minutes < 0:
             return jsonify(error="planned_minutes_must_be_non_negative"), 400
-        if not subject or not mode:
-            return jsonify(error="subject_and_mode_required"), 400
+        if focus_item_id is not None:
+            try:
+                focus_item_id = int(focus_item_id)
+            except (TypeError, ValueError):
+                return jsonify(error="focus_item_and_mode_required"), 400
+        if focus_item_id is None and not legacy_focus_item:
+            return jsonify(error="focus_item_and_mode_required"), 400
+        if not mode:
+            return jsonify(error="focus_item_and_mode_required"), 400
         connection = connect(app.config["DATABASE"])
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -384,14 +386,24 @@ def register_routes(app):
                 if existing:
                     connection.commit()
                     return jsonify(session=_row(connection, existing["id"]), idempotent=True), 200
+            selected_item = (
+                get_focus_item(connection, current_user_id(), focus_item_id)
+                if focus_item_id is not None
+                else get_focus_item_by_name(connection, current_user_id(), legacy_focus_item)
+            )
+            if not selected_item:
+                connection.rollback()
+                return jsonify(error="focus_item_not_found" if focus_item_id is not None else "subject_not_found"), 404
+            subject_id = int(selected_item["subject_id"])
+            subject = selected_item["label"]
             active = connection.execute("SELECT id FROM focus_sessions WHERE status = 'active' AND user_id = ? LIMIT 1", (current_user_id(),)).fetchone()
             if active:
                 connection.rollback()
                 return jsonify(error="focus_already_active"), 409
             started_at = _now("UTC").isoformat()
             cursor = connection.execute(
-                "INSERT INTO focus_sessions(user_id, subject, mode, planned_minutes, started_at, status, client_token, last_foreground_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
-                (current_user_id(), subject, mode, planned_minutes, started_at, client_token or None, started_at),
+                "INSERT INTO focus_sessions(user_id, subject_id, focus_item_id, subject, mode, planned_minutes, started_at, status, client_token, last_foreground_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)",
+                (current_user_id(), subject_id, focus_item_id, subject, mode, planned_minutes, started_at, client_token or None, started_at),
             )
             connection.commit()
             return jsonify(session=_row(connection, cursor.lastrowid)), 201
@@ -411,7 +423,8 @@ def register_routes(app):
             existing = get_daily_settlement(connection, user_id, settlement_date)
             if existing:
                 connection.commit()
-                return jsonify(settlement=existing, idempotent=True), 200
+                existing_sessions = _focus_sessions(connection, now, _pause_map(connection), user_id)
+                return jsonify(settlement=existing, leaderboard=focus_leaderboard(existing_sessions, now), idempotent=True), 200
             library_window = calculate_window(now, settings["library_open"], settings["library_close"])
             active = connection.execute(
                 "SELECT id FROM focus_sessions WHERE status = 'active' AND user_id = ? LIMIT 1",
@@ -461,11 +474,12 @@ def register_routes(app):
             )
             connection.commit()
             payload["id"] = cursor.lastrowid
-            return jsonify(settlement=payload), 201
+            return jsonify(settlement=payload, leaderboard=focus_leaderboard(focus_sessions, now)), 201
         except sqlite3.IntegrityError:
             connection.rollback()
             existing = get_daily_settlement(connection, current_user_id(), settlement_date)
-            return jsonify(settlement=existing, idempotent=True), 200
+            existing_sessions = _focus_sessions(connection, now, _pause_map(connection), current_user_id())
+            return jsonify(settlement=existing, leaderboard=focus_leaderboard(existing_sessions, now), idempotent=True), 200
         finally:
             connection.close()
 
@@ -583,6 +597,132 @@ def register_routes(app):
         finally:
             connection.close()
 
+    @app.route("/api/subjects", methods=["GET", "POST"])
+    @user_required
+    def subjects_api():
+        connection = connect(app.config["DATABASE"])
+        try:
+            user_id = current_user_id()
+            if request.method == "POST":
+                payload = request.get_json(silent=True) or {}
+                try:
+                    create_subject(connection, user_id, payload.get("name", ""), payload.get("target", 100))
+                except ValueError as error:
+                    return jsonify(error=str(error)), 400
+                except sqlite3.IntegrityError:
+                    return jsonify(error="duplicate_subject"), 409
+                connection.commit()
+            return jsonify(subjects=list_subjects(connection, user_id)), 201 if request.method == "POST" else 200
+        finally:
+            connection.close()
+
+    @app.route("/api/subjects/<int:subject_id>", methods=["PATCH", "DELETE"])
+    @user_required
+    def subject_api(subject_id: int):
+        connection = connect(app.config["DATABASE"])
+        try:
+            user_id = current_user_id()
+            if request.method == "DELETE":
+                if not delete_subject(connection, user_id, subject_id):
+                    return jsonify(error="subject_not_found"), 404
+                connection.commit()
+                return jsonify(subjects=list_subjects(connection, user_id))
+            existing = get_subject(connection, user_id, subject_id)
+            if not existing:
+                return jsonify(error="subject_not_found"), 404
+            payload = request.get_json(silent=True) or {}
+            try:
+                update_subject(
+                    connection,
+                    user_id,
+                    subject_id,
+                    payload.get("name", existing["name"]),
+                    payload.get("target", existing["target_score"]),
+                )
+            except ValueError as error:
+                return jsonify(error=str(error)), 400
+            except sqlite3.IntegrityError:
+                return jsonify(error="duplicate_subject"), 409
+            connection.commit()
+            return jsonify(subjects=list_subjects(connection, user_id))
+        finally:
+            connection.close()
+
+    @app.route("/api/focus-items", methods=["GET", "POST"])
+    @user_required
+    def focus_items_api():
+        connection = connect(app.config["DATABASE"])
+        try:
+            user_id = current_user_id()
+            if request.method == "POST":
+                payload = request.get_json(silent=True) or {}
+                try:
+                    subject_id = int(payload.get("subject_id"))
+                    create_focus_item(connection, user_id, subject_id, payload.get("name", ""))
+                except (TypeError, ValueError) as error:
+                    if str(error) == "subject_not_found":
+                        return jsonify(error="subject_not_found"), 404
+                    return jsonify(error=str(error)), 400
+                except sqlite3.IntegrityError:
+                    return jsonify(error="duplicate_focus_item"), 409
+                connection.commit()
+            return jsonify(focus_items=list_focus_items(connection, user_id)), 201 if request.method == "POST" else 200
+        finally:
+            connection.close()
+
+    @app.route("/api/focus-items/<int:focus_item_id>", methods=["PATCH", "DELETE"])
+    @user_required
+    def focus_item_api(focus_item_id: int):
+        connection = connect(app.config["DATABASE"])
+        try:
+            user_id = current_user_id()
+            if request.method == "DELETE":
+                if not delete_focus_item(connection, user_id, focus_item_id):
+                    return jsonify(error="focus_item_not_found"), 404
+                connection.commit()
+                return jsonify(focus_items=list_focus_items(connection, user_id))
+            existing = get_focus_item(connection, user_id, focus_item_id)
+            if not existing:
+                return jsonify(error="focus_item_not_found"), 404
+            payload = request.get_json(silent=True) or {}
+            try:
+                subject_id = int(payload.get("subject_id", existing["subject_id"]))
+                update_focus_item(
+                    connection,
+                    user_id,
+                    focus_item_id,
+                    subject_id,
+                    payload.get("name", existing["name"]),
+                )
+            except (TypeError, ValueError) as error:
+                if str(error) == "subject_not_found":
+                    return jsonify(error="subject_not_found"), 404
+                return jsonify(error=str(error)), 400
+            except sqlite3.IntegrityError:
+                return jsonify(error="duplicate_focus_item"), 409
+            connection.commit()
+            return jsonify(focus_items=list_focus_items(connection, user_id))
+        finally:
+            connection.close()
+
+    @app.put("/api/focus-items/order")
+    @user_required
+    def focus_item_order_api():
+        payload = request.get_json(silent=True) or {}
+        focus_item_ids = payload.get("focus_item_ids")
+        if not isinstance(focus_item_ids, list):
+            return jsonify(error="invalid_focus_item_order"), 400
+        connection = connect(app.config["DATABASE"])
+        try:
+            try:
+                items = reorder_focus_items(connection, current_user_id(), focus_item_ids)
+            except (TypeError, ValueError):
+                return jsonify(error="invalid_focus_item_order"), 400
+            connection.commit()
+            return jsonify(focus_items=items)
+        finally:
+            connection.close()
+
     @app.route("/api/settings", methods=["GET", "PATCH"])
     @user_required
     def settings_api():
@@ -590,13 +730,15 @@ def register_routes(app):
         try:
             if request.method == "PATCH":
                 payload = request.get_json(silent=True) or {}
+                if "focus_subjects" in payload:
+                    return jsonify(error="subject_crud_required"), 400
                 try:
-                    if "focus_subjects" in payload:
-                        replace_focus_modes(connection, _focus_subjects(payload["focus_subjects"]), current_user_id())
                     if "focus_messages" in payload:
                         save_focus_messages(connection, _focus_messages(payload["focus_messages"]), current_user_id())
                 except ValueError as error:
                     return jsonify(error=str(error)), 400
+                except sqlite3.IntegrityError:
+                    return jsonify(error="duplicate_subject"), 409
                 allowed = {"morning_start", "lunch_start", "library_open", "library_close", "exam_date", "timezone", "heatmap_visible_hours"}
                 for key, value in payload.items():
                     if key not in allowed:
@@ -620,7 +762,13 @@ def register_routes(app):
                     )
                 connection.commit()
             user_id = current_user_id()
-            return jsonify(settings=get_settings(connection, user_id), focus_modes=list_focus_modes(connection, user_id), focus_messages=get_focus_messages(connection, user_id))
+            return jsonify(
+                settings=get_settings(connection, user_id),
+                focus_items=list_focus_items(connection, user_id),
+                focus_modes=list_focus_modes(connection, user_id),
+                subjects=list_subjects(connection, user_id),
+                focus_messages=get_focus_messages(connection, user_id),
+            )
         finally:
             connection.close()
 
@@ -708,12 +856,38 @@ def register_routes(app):
                 payload = request.get_json(silent=True) or {}
                 try:
                     score = float(payload["score"])
-                    target = float(payload["target"])
                 except (KeyError, TypeError, ValueError):
                     return jsonify(error="invalid_score_payload"), 400
-                if not payload.get("subject") or score < 0 or target <= 0:
+                subject_id = payload.get("subject_id")
+                subject = str(payload.get("subject", "")).strip()
+                if subject_id is not None:
+                    try:
+                        selected_subject = get_subject(connection, current_user_id(), int(subject_id))
+                    except (TypeError, ValueError):
+                        selected_subject = None
+                    if not selected_subject:
+                        return jsonify(error="subject_not_found"), 404
+                    subject_id = int(selected_subject["id"])
+                    subject = selected_subject["name"]
+                    target = float(selected_subject["target_score"])
+                else:
+                    selected_subject = get_subject_by_name(connection, current_user_id(), subject) if subject else None
+                    if not selected_subject:
+                        return jsonify(error="subject_not_found"), 404
+                    subject_id = int(selected_subject["id"])
+                    subject = selected_subject["name"]
+                    target = float(selected_subject["target_score"])
+                # The paper-tape UI intentionally exposes 000–199, but the
+                # endpoint remains compatible with existing clients and
+                # historical score scales that can exceed 199.
+                if not subject or score < 0 or target <= 0:
                     return jsonify(error="invalid_score_payload"), 400
-                connection.execute("INSERT INTO scores(user_id, subject, exam_date, score, target) VALUES (?, ?, ?, ?, ?)", (current_user_id(), payload["subject"], payload.get("exam_date", _now().date().isoformat()), score, target))
+                settings = get_settings(connection, current_user_id())
+                exam_date = payload.get("exam_date") or _now(settings.get("timezone", "Asia/Shanghai")).date().isoformat()
+                connection.execute(
+                    "INSERT INTO scores(user_id, subject_id, subject, exam_date, score, target) VALUES (?, ?, ?, ?, ?, ?)",
+                    (current_user_id(), subject_id, subject, exam_date, score, target),
+                )
                 connection.commit()
             return jsonify(scores=score_metrics(list_latest_scores(connection, current_user_id())))
         finally:
@@ -733,9 +907,26 @@ def register_routes(app):
                     completed_minutes = int(payload.get("completed_minutes", 0))
                 except (KeyError, TypeError, ValueError):
                     return jsonify(error="invalid_plan_payload"), 400
-                if not payload.get("week_start") or not payload.get("subject") or not payload.get("title") or target_minutes <= 0 or completed_minutes < 0:
+                subject_id = payload.get("subject_id")
+                subject = str(payload.get("subject", "")).strip()
+                if subject_id is not None:
+                    try:
+                        selected_subject = get_subject(connection, current_user_id(), int(subject_id))
+                    except (TypeError, ValueError):
+                        selected_subject = None
+                    if not selected_subject:
+                        return jsonify(error="subject_not_found"), 404
+                    subject_id = int(selected_subject["id"])
+                    subject = selected_subject["name"]
+                elif subject:
+                    selected_subject = get_subject_by_name(connection, current_user_id(), subject)
+                    if not selected_subject:
+                        return jsonify(error="subject_not_found"), 404
+                    subject_id = int(selected_subject["id"])
+                    subject = selected_subject["name"]
+                if not payload.get("week_start") or not subject or not payload.get("title") or target_minutes <= 0 or completed_minutes < 0:
                     return jsonify(error="invalid_plan_payload"), 400
-                connection.execute("INSERT INTO plans(user_id, week_start, subject, title, target_minutes, completed_minutes) VALUES (?, ?, ?, ?, ?, ?)", (current_user_id(), payload["week_start"], payload["subject"], payload["title"], target_minutes, completed_minutes))
+                connection.execute("INSERT INTO plans(user_id, subject_id, week_start, subject, title, target_minutes, completed_minutes) VALUES (?, ?, ?, ?, ?, ?, ?)", (current_user_id(), subject_id, payload["week_start"], subject, payload["title"], target_minutes, completed_minutes))
                 connection.commit()
             return jsonify(plans=list_plans(connection, current_user_id()))
         finally:

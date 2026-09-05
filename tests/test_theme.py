@@ -106,9 +106,10 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".score-row em.good { color:var(--score-positive)" in css
     assert ".score-row em.bad { color:var(--score-negative)" in css
     assert ".focus-compare-trend { width:100%; padding:0 10px" in css
-    assert ".focus-message-card" in css and "height:96px; min-height:0" in css
-    assert ".focus-message-card::after { content:attr(data-index)" in css
-    assert "@keyframes message-card-in" in css
+    assert ".focus-leaderboard { display:grid; grid-template-columns:minmax(0,8fr) minmax(84px,2fr)" in css
+    assert ".focus-leaderboard-chips" in css
+    assert "@media (max-width:560px)" in css and ".focus-leaderboard-quantile { display:none" in css
+    assert ".mode-panel,.investment-panel,.activity-panel { grid-column:1; grid-row:auto; }" in css
 
 
 def test_settings_page_uses_modern_two_column_editor_layout():

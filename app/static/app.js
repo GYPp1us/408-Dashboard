@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, focusMessageIndex: null, confirmResolver: null, investmentRange: "week" };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
   const DAILY_TARGET_SECONDS = 7 * 3600;
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
@@ -7,46 +7,6 @@
     focus: ["#8067b3", "#685295", "#9a86c3", "#59447f", "#8b77aa", "#b4a5d1", "#706186", "#9f8db8"],
     settled: ["#6f8f78", "#557763", "#8aa891", "#486653", "#789c81", "#abc0ad", "#5d8068", "#94ae99"],
   };
-  const fallbackFocusMessages = [
-    { category: "时间管理", text: "当前只处理一个问题，剩下的交给计划。" },
-    { category: "时间管理", text: "先完成眼前这一步，再决定下一步。" },
-    { category: "时间管理", text: "用完整的一小时，换一个真正清晰的知识点。" },
-    { category: "时间管理", text: "难题先标记，别让局部拖住整段节奏。" },
-    { category: "时间管理", text: "速度不是匆忙，而是减少无意义的切换。" },
-    { category: "时间管理", text: "给任务设边界，也给注意力留出余地。" },
-    { category: "时间管理", text: "复习进度由完成的闭环决定，不由打开的页面决定。" },
-    { category: "时间管理", text: "卡住五分钟，就换一种表述重新理解。" },
-    { category: "时间管理", text: "今天的稳定投入，比临时冲刺更可靠。" },
-    { category: "时间管理", text: "结束前留两分钟，写下清晰的下一步。" },
-    { category: "继续前进", text: "你正在把陌生变成熟悉。" },
-    { category: "继续前进", text: "每一次专注，都在降低考场上的不确定性。" },
-    { category: "继续前进", text: "不必等状态完美，开始本身会制造状态。" },
-    { category: "继续前进", text: "碰到能力边界时，慢一点也算前进。" },
-    { category: "继续前进", text: "现在积累的确定性，会在考场上替你说话。" },
-    { category: "继续前进", text: "把会做的做稳，把不会的逐步拆开。" },
-    { category: "继续前进", text: "今日不求惊艳，只求比昨天更扎实。" },
-    { category: "继续前进", text: "题目不会辜负真正理解它的人。" },
-    { category: "继续前进", text: "长期主义不是坚持口号，而是完成这一段。" },
-    { category: "继续前进", text: "无需一次看见终点，只需要守住当前节奏。" },
-    { category: "视线提醒", text: "别盯着面板，回到书页和题目。" },
-    { category: "视线提醒", text: "看远处二十秒，让眼睛也完成一次休息。" },
-    { category: "视线提醒", text: "肩膀放松，呼吸一次，再继续。" },
-    { category: "视线提醒", text: "喝一口水，不要用疲劳冒充努力。" },
-    { category: "视线提醒", text: "坐姿归位，屏幕只是计时器，不是任务本身。" },
-    { category: "视线提醒", text: "如果正在走神，写下干扰，再回到当前题。" },
-    { category: "视线提醒", text: "面板没有新答案，答案在你的草稿纸上。" },
-    { category: "视线提醒", text: "眼睛离开屏幕，注意力留在问题上。" },
-    { category: "视线提醒", text: "听见自己翻页的声音，比看计时数字更重要。" },
-    { category: "视线提醒", text: "不用频繁确认时间，计时会替你记住。" },
-    { category: "专注提醒", text: "忽略该忽略的，专注该专注的" },
-  ];
-  function recommendedFocusMessageIndex(active, slot, messageCount) {
-    const key = `${active.id || active.started_at}:${active.started_at}`;
-    let hash = 2166136261;
-    for (let index = 0; index < key.length; index += 1) hash = Math.imul(hash ^ key.charCodeAt(index), 16777619);
-    const steps = [7, 11, 13, 17, 19, 23, 29];
-    return ((hash >>> 0) % messageCount + slot * steps[(hash >>> 8) % steps.length]) % messageCount;
-  }
   const $ = (selector) => document.querySelector(selector);
   const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => themePalettes[active ? "focus" : state.dashboard?.daily_settlement ? "settled" : "idle"];
   if (window.Chart) {
@@ -438,20 +398,22 @@
     const tick = (now) => {
       const extraSeconds = activeExtraSeconds(active, fetchedAt, now);
       const currentSeconds = Number(baseline.current_seconds || 0) + extraSeconds;
-      const dailyAverage = Math.floor(currentSeconds / 7);
+      const recordedDayCount = Number(baseline.recorded_day_count || 0);
+      const previousRecordedDayCount = Number(baseline.previous_recorded_day_count || 0);
+      const dailyAverage = Math.floor(currentSeconds / Math.max(1, recordedDayCount));
       const previousAverage = Number(baseline.previous_daily_average_seconds || 0);
       const trendSeconds = dailyAverage - previousAverage;
       const trend = $("#investment-trend");
       $("#investment-daily-average").textContent = formatSeconds(dailyAverage);
       trend.className = `investment-trend${trendSeconds > 0 ? " up" : trendSeconds < 0 ? " down" : ""}`;
-      trend.textContent = trendSeconds > 0 ? `↑ ${formatSeconds(trendSeconds)}` : trendSeconds < 0 ? `↓ ${formatSeconds(Math.abs(trendSeconds))}` : "较前 7 天持平";
+      trend.textContent = trendSeconds > 0 ? `↑ ${formatSeconds(trendSeconds)}` : trendSeconds < 0 ? `↓ ${formatSeconds(Math.abs(trendSeconds))}` : previousRecordedDayCount ? `较前 ${previousRecordedDayCount} 个记录日持平` : "暂无前序记录";
       renderTargetStack("#investment-average-stack", dailyAverage);
 
       const allTime = state.investmentRange === "all";
       const rangeSeconds = Number(allTime ? baseline.all_time_seconds : baseline.current_seconds || 0) + extraSeconds;
       const rangeSubjects = allTime ? baseline.all_time_subjects : baseline.subjects;
       $("#investment-week-total").textContent = formatSeconds(rangeSeconds);
-      $("#investment-range-note").textContent = allTime ? "全部记录累计" : "近 7 天累计";
+      $("#investment-range-note").textContent = allTime ? "全部记录累计" : recordedDayCount ? `近 ${recordedDayCount} 个记录日累计` : "暂无记录日";
       renderSubjectStack("#investment-subject-stack", "#investment-subject-legend", subjectsWithActiveTime(rangeSubjects, extraSeconds), rangeSeconds);
 
       const todaySeconds = Number(baseline.today_seconds || 0) + extraSeconds;
@@ -468,7 +430,6 @@
     const view = $("#focus-comparison-view");
     if (!view || !active) {
       removeSecondTask("focusComparison");
-      state.focusMessageIndex = null;
       return;
     }
     const tick = (now) => {
@@ -489,25 +450,61 @@
       diffFill.style.left = `${delta < 0 ? 50 - diffWidth : 50}%`;
       diffFill.style.width = `${diffWidth}%`;
       $("#focus-diff-track").setAttribute("aria-label", `今日与昨日工作窗折算基线相差 ${delta >= 0 ? "+" : "-"}${formatSeconds(Math.abs(delta))}`);
-
-      const elapsed = focusElapsedSeconds(active, now);
-      const focusMessages = state.dashboard?.focus_messages?.length ? state.dashboard.focus_messages : fallbackFocusMessages;
-      const messageIndex = recommendedFocusMessageIndex(active, Math.floor(elapsed / 200), focusMessages.length);
-      if (messageIndex !== state.focusMessageIndex) {
-        state.focusMessageIndex = messageIndex;
-        const message = focusMessages[messageIndex];
-        const card = $("#focus-message-card");
-        const displayIndex = String(messageIndex + 1).padStart(2, "0");
-        card.dataset.index = displayIndex;
-        $("#focus-message-category").textContent = message.category;
-        $("#focus-message-text").textContent = message.text;
-        $("#focus-message-count").textContent = `${displayIndex} / ${focusMessages.length}`;
-        card.classList.remove("is-changing");
-        void card.offsetWidth;
-        card.classList.add("is-changing");
-      }
+      renderFocusLeaderboard(state.dashboard?.focus_leaderboard, extraSeconds);
     };
     setSecondTask("focusComparison", tick);
+  }
+
+  function renderFocusLeaderboard(leaderboard, activeExtra = 0) {
+    const rowsTarget = $("#focus-leaderboard-rows");
+    if (!rowsTarget) return;
+    const sourceEntries = leaderboard?.entries || [];
+    const todayKey = leaderboard?.today?.date || new Date().toLocaleDateString("en-CA");
+    const entries = sourceEntries.map((entry) => ({ ...entry, seconds: Number(entry.seconds || 0) }));
+    let today = entries.find((entry) => entry.date === todayKey);
+    if (today) today.seconds += activeExtra;
+    else if (activeExtra || Number(leaderboard?.today?.seconds || 0)) {
+      today = { date: todayKey, seconds: Number(leaderboard?.today?.seconds || 0) + activeExtra };
+      entries.push(today);
+    }
+    entries.sort((left, right) => right.seconds - left.seconds || String(right.date).localeCompare(String(left.date)));
+    entries.forEach((entry) => {
+      const higher = entries.filter((other) => other.seconds > entry.seconds).map((other) => other.seconds);
+      entry.rank = higher.length + 1;
+      const previous = higher.length ? Math.min(...higher) : null;
+      entry.gap_to_previous_seconds = previous === null ? null : previous - entry.seconds;
+    });
+    const dayCount = entries.length;
+    today = entries.find((entry) => entry.date === todayKey);
+    const summary = $("#focus-leaderboard-summary");
+    const percentile = $("#focus-leaderboard-percentile");
+    const dayCountTarget = $("#focus-leaderboard-day-count");
+    const chips = $("#focus-leaderboard-chips");
+    if (!today || !today.seconds) {
+      rowsTarget.innerHTML = '<div class="loading-row">今天产生有效专注后会进入榜单。</div>';
+      if (summary) summary.textContent = "今天尚未上榜";
+      if (percentile) percentile.textContent = "--";
+      if (dayCountTarget) dayCountTarget.textContent = `${dayCount} 个记录日`;
+      if (chips) chips.replaceChildren();
+      return;
+    }
+    const percent = Math.round((dayCount - today.rank + 1) / dayCount * 100);
+    const gap = Number(today.gap_to_previous_seconds || 0);
+    if (summary) summary.textContent = today.rank === 1 ? "今日暂列第 1 名" : `今日第 ${today.rank} 名 · 距上一名 ${formatSeconds(gap)}`;
+    if (percentile) percentile.textContent = `${percent}%`;
+    if (dayCountTarget) dayCountTarget.textContent = `${dayCount} 个记录日`;
+    if (chips) {
+      const filled = Math.max(1, Math.ceil(percent / 10));
+      chips.innerHTML = Array.from({ length: 10 }, (_value, index) => `<i class="${index < filled ? "is-filled" : ""}"></i>`).join("");
+    }
+    const visible = entries.slice(0, 4);
+    if (!visible.some((entry) => entry.date === today.date)) visible.push(today);
+    visible.sort((left, right) => left.rank - right.rank || String(right.date).localeCompare(String(left.date)));
+    rowsTarget.innerHTML = visible.map((entry) => {
+      const isToday = entry.date === today.date;
+      const gapText = entry.rank === 1 ? "榜首" : `差 ${formatSeconds(Number(entry.gap_to_previous_seconds || 0))}`;
+      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}"><b>#${entry.rank}</b><time>${isToday ? "今天" : escapeHtml(String(entry.date).slice(5).replace("-", "/"))}</time><strong>${formatSeconds(entry.seconds)}</strong><small>${gapText}</small></div>`;
+    }).join("");
   }
 
   function renderGuestSummary(data) {
@@ -705,10 +702,13 @@
     state.scoreChart.update("none");
   }
 
-  function renderModes(modes) {
+  function renderModes(modes = []) {
     const target = $("#focus-modes");
     if (!target) return;
-    target.innerHTML = modes.map((mode) => `<div class="mode"><div class="drag-launch" data-subject="${escapeHtml(mode.subject)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">${escapeHtml(mode.subject)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(mode.subject)}">→</span></div></div>`).join("");
+    target.innerHTML = modes.map((item) => {
+      const label = item.label || `${item.subject} · ${item.name}`;
+      return `<div class="mode"><div class="drag-launch" data-focus-item-id="${Number(item.id)}" data-focus-item="${escapeHtml(label)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">${escapeHtml(label)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(label)}">→</span></div></div>`;
+    }).join("");
     initDragLaunchers();
   }
 
@@ -732,7 +732,9 @@
     const evaluation = completion >= 100 ? "目标达成" : completion >= 80 ? "接近目标" : completion >= 50 ? "稳步推进" : "保留节奏";
     const deltaText = delta > 0 ? `比昨天多 ${formatSeconds(delta)}` : delta < 0 ? `比昨天少 ${formatSeconds(Math.abs(delta))}` : "与昨天持平";
     const subject = settlement.top_subject ? `${escapeHtml(settlement.top_subject)} · ${formatSeconds(settlement.top_subject_seconds || 0)}` : "今天还没有专注记录";
-    achievement.innerHTML = `<div class="section-heading"><h2>当日成就</h2><span>已结算 · ${escapeHtml(settlement.settlement_date)}</span></div><div class="achievement-total"><span>今日有效专注</span><strong>${formatSeconds(total)}</strong><b>${completion}% · ${evaluation}</b></div><div class="achievement-list"><div><span>昨日差值</span><b class="${delta >= 0 ? "good" : "bad"}">${escapeHtml(deltaText)}</b></div><div><span>专注次数</span><b>${Number(settlement.session_count || 0)} 次</b></div><div><span>主要投入</span><b>${subject}</b></div></div>`;
+    const rank = data.focus_leaderboard?.today;
+    const rankText = rank?.rank ? rank.rank === 1 ? `第 1 名 · ${Number(rank.percentile || 100)}% 分位` : `第 ${rank.rank} 名 · 距上一名 ${formatSeconds(Number(rank.gap_to_previous_seconds || 0))}` : "今天暂无有效专注排名";
+    achievement.innerHTML = `<div class="section-heading"><h2>当日成就</h2><span>已结算 · ${escapeHtml(settlement.settlement_date)}</span></div><div class="achievement-total"><span>今日有效专注</span><strong>${formatSeconds(total)}</strong><b>${completion}% · ${evaluation}</b></div><div class="achievement-list"><div><span>昨日差值</span><b class="${delta >= 0 ? "good" : "bad"}">${escapeHtml(deltaText)}</b></div><div><span>历日排名</span><b>${escapeHtml(rankText)}</b></div><div><span>专注次数</span><b>${Number(settlement.session_count || 0)} 次</b></div><div><span>主要投入</span><b>${subject}</b></div></div>`;
   }
 
   function bindInvestmentRange() {
@@ -793,7 +795,7 @@
     state.starting = true;
     track.classList.add("armed");
     try {
-      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ subject: track.dataset.subject, mode: "专注", planned_minutes: 0, client_token: createClientToken() }) });
+      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(track.dataset.focusItemId), mode: "专注", planned_minutes: 0, client_token: createClientToken() }) });
       const today = state.dashboard?.focus?.today || [];
       state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session, today: [...today.filter((item) => item.id !== session.session.id), session.session] } };
       state.dashboardFetchedAt = Date.now();
@@ -880,7 +882,6 @@
     if (!active) {
       removeSecondTask("focus");
       removeSecondTask("focusComparison");
-      state.focusMessageIndex = null;
       $("#focus-timer").textContent = "00:00:00";
       updatePauseControl(null);
       const track = $("#end-focus");
@@ -914,7 +915,7 @@
       active: active ? [active.id, active.subject, active.started_at, active.status, active.paused_at, active.paused_seconds, active.focus_locked, active.trusted] : null,
       recent: (data.focus?.recent || []).map((item) => [item.id, item.status, item.ended_at]),
       scores: (data.score_history || []).map((item) => [item.id, item.subject, item.exam_date, item.score, item.target]),
-      modes: (data.focus_modes || []).map((item) => [item.id, item.subject]),
+      modes: (data.focus_items || data.focus_modes || []).map((item) => [item.id, item.label || item.subject, item.sort_order]),
       messages: (data.focus_messages || []).map((item) => [item.category, item.text]),
       settlement: data.daily_settlement ? [data.daily_settlement.id, data.daily_settlement.settlement_date, data.daily_settlement.total_seconds] : null,
       canSettle: Boolean(data.can_settle_today),
@@ -932,7 +933,7 @@
     state.dashboardFetchedAt = Date.now();
     state.dashboardSignature = dashboardSignature(data);
     document.body.classList.toggle("is-settled", Boolean(data.daily_settlement));
-    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderFriendDiffBoard(data.friends); renderGuestSummary(data);
+    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_items || data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderFriendDiffBoard(data.friends); renderGuestSummary(data);
     renderDailySettlement(data);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
@@ -950,6 +951,7 @@
       if (dashboardSignature(data) !== state.dashboardSignature) applyDashboard(data);
       else {
         state.dashboard.focus_investment = data.focus_investment;
+        state.dashboard.focus_leaderboard = data.focus_leaderboard;
         state.dashboardFetchedAt = Date.now();
       }
     } catch (error) {
@@ -1247,8 +1249,8 @@
     Object.entries(settings.settings).forEach(([key, value]) => { const input = document.querySelector(`[name="${key}"]`); if (input) input.value = value; });
     const visibleHours = new Set(String(settings.settings.heatmap_visible_hours || "").split(","));
     document.querySelectorAll("[data-heat-hour]").forEach((input) => { input.checked = visibleHours.has(input.dataset.heatHour); });
-    $("#focus-subjects").value = (settings.focus_modes || []).map((item) => item.subject).join("\n");
-    $("#focus-messages").value = (settings.focus_messages || []).map((item) => `${item.category} | ${item.text}`).join("\n");
+    renderSubjectSettings(settings.subjects || []);
+    renderFocusItemSettings(settings.focus_items || [], settings.subjects || []);
     renderScores(scores.scores.map((item) => ({ ...item, gap: item.target - item.score, completion: item.score / item.target })), "#settings-scores");
   }
 
@@ -1324,35 +1326,174 @@
   }
   }
 
-  function openQuickScore() {
+  function scoreEntryValue() {
+    const selection = state.scoreEntry.selection;
+    return Number(selection.hundreds) * 100 + Number(selection.tens) * 10 + Number(selection.ones);
+  }
+
+  function selectedScoreSubject() {
+    return state.scoreEntry.subjects.find((subject) => Number(subject.id) === Number(state.scoreEntry.selection.subject)) || null;
+  }
+
+  function updateScoreEntryPreview() {
+    const subject = selectedScoreSubject();
+    const score = scoreEntryValue();
+    $("#score-selected-subject")?.replaceChildren(document.createTextNode(subject?.name || "--"));
+    $("#score-hundreds-value")?.replaceChildren(document.createTextNode(String(state.scoreEntry.selection.hundreds)));
+    $("#score-tens-value")?.replaceChildren(document.createTextNode(String(state.scoreEntry.selection.tens)));
+    $("#score-ones-value")?.replaceChildren(document.createTextNode(String(state.scoreEntry.selection.ones)));
+    $("#score-entry-preview")?.replaceChildren(document.createTextNode(subject ? `${subject.name} · ${String(score).padStart(3, "0")} 分` : "请选择科目"));
+    $("#score-entry-target")?.replaceChildren(document.createTextNode(subject ? `目标分 ${Number(subject.target)} · 在设置中维护` : "先在设置中添加科目和目标分"));
+    const submit = $("#submit-tape-score");
+    if (submit) submit.disabled = !subject;
+  }
+
+  function centerScoreStripOption(strip, value, behavior = "auto") {
+    const option = [...strip.querySelectorAll("[data-score-option]")].find((item) => item.dataset.value === String(value));
+    if (!option) return;
+    strip.scrollTo({ left: Math.max(0, option.offsetLeft + option.offsetWidth / 2 - strip.clientWidth / 2), behavior });
+  }
+
+  function setScoreStripSelection(strip, option) {
+    if (!strip || !option) return;
+    const key = strip.dataset.scoreStrip;
+    state.scoreEntry.selection[key] = Number(option.dataset.value);
+    strip.querySelectorAll("[data-score-option]").forEach((item) => {
+      const selected = item === option;
+      item.classList.toggle("is-selected", selected);
+      item.setAttribute("aria-selected", String(selected));
+    });
+    updateScoreEntryPreview();
+  }
+
+  function selectScoreStripOption(strip, option, behavior = "smooth") {
+    setScoreStripSelection(strip, option);
+    centerScoreStripOption(strip, option.dataset.value, behavior);
+  }
+
+  function syncScoreStripSelection(strip, snapToSelection = false) {
+    const options = [...strip.querySelectorAll("[data-score-option]")];
+    if (!options.length) return;
+    const center = strip.getBoundingClientRect().left + strip.clientWidth / 2;
+    const closest = options.reduce((best, option) => {
+      const bounds = option.getBoundingClientRect();
+      const distance = Math.abs(bounds.left + bounds.width / 2 - center);
+      return !best || distance < best.distance ? { option, distance } : best;
+    }, null)?.option;
+    if (!closest) return;
+    setScoreStripSelection(strip, closest);
+    if (snapToSelection) centerScoreStripOption(strip, closest.dataset.value, "smooth");
+  }
+
+  function bindScoreStrip(strip) {
+    if (!strip || strip.dataset.bound) return;
+    strip.dataset.bound = "1";
+    let dragging = null;
+    let frame = null;
+    strip.addEventListener("scroll", () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = null; syncScoreStripSelection(strip); });
+    }, { passive: true });
+    strip.addEventListener("pointerdown", (event) => {
+      dragging = { pointerId: event.pointerId, startX: event.clientX, scrollLeft: strip.scrollLeft };
+      strip.setPointerCapture?.(event.pointerId);
+      strip.classList.add("is-dragging");
+    });
+    strip.addEventListener("pointermove", (event) => {
+      if (!dragging || dragging.pointerId !== event.pointerId) return;
+      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX);
+    });
+    const finishDrag = (event) => {
+      if (!dragging || dragging.pointerId !== event.pointerId) return;
+      strip.releasePointerCapture?.(event.pointerId);
+      dragging = null;
+      strip.classList.remove("is-dragging");
+      syncScoreStripSelection(strip, true);
+    };
+    strip.addEventListener("pointerup", finishDrag);
+    strip.addEventListener("pointercancel", finishDrag);
+    strip.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const options = [...strip.querySelectorAll("[data-score-option]")];
+      const current = options.findIndex((item) => item.dataset.value === String(state.scoreEntry.selection[strip.dataset.scoreStrip]));
+      const next = Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowRight" ? 1 : -1)));
+      if (options[next]) {
+        event.preventDefault();
+        selectScoreStripOption(strip, options[next]);
+      }
+    });
+  }
+
+  function renderScoreStrip(key, options) {
+    const strip = $(`#score-${key}-strip`);
+    if (!strip) return;
+    const selectedValue = state.scoreEntry.selection[key];
+    strip.innerHTML = options.map((option) => `<button class="score-strip-option${String(option.value) === String(selectedValue) ? " is-selected" : ""}" type="button" data-score-option data-value="${escapeHtml(option.value)}" role="option" aria-selected="${String(option.value) === String(selectedValue)}">${escapeHtml(option.label)}</button>`).join("");
+    strip.querySelectorAll("[data-score-option]").forEach((option) => option.addEventListener("click", () => selectScoreStripOption(strip, option)));
+    bindScoreStrip(strip);
+    requestAnimationFrame(() => centerScoreStripOption(strip, selectedValue));
+  }
+
+  function renderScoreEntry() {
+    const subjects = state.scoreEntry.subjects;
+    if (!subjects.some((subject) => Number(subject.id) === Number(state.scoreEntry.selection.subject))) {
+      state.scoreEntry.selection.subject = subjects[0]?.id ?? null;
+    }
+    renderScoreStrip("subject", subjects.map((subject) => ({ value: subject.id, label: subject.name })));
+    renderScoreStrip("hundreds", [0, 1].map((value) => ({ value, label: value })));
+    renderScoreStrip("tens", Array.from({ length: 10 }, (_value, value) => ({ value, label: value })));
+    renderScoreStrip("ones", Array.from({ length: 10 }, (_value, value) => ({ value, label: value })));
+    updateScoreEntryPreview();
+  }
+
+  async function loadScoreSubjects() {
+    const payload = await api("/api/subjects");
+    state.scoreEntry.subjects = payload.subjects || [];
+    renderScoreEntry();
+  }
+
+  async function openQuickScore() {
     const modal = $("#quick-score-modal");
     if (!modal || modal.open) return;
     state.quickScoreReturnFocus = document.activeElement;
-    const dateInput = $("#quick-score-date");
-    if (dateInput && !dateInput.value) {
-      const now = new Date();
-      dateInput.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-    }
-    modal.showModal();
-    requestAnimationFrame(() => $("#quick-score-subject")?.focus());
+    try {
+      await loadScoreSubjects();
+      modal.showModal();
+      requestAnimationFrame(() => {
+        modal.classList.add("is-open");
+        $("#score-subject-strip")?.focus();
+      });
+    } catch (error) { showToast(error.message); }
   }
 
   function closeQuickScore() {
     const modal = $("#quick-score-modal");
-    if (modal?.open) modal.close();
+    if (!modal?.open || modal.dataset.closing) return;
+    modal.dataset.closing = "1";
+    modal.classList.remove("is-open");
+    window.setTimeout(() => {
+      if (modal.open) modal.close();
+      delete modal.dataset.closing;
+    }, 180);
   }
 
   async function submitScoreForm(event) {
     event.preventDefault();
-    const form = event.currentTarget;
+    const subject = selectedScoreSubject();
+    if (!subject) {
+      showToast("请先在设置中添加科目");
+      return;
+    }
+    const button = $("#submit-tape-score");
+    if (button) button.disabled = true;
     try {
-      await api("/api/scores", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
-      form.reset();
-      if (form.id === "quick-score-form") closeQuickScore();
+      await api("/api/scores", { method: "POST", body: JSON.stringify({ subject_id: subject.id, score: scoreEntryValue() }) });
+      closeQuickScore();
       if (document.body.dataset.page === "settings") await loadSettings();
       else await loadDashboard();
       showToast("成绩已添加");
     } catch (error) { showToast(error.message); }
+    finally { if (button) button.disabled = false; }
   }
 
   function bindQuickScore() {
@@ -1361,8 +1502,9 @@
     $("#open-quick-score")?.addEventListener("click", openQuickScore);
     $("#close-quick-score")?.addEventListener("click", closeQuickScore);
     $("#quick-score-form")?.addEventListener("submit", submitScoreForm);
-    modal?.addEventListener("close", () => state.quickScoreReturnFocus?.focus?.());
-    modal?.addEventListener("click", (event) => {
+    modal.addEventListener("cancel", (event) => { event.preventDefault(); closeQuickScore(); });
+    modal.addEventListener("close", () => { modal.classList.remove("is-open"); state.quickScoreReturnFocus?.focus?.(); });
+    modal.addEventListener("click", (event) => {
       const bounds = modal.getBoundingClientRect();
       if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeQuickScore();
     });
@@ -1371,6 +1513,92 @@
         event.preventDefault();
         openQuickScore();
       }
+    });
+  }
+
+  function renderSubjectSettings(subjects) {
+    state.scoreEntry.subjects = subjects;
+    const target = $("#settings-subjects");
+    if (!target) return;
+    target.innerHTML = subjects.length ? subjects.map((subject) => `<form class="subject-settings-row" data-subject-id="${Number(subject.id)}"><input name="name" maxlength="24" value="${escapeHtml(subject.name)}" aria-label="科目名称"><input name="target" type="number" min="1" max="199" step="1" value="${Number(subject.target)}" aria-label="目标分"><button class="ui-button ui-button--secondary ui-button--sm" type="submit">保存</button><button class="ui-button ui-button--danger ui-button--sm" type="button" data-delete-subject>删除</button></form>`).join("") : '<div class="loading-row">还没有科目，请先添加一个。</div>';
+    target.querySelectorAll(".subject-settings-row").forEach((form) => {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        try {
+          await api(`/api/subjects/${form.dataset.subjectId}`, { method: "PATCH", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+          await loadSettings();
+          showToast("科目已保存");
+        } catch (error) { showToast(error.message); }
+      });
+      form.querySelector("[data-delete-subject]")?.addEventListener("click", async () => {
+        const name = new FormData(form).get("name");
+        const confirmed = await requestConfirmation({ title: "删除科目", message: `删除“${name}”会同时删除其专注事项；历史记录会保留。`, label: "删除科目", tone: "danger" });
+        if (!confirmed) return;
+        try {
+          await api(`/api/subjects/${form.dataset.subjectId}`, { method: "DELETE" });
+          await loadSettings();
+          showToast("科目已删除");
+        } catch (error) { showToast(error.message); }
+      });
+    });
+  }
+
+  function focusItemSubjectOptions(subjects, selectedId) {
+    return subjects.map((subject) => `<option value="${Number(subject.id)}"${Number(subject.id) === Number(selectedId) ? " selected" : ""}>${escapeHtml(subject.name)}</option>`).join("");
+  }
+
+  function renderFocusItemSettings(items, subjects) {
+    const target = $("#settings-focus-items");
+    const createSubject = $("#new-focus-item-subject");
+    const createForm = $("#focus-item-create-form");
+    if (createSubject) createSubject.innerHTML = focusItemSubjectOptions(subjects, subjects[0]?.id);
+    if (createForm) {
+      createForm.querySelectorAll("input, select, button").forEach((field) => {
+        field.disabled = !subjects.length;
+      });
+    }
+    if (!target) return;
+    if (!items.length) {
+      target.innerHTML = '<div class="loading-row">还没有专注事项，请先选择科目并添加。</div>';
+      return;
+    }
+    const rankOptions = (selectedRank) => items.map((_item, index) => `<option value="${index + 1}"${index + 1 === selectedRank ? " selected" : ""}>${index + 1}</option>`).join("");
+    target.innerHTML = items.map((item, index) => `<form class="focus-item-settings-row" data-focus-item-id="${Number(item.id)}"><select name="subject_id" aria-label="所属科目">${focusItemSubjectOptions(subjects, item.subject_id)}</select><input name="name" maxlength="24" value="${escapeHtml(item.name)}" aria-label="事项名称"><label class="focus-item-rank">顺序<select data-focus-item-rank aria-label="${escapeHtml(item.label)} 的顺序">${rankOptions(index + 1)}</select></label><button class="ui-button ui-button--secondary ui-button--sm" type="submit">保存</button><button class="ui-button ui-button--danger ui-button--sm" type="button" data-delete-focus-item>删除</button></form>`).join("");
+    target.querySelectorAll(".focus-item-settings-row").forEach((form) => {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        try {
+          await api(`/api/focus-items/${form.dataset.focusItemId}`, { method: "PATCH", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+          await loadSettings();
+          showToast("专注事项已保存");
+        } catch (error) { showToast(error.message); }
+      });
+      form.querySelector("[data-delete-focus-item]")?.addEventListener("click", async () => {
+        const name = new FormData(form).get("name");
+        const confirmed = await requestConfirmation({ title: "删除专注事项", message: `删除“${name}”后不能再启动新的专注，历史记录会保留。`, label: "删除事项", tone: "danger" });
+        if (!confirmed) return;
+        try {
+          await api(`/api/focus-items/${form.dataset.focusItemId}`, { method: "DELETE" });
+          await loadSettings();
+          showToast("专注事项已删除");
+        } catch (error) { showToast(error.message); }
+      });
+      form.querySelector("[data-focus-item-rank]")?.addEventListener("change", async (event) => {
+        const currentIndex = items.findIndex((item) => Number(item.id) === Number(form.dataset.focusItemId));
+        const destination = Number(event.currentTarget.value) - 1;
+        if (currentIndex < 0 || destination === currentIndex) return;
+        const ordered = [...items];
+        const [moved] = ordered.splice(currentIndex, 1);
+        ordered.splice(destination, 0, moved);
+        try {
+          await api("/api/focus-items/order", { method: "PUT", body: JSON.stringify({ focus_item_ids: ordered.map((item) => Number(item.id)) }) });
+          await loadSettings();
+          showToast("专注列表顺序已调整");
+        } catch (error) {
+          await loadSettings();
+          showToast(error.message);
+        }
+      });
     });
   }
 
@@ -1385,17 +1613,31 @@
       $("#heatmap-visible-hours").value = selectedHours.join(",");
       try {
         const payload = Object.fromEntries(new FormData(event.currentTarget));
-        payload.focus_subjects = $("#focus-subjects").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-        payload.focus_messages = $("#focus-messages").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
-          const parts = line.split(/[|｜]/);
-          return parts.length > 1 ? { category: parts.shift().trim(), text: parts.join("|").trim() } : { category: "专注提醒", text: line };
-        });
         await api("/api/settings", { method: "PATCH", body: JSON.stringify(payload) });
         await loadSettings();
         showToast("设置已保存");
       } catch (error) { showToast(error.message); }
     });
-    document.querySelector('[data-form="score"]')?.addEventListener("submit", submitScoreForm);
+    $("#subject-create-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      try {
+        await api("/api/subjects", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+        form.reset();
+        await loadSettings();
+        showToast("科目已添加");
+      } catch (error) { showToast(error.message); }
+    });
+    $("#focus-item-create-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      try {
+        await api("/api/focus-items", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+        form.reset();
+        await loadSettings();
+        showToast("专注事项已添加");
+      } catch (error) { showToast(error.message); }
+    });
     $("#generate-migration-code")?.addEventListener("click", generateMigrationCode);
     $("#copy-migration-code")?.addEventListener("click", async () => {
       try {

@@ -73,55 +73,104 @@ def summarize_today_focus(sessions: Iterable[tuple[datetime, datetime]], now: da
     return {"seconds": total_seconds, "count": count}
 
 
-def aggregate_focus_investment(sessions: Iterable[tuple[str, datetime, datetime]], now: datetime) -> dict:
-    session_rows = list(sessions)
-
-    def summarize(start: datetime, end: datetime) -> tuple[int, dict[str, int]]:
-        totals: dict[str, int] = {}
-        for subject, session_start, session_end in session_rows:
-            overlap_start = max(session_start.astimezone(now.tzinfo), start)
-            overlap_end = min(session_end.astimezone(now.tzinfo), end)
-            seconds = max(0, int((overlap_end - overlap_start).total_seconds()))
+def aggregate_focus_by_day(sessions: Iterable[tuple[str, datetime, datetime]], now: datetime) -> dict[str, dict[str, int]]:
+    """Split effective focus segments into local calendar-day subject totals."""
+    day_subjects: dict[str, dict[str, int]] = {}
+    for subject, session_start, session_end in sessions:
+        start = session_start.astimezone(now.tzinfo)
+        end = min(session_end.astimezone(now.tzinfo), now)
+        cursor = start
+        while cursor < end:
+            next_day = cursor.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            segment_end = min(next_day, end)
+            seconds = max(0, int((segment_end - cursor).total_seconds()))
             if seconds:
+                day_key = cursor.date().isoformat()
+                totals = day_subjects.setdefault(day_key, {})
+                totals[subject] = totals.get(subject, 0) + seconds
+            cursor = segment_end
+    return day_subjects
+
+
+def _subject_rows(totals: dict[str, int]) -> list[dict[str, int | str]]:
+    return [
+        {"subject": subject, "seconds": seconds}
+        for subject, seconds in sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def focus_leaderboard(sessions: Iterable[tuple[str, datetime, datetime]], now: datetime) -> dict:
+    """Rank every recorded local day by its total effective focus time."""
+    day_subjects = aggregate_focus_by_day(sessions, now)
+    totals = {day: sum(subjects.values()) for day, subjects in day_subjects.items() if sum(subjects.values()) > 0}
+    entries = []
+    for day, seconds in sorted(totals.items(), key=lambda item: (item[1], item[0]), reverse=True):
+        higher_totals = [value for value in totals.values() if value > seconds]
+        previous_seconds = min(higher_totals) if higher_totals else None
+        entries.append({
+            "date": day,
+            "seconds": seconds,
+            "rank": len(higher_totals) + 1,
+            "gap_to_previous_seconds": previous_seconds - seconds if previous_seconds is not None else None,
+        })
+    today_key = now.date().isoformat()
+    today = next((entry for entry in entries if entry["date"] == today_key), None)
+    day_count = len(entries)
+    if today:
+        today = {
+            **today,
+            "percentile": round((day_count - int(today["rank"]) + 1) / day_count * 100, 1) if day_count else 0,
+        }
+    else:
+        today = {
+            "date": today_key,
+            "seconds": 0,
+            "rank": None,
+            "gap_to_previous_seconds": None,
+            "percentile": 0,
+        }
+    return {"entries": entries, "day_count": day_count, "today": today}
+
+
+def aggregate_focus_investment(sessions: Iterable[tuple[str, datetime, datetime]], now: datetime) -> dict:
+    day_subjects = aggregate_focus_by_day(sessions, now)
+    recorded_days = sorted(
+        (day for day, subjects in day_subjects.items() if sum(subjects.values()) > 0),
+        reverse=True,
+    )
+    current_days = recorded_days[:7]
+    previous_days = recorded_days[7:14]
+
+    def summarize(days: list[str]) -> tuple[int, dict[str, int]]:
+        totals: dict[str, int] = {}
+        for day in days:
+            for subject, seconds in day_subjects.get(day, {}).items():
                 totals[subject] = totals.get(subject, 0) + seconds
         return sum(totals.values()), totals
 
-    current_start = now - timedelta(days=7)
-    previous_start = current_start - timedelta(days=7)
-    current_seconds, current_subjects = summarize(current_start, now)
-    previous_seconds, _ = summarize(previous_start, current_start)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_seconds, today_subject_totals = summarize(today_start, now)
-    yesterday_start = today_start - timedelta(days=1)
-    yesterday_seconds, _ = summarize(yesterday_start, today_start)
-    subjects = [
-        {"subject": subject, "seconds": seconds}
-        for subject, seconds in sorted(current_subjects.items(), key=lambda item: (-item[1], item[0]))
-    ]
-    all_subject_totals: dict[str, int] = {}
-    for subject, session_start, session_end in session_rows:
-        seconds = max(0, int((session_end.astimezone(now.tzinfo) - session_start.astimezone(now.tzinfo)).total_seconds()))
-        if seconds:
-            all_subject_totals[subject] = all_subject_totals.get(subject, 0) + seconds
-    all_subjects = [
-        {"subject": subject, "seconds": seconds}
-        for subject, seconds in sorted(all_subject_totals.items(), key=lambda item: (-item[1], item[0]))
-    ]
-    today_subjects = [
-        {"subject": subject, "seconds": seconds}
-        for subject, seconds in sorted(today_subject_totals.items(), key=lambda item: (-item[1], item[0]))
-    ]
+    current_seconds, current_subjects = summarize(current_days)
+    previous_seconds, _ = summarize(previous_days)
+    today_key = now.date().isoformat()
+    yesterday_key = (now - timedelta(days=1)).date().isoformat()
+    today_subject_totals = day_subjects.get(today_key, {})
+    today_seconds = sum(today_subject_totals.values())
+    yesterday_seconds = sum(day_subjects.get(yesterday_key, {}).values())
+    all_seconds, all_subject_totals = summarize(recorded_days)
     return {
         "current_seconds": current_seconds,
         "previous_seconds": previous_seconds,
-        "daily_average_seconds": current_seconds // 7,
-        "previous_daily_average_seconds": previous_seconds // 7,
+        "daily_average_seconds": current_seconds // len(current_days) if current_days else 0,
+        "previous_daily_average_seconds": previous_seconds // len(previous_days) if previous_days else 0,
+        "recorded_day_count": len(current_days),
+        "previous_recorded_day_count": len(previous_days),
+        "recorded_days": current_days,
+        "previous_recorded_days": previous_days,
         "today_seconds": today_seconds,
-        "today_subjects": today_subjects,
+        "today_subjects": _subject_rows(today_subject_totals),
         "yesterday_seconds": yesterday_seconds,
-        "subjects": subjects,
-        "all_time_seconds": sum(all_subject_totals.values()),
-        "all_time_subjects": all_subjects,
+        "subjects": _subject_rows(current_subjects),
+        "all_time_seconds": all_seconds,
+        "all_time_subjects": _subject_rows(all_subject_totals),
     }
 
 

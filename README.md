@@ -150,7 +150,7 @@ GET /api/migration/export
 X-Migration-Code: <一次性迁移码>
 ```
 
-迁移码有效期为 15 分钟，成功拉取后立即失效。接口返回版本化 JSON 数据包，包含设置、专注模式、全部专注与暂停记录、成绩和计划，不包含管理员密码或登录会话。生产环境必须通过 HTTPS 调用该接口。
+迁移码有效期为 15 分钟，成功拉取后立即失效。接口返回版本化 JSON 数据包，包含设置、科目、专注事项、全部专注与暂停记录、成绩和计划，不包含管理员密码或登录会话。生产环境必须通过 HTTPS 调用该接口。
 
 ## 9. 测试
 
@@ -162,14 +162,23 @@ node --check app/static/app.js
 
 ## 10. 更新版本
 
+涉及“科目—专注事项”层级迁移的版本，在切换候选 release 前、**重启服务前**必须完成只读预检。预检发现任意 `blocking` 或 `review` 风险时会以退出码 `2` 结束；此时不要迁移、重启或切换 release，保留 JSON 给负责人审查：
+
+预检通过或 review 项获得明确批准后，再做在线备份和演练迁移。完整的风险定义、备份、演练和审批证据要求见 [科目—专注事项层级迁移审查清单](docs/stable-subject-migration-review.md)。
+
+对于层级迁移版本，下面的 `restart` 不能直接执行：先依照审查清单停止服务，用 `scripts/migrate_subject_schema.py` 在单个 Python 进程中完成实际迁移、确认其 JSON 中 `foreign_key_check` 为空，再启动服务。
+
 ```bash
-cd /opt/408-dashboard/current
+set -euo pipefail
+cd /opt/408-dashboard/releases/<candidate-release>
 sudo git pull --ff-only origin main
+sudo -u www-data env PYTHONPATH=. /opt/408-dashboard/venv/bin/python \
+  scripts/preflight_subject_migration.py \
+  /opt/408-dashboard/shared/data/dashboard.sqlite3 --json
 sudo /opt/408-dashboard/venv/bin/pip install -r requirements.txt
 PYTHONPATH=. /opt/408-dashboard/venv/bin/python -m pytest tests/ -q
 node --check app/static/app.js
-sudo systemctl restart 408-dashboard.service
-sudo systemctl status 408-dashboard.service --no-pager -l
+# 层级迁移版本：此处停止；按审查清单完成备份、演练、单进程迁移与批准后，才可切换 release 并启动服务。
 ```
 
 更新前建议先备份数据库。

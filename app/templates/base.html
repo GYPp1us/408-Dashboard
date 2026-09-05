@@ -17,17 +17,19 @@
     </header>
     <main class="app-main">{% block content %}{% endblock %}</main>
   </div>
-  {% if not is_guest %}<dialog id="quick-score-modal" class="quick-score-dialog" aria-labelledby="quick-score-title">
-    <div class="quick-score-head"><div><small>QUICK ENTRY</small><h2 id="quick-score-title">录入模拟成绩</h2></div><button id="close-quick-score" class="ui-button ui-button--quiet ui-button--icon modal-close" type="button" title="关闭" aria-label="关闭">×</button></div>
+  {% if not is_guest %}<dialog id="quick-score-modal" class="quick-score-drawer" aria-labelledby="quick-score-title">
+    <div class="quick-score-head"><div><small>SCORE TAPE</small><h2 id="quick-score-title">录入模拟成绩</h2></div><button id="close-quick-score" class="ui-button ui-button--quiet ui-button--icon modal-close" type="button" title="关闭" aria-label="关闭">×</button></div>
     <form id="quick-score-form" class="quick-score-form">
-      <div class="quick-score-fields">
-        <label>科目<input id="quick-score-subject" name="subject" list="quick-score-subjects" placeholder="如 408、数学" autocomplete="off" required></label>
-        <label>提交日期<input id="quick-score-date" name="exam_date" type="date" required></label>
-        <label>本次成绩<input name="score" type="number" min="0" step="0.5" placeholder="0" required></label>
-        <label>目标成绩<input name="target" type="number" min="1" step="0.5" placeholder="目标分" required></label>
+      <p class="score-drawer-note">左右滑动每条纸带，使科目和数字落在中间高亮列。</p>
+      <div id="score-paper-bands" class="score-paper-bands" aria-label="成绩纸带选择器">
+        <i class="score-selection-guide" aria-hidden="true"></i>
+        <section class="score-paper-strip"><div class="score-paper-label"><span>科目</span><b id="score-selected-subject">--</b></div><div id="score-subject-strip" class="score-strip" data-score-strip="subject" role="listbox" tabindex="0" aria-label="选择科目"></div></section>
+        <section class="score-paper-strip"><div class="score-paper-label"><span>百位</span><b id="score-hundreds-value">0</b></div><div id="score-hundreds-strip" class="score-strip" data-score-strip="hundreds" role="listbox" tabindex="0" aria-label="选择成绩百位"></div></section>
+        <section class="score-paper-strip"><div class="score-paper-label"><span>十位</span><b id="score-tens-value">0</b></div><div id="score-tens-strip" class="score-strip" data-score-strip="tens" role="listbox" tabindex="0" aria-label="选择成绩十位"></div></section>
+        <section class="score-paper-strip"><div class="score-paper-label"><span>个位</span><b id="score-ones-value">0</b></div><div id="score-ones-strip" class="score-strip" data-score-strip="ones" role="listbox" tabindex="0" aria-label="选择成绩个位"></div></section>
       </div>
-      <datalist id="quick-score-subjects"><option value="408"></option><option value="数学"></option><option value="英语"></option><option value="政治"></option></datalist>
-      <div class="quick-score-actions"><span>Ctrl + N</span><button class="primary" type="submit">保存成绩</button></div>
+      <div class="score-entry-preview"><span>本次录入</span><strong id="score-entry-preview">-- · 000 分</strong><small id="score-entry-target">目标分请在设置中维护</small></div>
+      <div class="quick-score-actions"><span>Ctrl + N</span><button id="submit-tape-score" class="primary" type="submit">保存成绩</button></div>
     </form>
   </dialog>{% endif %}
   {% if not is_guest %}<dialog id="confirm-action-modal" class="confirm-dialog" aria-labelledby="confirm-action-title"><div class="confirm-dialog-head"><span class="confirm-dialog-mark">!</span><div><h2 id="confirm-action-title">请确认操作</h2><p id="confirm-action-message">此操作无法撤销。</p></div></div><div class="confirm-dialog-actions"><button id="confirm-action-cancel" class="ui-button ui-button--quiet" type="button">取消</button><button id="confirm-action-submit" class="ui-button ui-button--primary" type="button">确认</button></div></dialog>{% endif %}
