@@ -31,7 +31,9 @@ def test_heatmap_scale_and_current_time_art_are_fixed():
     image = ROOT / "app" / "static" / "current-time-art.jpg"
 
     assert image.is_file()
-    assert "grid-template-columns:minmax(200px,.8fr) minmax(330px,1.35fr) minmax(440px,1.85fr)" in css
+    assert "grid-template-columns:minmax(420px,1.15fr) minmax(330px,1.15fr) minmax(440px,1.7fr)" in css
+    assert "body { min-width:1280px" in css
+    assert ".active-mode-view { position:relative; width:100%" in css
     assert "--dashboard-panel-height:352px" in css
     assert ".focus-modes { display:grid; height:262px" in css
     assert ".heatmap" in css and "width:100%" in css
@@ -43,6 +45,8 @@ def test_heatmap_scale_and_current_time_art_are_fixed():
     assert 'classList.add("selected")' not in javascript
     assert "const gapRatio = .27" in javascript
     assert "cell * gapRatio" in javascript
+    assert "dayCount + (dayCount - 1) * gapRatio" in javascript
+    assert ".activity-switch { position:relative; z-index:2" in css
     assert 'background:url("current-time-art.jpg") right center/auto 100% no-repeat' in css
     assert "right:8px" in css
     assert "opacity:.8" in css
@@ -107,6 +111,9 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".focus-compare-trend { width:100%; padding:0 10px" in css
     assert ".focus-leaderboard { display:grid; grid-template-columns:minmax(0,4fr) minmax(108px,1fr)" in css
     assert ".focus-leaderboard-profile" in css
+    assert ".focus-leaderboard-metric strong { overflow:hidden; color:var(--ink); font-size:16px" in css
+    assert ".focus-profile-row { display:block; min-height:4px" in css
+    assert ".focus-profile-row.is-current i { height:4px" in css
     assert ".focus-profile-row.is-profitable i { background:var(--accent)" in css
     assert ".focus-profile-row.is-muted" in css
     assert ".focus-profile-row.is-current i" in css
