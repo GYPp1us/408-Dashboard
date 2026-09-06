@@ -15,14 +15,6 @@ class FocusBridge(private val activity: MainActivity) {
             val reduced = FocusStateReducer.reduce(store.read(), state, store.endedAcknowledgedCount())
             store.write(reduced)
             FocusService.sync(activity, reduced)
-            if (
-                reduced.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED) &&
-                !PermissionStatus.allRecommended(activity) &&
-                store.promptedSessionId() != reduced.sessionId
-            ) {
-                store.setPromptedSessionId(reduced.sessionId)
-                activity.openPermissionSetup()
-            }
         }
     }
 }

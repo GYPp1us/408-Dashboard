@@ -47,8 +47,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         })
-        webView.loadUrl(BuildConfig.DASHBOARD_URL)
-        if (!FocusStateStore(this).onboardingSeen()) openPermissionSetup()
+        val restored = savedInstanceState != null && webView.restoreState(savedInstanceState) != null
+        if (!restored) webView.loadUrl(restorableUrl(FocusStateStore(this).lastPageUrl()))
+        val store = FocusStateStore(this)
+        if (!store.onboardingSeen()) {
+            store.setOnboardingSeen()
+            openPermissionSetup()
+        }
     }
 
     private fun buildContent(): View {
@@ -57,15 +62,15 @@ class MainActivity : ComponentActivity() {
         root.addView(webView, FrameLayout.LayoutParams(-1, -1))
         permissionChip = Button(this).apply {
             text = "完善提醒权限"
-            textSize = 12f
+            textSize = 8f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.rgb(185, 74, 67))
             setOnClickListener { openPermissionSetup() }
         }
-        root.addView(permissionChip, FrameLayout.LayoutParams(-2, dp(40)).apply {
+        root.addView(permissionChip, FrameLayout.LayoutParams(-2, dp(26)).apply {
             gravity = Gravity.TOP or Gravity.END
-            topMargin = dp(8)
-            marginEnd = dp(8)
+            topMargin = dp(4)
+            marginEnd = dp(4)
         })
         return root
     }
@@ -78,7 +83,9 @@ class MainActivity : ComponentActivity() {
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             allowFileAccess = false
             allowContentAccess = false
+            cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
             setSupportMultipleWindows(false)
+            userAgentString = "$userAgentString MutsumiFocus/${BuildConfig.VERSION_NAME}"
         }
         webView.addJavascriptInterface(FocusBridge(this), "MutsumiAndroid")
         webView.webChromeClient = WebChromeClient()
@@ -90,7 +97,17 @@ class MainActivity : ComponentActivity() {
                 startActivity(Intent(Intent.ACTION_VIEW, target))
                 return true
             }
+
+            override fun onPageFinished(view: WebView, url: String) {
+                super.onPageFinished(view, url)
+                if (isTrustedUrl(url)) FocusStateStore(this@MainActivity).setLastPageUrl(url)
+            }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        webView.saveState(outState)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onResume() {
@@ -124,6 +141,15 @@ class MainActivity : ComponentActivity() {
 
     fun openPermissionSetup() {
         startActivity(Intent(this, PermissionSetupActivity::class.java))
+    }
+
+    private fun restorableUrl(candidate: String?): String =
+        candidate?.takeIf(::isTrustedUrl) ?: BuildConfig.DASHBOARD_URL
+
+    private fun isTrustedUrl(candidate: String): Boolean {
+        val configured = Uri.parse(BuildConfig.DASHBOARD_URL)
+        val target = Uri.parse(candidate)
+        return target.scheme == "https" && target.host == configured.host
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
