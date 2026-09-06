@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
   const DAILY_TARGET_SECONDS = 7 * 3600;
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
@@ -104,6 +104,83 @@
     toast.classList.add("show");
     window.clearTimeout(showToast.timer);
     showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2400);
+  }
+
+  function notifyNativeFocusState(active = state.dashboard?.focus?.active) {
+    if (!window.MutsumiAndroid || typeof window.MutsumiAndroid.syncFocusState !== "function") return;
+    const mode = state.restStartedAt ? "rest" : active?.paused_at ? "paused" : active ? "focusing" : state.recentlyEnded ? "ended" : "idle";
+    const payload = {
+      mode,
+      sessionId: Number(active?.id ?? state.recentlyEnded?.id ?? 0),
+      subject: active?.subject ?? state.recentlyEnded?.subject ?? "",
+      startedAtEpochMs: active?.started_at ? Date.parse(active.started_at) : 0,
+      pausedAtEpochMs: active?.paused_at ? Date.parse(active.paused_at) : 0,
+      endedAtEpochMs: state.recentlyEnded?.endedAt ?? 0,
+      elapsedSeconds: active ? focusElapsedSeconds(active) : Number(state.recentlyEnded?.elapsedSeconds || 0),
+      pageUrl: window.location.href,
+      baseUrl: window.location.origin,
+    };
+    const signature = JSON.stringify(payload);
+    if (signature === state.nativeStateSignature) return;
+    state.nativeStateSignature = signature;
+    try { window.MutsumiAndroid.syncFocusState(signature); }
+    catch (error) { console.warn("native_focus_sync_failed", error); }
+  }
+
+  function renderFocusStateOverlay(active = state.dashboard?.focus?.active) {
+    const overlay = $("#focus-state-overlay");
+    if (!overlay) return;
+    const resting = Boolean(state.restStartedAt);
+    const paused = Boolean(active?.paused_at);
+    overlay.hidden = !resting && !paused;
+    document.body.classList.toggle("is-resting", resting);
+    if (!resting && !paused) {
+      removeSecondTask("stateOverlay");
+      return;
+    }
+    $("#focus-state-overlay-kicker").textContent = resting ? "REST" : "PAUSED";
+    $("#focus-state-overlay-title").textContent = resting ? "正在休息" : `${active.subject} 已暂停`;
+    $("#focus-state-overlay-note").textContent = resting ? "点击任意位置结束休息" : "点击任意位置继续专注";
+    const startedAt = resting ? state.restStartedAt : Date.parse(active.paused_at);
+    setSecondTask("stateOverlay", (now) => {
+      $("#focus-state-overlay-timer").textContent = formatSeconds(Math.max(0, Math.floor((now - startedAt) / 1000)));
+    });
+  }
+
+  function startRest() {
+    if (state.dashboard?.focus?.active || state.restStartedAt) return;
+    state.restStartedAt = Date.now();
+    state.recentlyEnded = null;
+    try { window.localStorage.setItem("mutsumiRestStartedAt", String(state.restStartedAt)); } catch (_error) {}
+    renderFocusStateOverlay(null);
+    notifyNativeFocusState(null);
+  }
+
+  function exitRest() {
+    state.restStartedAt = null;
+    try { window.localStorage.removeItem("mutsumiRestStartedAt"); } catch (_error) {}
+    renderFocusStateOverlay(null);
+    notifyNativeFocusState(null);
+  }
+
+  async function exitFocusStateOverlay() {
+    if (state.restStartedAt) {
+      exitRest();
+      return;
+    }
+    if (state.dashboard?.focus?.active?.paused_at) await toggleFocusPause();
+  }
+
+  function bindFocusStateOverlay() {
+    document.querySelectorAll("[data-start-rest]").forEach((button) => button.addEventListener("click", startRest));
+    const overlay = $("#focus-state-overlay");
+    overlay?.addEventListener("click", exitFocusStateOverlay);
+    overlay?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        exitFocusStateOverlay();
+      }
+    });
   }
 
   function requestConfirmation({ title = "请确认操作", message = "此操作无法撤销。", label = "确认", tone = "primary" } = {}) {
@@ -796,6 +873,7 @@
     track.classList.add("armed");
     try {
       const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(track.dataset.focusItemId), mode: "专注", planned_minutes: 0, client_token: createClientToken() }) });
+      state.recentlyEnded = null;
       const today = state.dashboard?.focus?.today || [];
       state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session, today: [...today.filter((item) => item.id !== session.session.id), session.session] } };
       state.dashboardFetchedAt = Date.now();
@@ -865,6 +943,19 @@
 
   function applyFocusState(active, animate = false) {
     if (animate) animateLayout();
+    const previousActive = state.lastActiveSnapshot;
+    if (active) {
+      state.recentlyEnded = null;
+      if (state.restStartedAt) exitRest();
+    } else if (previousActive && !state.restStartedAt) {
+      state.recentlyEnded = {
+        id: previousActive.id,
+        subject: previousActive.subject,
+        endedAt: Date.now(),
+        elapsedSeconds: focusElapsedSeconds(previousActive),
+      };
+    }
+    state.lastActiveSnapshot = active ? { ...active } : null;
     if (active) {
       state.focusRecoverySessionId = active.id;
       closeFocusSummary();
@@ -873,6 +964,10 @@
     }
     document.body.classList.toggle("is-focusing", Boolean(active));
     document.body.classList.toggle("is-paused", Boolean(active?.paused_at));
+    const portraitRestEntry = $(".portrait-rest-entry");
+    if (portraitRestEntry) portraitRestEntry.hidden = Boolean(active);
+    renderFocusStateOverlay(active);
+    notifyNativeFocusState(active);
     syncScoreChartTheme(active);
     $("#idle-mode-view").hidden = Boolean(active);
     $("#active-mode-view").hidden = !active;
@@ -1674,6 +1769,10 @@
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
+    try {
+      const savedRest = Number(window.localStorage.getItem("mutsumiRestStartedAt"));
+      state.restStartedAt = Number.isFinite(savedRest) && savedRest > 0 ? savedRest : null;
+    } catch (_error) {}
     startAlignedSecondClock();
     ensureWakeLock();
     document.addEventListener("visibilitychange", () => {
@@ -1690,6 +1789,7 @@
     window.addEventListener("pagehide", () => sendForegroundHeartbeat(true));
     $("#close-focus-summary")?.addEventListener("click", closeFocusSummary);
     $("#toggle-focus-pause")?.addEventListener("click", toggleFocusPause);
+    bindFocusStateOverlay();
     bindQuickScore();
     bindInvestmentRange();
     initDragSettlement();
@@ -1707,5 +1807,6 @@
     } catch (error) { showToast(error.message); }
     startDashboardSync();
     startForegroundHeartbeat();
+    window.MutsumiWeb = { refresh: loadDashboard, endRest: exitRest };
   });
 })();

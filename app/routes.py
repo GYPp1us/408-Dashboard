@@ -564,6 +564,7 @@ def register_routes(app):
             return jsonify(record_foreground_heartbeat(
                 connection,
                 _now("UTC"),
+                user_id=None if is_guest() else current_user_id(),
                 session_id=session_id,
                 allow_recovery=payload.get("allow_recovery") is True,
             ))

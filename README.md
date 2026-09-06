@@ -2,6 +2,12 @@
 
 这是一个面向个人考研复习的横屏学习控制台，包含专注计时、学习窗口、月度热度图、模拟考趋势、访客只读面板和多设备状态同步。
 
+## Android / OriginOS 预览版
+
+仓库的 `android/` 目录包含 Android 8+ 客户端。它复用网页界面，并增加前台计时、后台心跳、通知操作、暂停/离开超时覆盖提醒，以及 vivo 本地原子通知和 Android 16 Live Update 的尽力适配。未获 vivo 场景认证时会降级为普通持续通知，不影响核心计时与提醒功能；不包含华为适配。
+
+构建、权限与无认证边界见 [Android README](android/README.md) 和 [OriginOS 原子岛说明](docs/originos-atomic-island.md)。
+
 本文以 Ubuntu、systemd、Nginx 和自有域名为例。应用只监听服务器回环地址，由 Nginx 提供公网 HTTP/HTTPS 服务。
 
 ## 1. 部署前准备

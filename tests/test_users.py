@@ -85,6 +85,37 @@ def test_usernames_are_indexed_friends_and_data_is_isolated(app):
     assert "delta_seconds" in friend_board[0]
 
 
+def test_foreground_heartbeat_only_updates_the_authenticated_users_session(app):
+    from datetime import datetime, timedelta, timezone
+
+    from app.db import connect
+
+    owner = login_owner(app)
+    alice = register(app, issue_code(owner), "alice", "alice@example.com")
+    bob = register(app, issue_code(owner), "bob", "bob@example.com")
+    alice_session = alice.post("/api/focus/start", json={"subject": "数学二轮", "mode": "专注"}).get_json()["session"]
+    bob_session = bob.post("/api/focus/start", json={"subject": "英语二轮", "mode": "专注"}).get_json()["session"]
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    connection = connect(app.config["DATABASE"])
+    connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE id IN (?, ?)", (stale, alice_session["id"], bob_session["id"]))
+    connection.commit()
+    connection.close()
+
+    heartbeat = alice.post("/api/focus/heartbeat", json={"session_id": alice_session["id"]})
+
+    assert heartbeat.status_code == 200
+    assert heartbeat.get_json()["session_id"] == alice_session["id"]
+    connection = connect(app.config["DATABASE"])
+    rows = connection.execute(
+        "SELECT id, last_foreground_at FROM focus_sessions WHERE id IN (?, ?) ORDER BY id",
+        (alice_session["id"], bob_session["id"]),
+    ).fetchall()
+    connection.close()
+    refreshed = {row["id"]: row["last_foreground_at"] for row in rows}
+    assert refreshed[alice_session["id"]] != stale
+    assert refreshed[bob_session["id"]] == stale
+
+
 def test_settings_are_initialized_from_owner_then_persisted_per_user(app):
     owner = login_owner(app)
     assert owner.patch("/api/settings", json={"morning_start": "07:30"}).status_code == 200
