@@ -59,6 +59,8 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'data-activity-view="heat"' in html
     assert 'data-activity-view="focus"' in html
     assert 'data-activity-view="score"' in html
+    assert "近 25 天专注热度" in html
+    assert html.index('class="activity-switch"') < html.index('id="activity-heat-view"')
     assert 'id="focus-state-overlay"' in html
     assert 'id="focus-state-overlay-title"' in html
     assert 'id="lock-focus"' in html
@@ -112,6 +114,13 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "subjectsWithActiveTime(baseline.today_subjects, extraSeconds)" in javascript
     assert "function renderFocusComparison(active)" in javascript
     assert "function renderFocusLeaderboard(leaderboard, activeExtra = 0)" in javascript
+    assert "const displayDays = (heatmap || []).slice(-25);" in javascript
+    assert "const step = 20 * 60;" in javascript
+    assert "entries.filter((entry) => entry.date !== today.date)" in javascript
+    assert 'switcher?.addEventListener("click", (event) =>' in javascript
+    assert 'event.target.closest("[data-activity-view]")' in javascript
+    assert '<span>时间</span>' not in javascript
+    assert '<span>diff</span>' not in javascript
     assert "历日排名" in javascript
     assert "async function startFocusItem(focusItemId)" in javascript
     assert "focus_item_id: Number(focusItemId)" in javascript
@@ -173,7 +182,7 @@ def test_browser_keeps_horizontal_dashboard_while_native_portrait_is_scoped():
     assert "@media (max-width:720px)" not in css
     assert "html.native-app .time-grid,html.native-app .dashboard-grid" in css
     assert "html.native-app .score-board,html.native-app .exam-countdown" in css
-    assert ".dashboard-grid { display:grid; grid-template-columns:minmax(200px,.8fr) minmax(330px,1.35fr) minmax(440px,1.85fr)" in css
+    assert ".dashboard-grid { display:grid; grid-template-columns:minmax(420px,1.15fr) minmax(330px,1.15fr) minmax(440px,1.7fr)" in css
 
 
 def test_android_user_agent_marks_only_the_native_shell(authenticated_client):

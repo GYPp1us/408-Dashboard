@@ -416,14 +416,16 @@
     const configuredHours = [...new Set((visibleHours || []).map(Number))].filter((hour) => Number.isInteger(hour) && hour >= 0 && hour < 24 && hour % 2 === 0);
     const shownHours = configuredHours.length ? configuredHours : Array.from({ length: 12 }, (_, index) => index * 2);
     const buckets = shownHours.map((hour) => hour / 2);
+    const displayDays = (heatmap || []).slice(-25);
+    const dayCount = displayDays.length || 25;
     hours.innerHTML = shownHours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("");
-    const max = Math.max(120, ...heatmap.flatMap((day) => buckets.map((bucket) => day[bucket] || 0)));
+    const max = Math.max(120, ...displayDays.flatMap((day) => buckets.map((bucket) => day[bucket] || 0)));
     const renderCell = (minutes, dayIndex, bucket) => {
       const level = minutes === 0 ? 0 : Math.min(4, Math.ceil((minutes / max) * 4));
       const startHour = bucket * 2;
-      return `<i class="heat-cell${level ? ` l${level}` : ""}" data-detail="最近第 ${30 - dayIndex} 天 ${String(startHour).padStart(2, "0")}:00-${String(startHour + 2).padStart(2, "0")}:00 · ${minutes} 分钟" title="${minutes} 分钟"></i>`;
+      return `<i class="heat-cell${level ? ` l${level}` : ""}" data-detail="最近第 ${dayCount - dayIndex} 天 ${String(startHour).padStart(2, "0")}:00-${String(startHour + 2).padStart(2, "0")}:00 · ${minutes} 分钟" title="${minutes} 分钟"></i>`;
     };
-    grid.innerHTML = buckets.map((bucket) => heatmap.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, bucket)).join("")).join("");
+    grid.innerHTML = buckets.map((bucket) => displayDays.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, bucket)).join("")).join("");
     grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
       $("#heat-detail").textContent = cell.dataset.detail;
     }));
@@ -431,9 +433,9 @@
       const width = grid.clientWidth;
       if (!width) return;
       const gapRatio = .27;
-      const cell = width / (30 + 29 * gapRatio);
+      const cell = width / (dayCount + (dayCount - 1) * gapRatio);
       const gap = cell * gapRatio;
-      grid.style.gridTemplateColumns = `repeat(30,${cell}px)`;
+      grid.style.gridTemplateColumns = `repeat(${dayCount},${cell}px)`;
       grid.style.gridTemplateRows = `repeat(${buckets.length},${cell}px)`;
       grid.style.gap = `${gap}px`;
       hours.style.gridTemplateRows = `repeat(${buckets.length},${cell}px)`;
@@ -508,8 +510,10 @@
   }
 
   function bindActivitySwitch() {
-    document.querySelectorAll("[data-activity-view]").forEach((button) => {
-      button.addEventListener("click", () => selectActivityView(button.dataset.activityView));
+    const switcher = $(".activity-switch");
+    switcher?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-activity-view]");
+      if (button && switcher.contains(button)) selectActivityView(button.dataset.activityView);
     });
   }
 
@@ -620,20 +624,20 @@
 
   function renderQuantileProfile(target, entries, today) {
     if (!target) return;
-    const maxSeconds = Math.max(today.seconds, ...entries.map((entry) => entry.seconds));
-    const step = Math.max(900, Math.ceil(maxSeconds / 8 / 900) * 900);
-    const bins = Array.from({ length: 8 }, (_value, index) => ({
-      lower: index * step,
-      count: entries.filter((entry) => entry.seconds >= index * step && entry.seconds < (index + 1) * step).length,
+    const historicalEntries = entries.filter((entry) => entry.date !== today.date);
+    const step = 20 * 60;
+    const maxSeconds = Math.max(Number(today.seconds || 0), 0, ...historicalEntries.map((entry) => Number(entry.seconds || 0)));
+    const binCount = Math.max(1, Math.floor(maxSeconds / step) + 1);
+    const bins = Array.from({ length: binCount }, (_value, index) => ({
+      count: historicalEntries.filter((entry) => entry.seconds >= index * step && entry.seconds < (index + 1) * step).length,
       index,
     }));
-    const current = Math.min(7, Math.floor(today.seconds / step));
-    const maxCount = Math.max(1, ...bins.map((bin) => bin.count));
+    const current = Math.min(binCount - 1, Math.floor(today.seconds / step));
+    const widthUnits = Math.max(5, ...bins.map((bin) => bin.count));
     target.innerHTML = bins.reverse().map((bin) => {
       const kind = bin.index < current ? " is-profitable" : bin.index > current ? " is-muted" : " is-current";
-      const width = Math.max(bin.count ? 12 : 2, (bin.count / maxCount) * 100);
-      const label = bin.lower >= 3600 ? `${Math.round(bin.lower / 360) / 10}h` : `${Math.round(bin.lower / 60)}m`;
-      return `<div class="focus-profile-row${kind}"><span>${label}</span><i style="width:${width}%"></i><b>${bin.count || ""}</b></div>`;
+      const width = bin.index === current ? 100 : (bin.count / widthUnits) * 100;
+      return `<div class="focus-profile-row${kind}"><i style="width:${width}%"></i></div>`;
     }).join("");
   }
 
@@ -642,7 +646,7 @@
       if (entry.isGap) return '<div class="focus-leaderboard-gap" aria-hidden="true">···</div>';
       const isToday = entry.date === today.date;
       const gapText = entry.rank === 1 ? "榜首" : `−${formatSeconds(Number(entry.gap_to_previous_seconds || 0))}`;
-      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}${animate ? " is-swapping" : ""}" data-leaderboard-date="${escapeHtml(entry.date)}"><div class="focus-leaderboard-identity"><time>${isToday ? "今天" : escapeHtml(String(entry.date).slice(5).replace("-", "/"))}</time><b>#${entry.rank}</b></div><div class="focus-leaderboard-metric"><span>时间</span><strong>${formatSeconds(entry.seconds)}</strong></div><div class="focus-leaderboard-metric"><span>diff</span><strong>${gapText}</strong></div></div>`;
+      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}${animate ? " is-swapping" : ""}" data-leaderboard-date="${escapeHtml(entry.date)}"><div class="focus-leaderboard-identity"><time>${isToday ? "今天" : escapeHtml(String(entry.date).slice(5).replace("-", "/"))}</time><b>#${entry.rank}</b></div><div class="focus-leaderboard-metric"><strong>${formatSeconds(entry.seconds)}</strong></div><div class="focus-leaderboard-metric"><strong>${gapText}</strong></div></div>`;
     }).join("");
   }
 
@@ -675,7 +679,7 @@
       rowsTarget.innerHTML = '<div class="loading-row">今天产生有效专注后会进入榜单。</div>';
       if (summary) summary.textContent = "今天尚未上榜";
       if (percentile) percentile.textContent = "--";
-      if (dayCountTarget) dayCountTarget.textContent = `${dayCount} 个记录日`;
+      if (dayCountTarget) dayCountTarget.textContent = `${dayCount} 个历史记录日`;
       if (profile) profile.replaceChildren();
       state.leaderboardRank = null;
       return;
@@ -684,7 +688,7 @@
     const gap = Number(today.gap_to_previous_seconds || 0);
     if (summary) summary.textContent = today.rank === 1 ? "今日暂列第 1 名" : `今日第 ${today.rank} 名 · 距上一名 ${formatSeconds(gap)}`;
     if (percentile) percentile.textContent = `${percent}%`;
-    if (dayCountTarget) dayCountTarget.textContent = `${dayCount} 个记录日`;
+    if (dayCountTarget) dayCountTarget.textContent = `${entries.filter((entry) => entry.date !== today.date).length} 个历史记录日`;
     renderQuantileProfile(profile, entries, today);
     const finalEntries = visibleLeaderboardEntries(entries, today);
     if (state.leaderboardTimer && state.leaderboardPendingRank === today.rank) return;
