@@ -1335,13 +1335,23 @@ def expire_unattended_focus(connection: sqlite3.Connection, now: datetime, timeo
 def record_foreground_heartbeat(
     connection: sqlite3.Connection,
     now: datetime,
+    user_id: int | None,
     session_id: int | None = None,
     allow_recovery: bool = False,
 ) -> dict[str, Any]:
     now_value = now.isoformat()
+    if user_id is None:
+        return {
+            "ok": True,
+            "session_id": None,
+            "status": None,
+            "ended_reason": None,
+            "recovered": False,
+        }
     connection.execute("BEGIN IMMEDIATE")
     active = connection.execute(
-        "SELECT id FROM focus_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1"
+        "SELECT id FROM focus_sessions WHERE status = 'active' AND user_id = ? ORDER BY id DESC LIMIT 1",
+        (user_id,),
     ).fetchone()
     recovered = False
     if active:
@@ -1352,8 +1362,8 @@ def record_foreground_heartbeat(
         session_id = int(active["id"])
     elif session_id is not None and allow_recovery:
         row = connection.execute(
-            "SELECT id FROM focus_sessions WHERE id = ? AND status = 'completed' AND ended_reason = 'foreground_timeout'",
-            (session_id,),
+            "SELECT id FROM focus_sessions WHERE id = ? AND user_id = ? AND status = 'completed' AND ended_reason = 'foreground_timeout'",
+            (session_id, user_id),
         ).fetchone()
         if row:
             connection.execute(
@@ -1362,8 +1372,8 @@ def record_foreground_heartbeat(
             )
             recovered = True
     row = connection.execute(
-        "SELECT id, status, ended_reason FROM focus_sessions WHERE id = ?",
-        (session_id,),
+        "SELECT id, status, ended_reason FROM focus_sessions WHERE id = ? AND user_id = ?",
+        (session_id, user_id),
     ).fetchone() if session_id is not None else None
     connection.commit()
     return {

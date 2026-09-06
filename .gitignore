@@ -11,3 +11,9 @@ dist/
 build/
 *.egg-info/
 node_modules/
+.tmp/
+android/.gradle/
+android/local.properties
+android/**/build/
+.signing/
+artifacts/

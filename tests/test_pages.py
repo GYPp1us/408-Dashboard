@@ -53,6 +53,9 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="focus-leaderboard-chips"' in html
     assert 'id="toggle-focus-pause"' in html
     assert 'id="focus-pause-icon">暂停</span>' in html
+    assert 'id="start-rest"' in html
+    assert 'id="focus-state-overlay"' in html
+    assert 'id="focus-state-overlay-title"' in html
     assert 'id="lock-focus"' in html
     assert 'id="focus-trust-state"' in html
     assert 'id="sync-warning"' in html
@@ -114,6 +117,11 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "Math.log1p(Math.abs(delta) / 60) / Math.log1p(480)" in javascript
     assert "function focusElapsedSeconds(session, now = Date.now())" in javascript
     assert 'api("/api/focus/pause"' in javascript
+    assert "function startRest()" in javascript
+    assert "function exitFocusStateOverlay()" in javascript
+    assert "function notifyNativeFocusState" in javascript
+    assert "window.MutsumiAndroid" in javascript
+    assert "portraitRestEntry.hidden = Boolean(active)" in javascript
     assert 'api("/api/focus/lock"' in javascript
     assert 'api("/api/daily-settlement"' in javascript
     assert "DAILY_TARGET_SECONDS = 7 * 3600" in javascript
@@ -148,6 +156,18 @@ def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authentic
     assert 'setSecondTask("investment"' in javascript
     assert 'setSecondTask("focusComparison"' in javascript
     assert "setInterval(tick, 1000)" not in javascript
+
+
+def test_portrait_dashboard_is_a_single_column_and_hides_status_details():
+    from pathlib import Path
+
+    css = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert "@media (orientation:portrait)" in css
+    assert "grid-template-columns:1fr" in css
+    assert ".score-board,.exam-countdown,.today-study,.console-date" in css
+    assert ".portrait-rest-entry" in css
+    assert ".site-home-hero { flex-direction:column" in css
 
 
 def test_focus_client_token_has_legacy_browser_fallbacks(authenticated_client):

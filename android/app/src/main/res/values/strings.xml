@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mutsumi Focus</string>
+    <string name="accessibility_label">Mutsumi 专注提醒覆盖层</string>
+    <string name="accessibility_description">仅在暂停或停止专注超时后显示用户要求的提醒遮罩；不读取屏幕内容，不执行手势，不操作其他应用。</string>
+</resources>
