@@ -7,7 +7,7 @@
 1. vivo 本地原子通知：在 vivo/iQOO 设备上写入官方 `notification.superx.*` 扩展字段。
 2. Android 16 Live Update：使用 `Notification.ProgressStyle` 和 `FLAG_PROMOTED_ONGOING`。
 3. Android 持续前台通知：所有 Android 8+ 设备均可使用，含继续、暂停、结束操作。
-4. 超时提醒：优先使用不读取窗口内容的无障碍覆盖层，其次使用悬浮窗，最后退化为高优先级通知。
+4. 超时提醒：优先使用应用悬浮层，其次使用不读取窗口内容的可选无障碍覆盖层，最后退化为高优先级通知。
 
 没有 vivo 场景认证并不意味着全部不可用。本地通知调用、WebView、前台服务、心跳、通知操作、覆盖层提醒都不依赖 vivo 认证；但原子岛形态是否真正展示仍由系统按包名和 `scene` 权限判定。未授权时 `showNotify=true` 会保留普通通知兜底。
 

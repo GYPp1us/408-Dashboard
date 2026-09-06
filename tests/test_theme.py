@@ -31,7 +31,9 @@ def test_heatmap_scale_and_current_time_art_are_fixed():
     image = ROOT / "app" / "static" / "current-time-art.jpg"
 
     assert image.is_file()
-    assert "minmax(0,40.5%)" in css
+    assert "grid-template-columns:minmax(200px,.8fr) minmax(330px,1.35fr) minmax(440px,1.85fr)" in css
+    assert "--dashboard-panel-height:352px" in css
+    assert ".focus-modes { display:grid; height:262px" in css
     assert ".heatmap" in css and "width:100%" in css
     assert ".heat-grid" in css and "gap:3.5px; width:100%" in css
     assert ".heat-hours" in css and "gap:3.5px" in css
@@ -39,6 +41,8 @@ def test_heatmap_scale_and_current_time_art_are_fixed():
     assert "user-select:none" in css
     assert ".heat-cell.selected" not in css
     assert 'classList.add("selected")' not in javascript
+    assert "const gapRatio = .27" in javascript
+    assert "cell * gapRatio" in javascript
     assert 'background:url("current-time-art.jpg") right center/auto 100% no-repeat' in css
     assert "right:8px" in css
     assert "opacity:.8" in css
@@ -93,23 +97,21 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".investment-trend.down { background:#faebe8; color:var(--score-negative)" in css
     assert ".focus-comparison-view.ahead .focus-compare-trend" in css
     assert ".focus-comparison-view.behind .focus-compare-trend" in css
-    assert ".focus-diff-track { position:relative; height:14px" in css
-    assert ".focus-diff-track > span" in css and "border-radius:0" in css
     assert "--diff-positive" not in css and "--diff-negative" not in css
-    assert ".focus-comparison-view.ahead .focus-diff-track > span { border-radius:0 4px 4px 0; background:var(--accent)" in css
-    assert ".focus-comparison-view.behind .focus-diff-track > span { border-radius:4px 0 0 4px; background:#a8afb5" in css
     assert ".focus-comparison-view.ahead .focus-compare-trend { background:#e7f3ef; color:var(--score-positive)" in css
     assert ".focus-comparison-view.behind .focus-compare-trend { background:#faebe8; color:var(--score-negative)" in css
-    assert ".focus-diff-scale span:nth-child(2) { left:22.2%" in css
-    assert ".focus-diff-scale span:nth-child(4) { left:77.8%" in css
-    assert ".focus-diff-track em" not in css
+    assert ".focus-diff-track" not in css
+    assert ".focus-diff-scale" not in css
     assert ".score-row em.good { color:var(--score-positive)" in css
     assert ".score-row em.bad { color:var(--score-negative)" in css
     assert ".focus-compare-trend { width:100%; padding:0 10px" in css
-    assert ".focus-leaderboard { display:grid; grid-template-columns:minmax(0,8fr) minmax(84px,2fr)" in css
-    assert ".focus-leaderboard-chips" in css
-    assert "@media (max-width:560px)" in css and ".focus-leaderboard-quantile { display:none" in css
-    assert ".mode-panel,.investment-panel,.activity-panel { grid-column:1; grid-row:auto; }" in css
+    assert ".focus-leaderboard { display:grid; grid-template-columns:minmax(0,4fr) minmax(108px,1fr)" in css
+    assert ".focus-leaderboard-profile" in css
+    assert ".focus-profile-row.is-profitable i { background:var(--accent)" in css
+    assert ".focus-profile-row.is-muted" in css
+    assert ".focus-profile-row.is-current i" in css
+    assert "@media (max-width:560px)" not in css
+    assert "html.native-app .activity-panel,html.native-app .investment-panel,html.native-app .mode-panel" in css
 
 
 def test_settings_page_uses_modern_two_column_editor_layout():

@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN"{% if 'MutsumiFocus/' in request.headers.get('User-Agent', '') %} class="native-app"{% endif %}>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale={% if 'MutsumiFocus/' in request.headers.get('User-Agent', '') %}0.5, minimum-scale=0.5{% else %}1{% endif %}">
   <title>{% block title %}408 Focus Console{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
@@ -30,6 +30,19 @@
       </div>
       <div class="score-entry-preview"><span>本次录入</span><strong id="score-entry-preview">-- · 000 分</strong><small id="score-entry-target">目标分请在设置中维护</small></div>
       <div class="quick-score-actions"><span>Ctrl + N</span><button id="submit-tape-score" class="primary" type="submit">保存成绩</button></div>
+    </form>
+  </dialog>{% endif %}
+  {% if not is_guest %}<dialog id="focus-launch-modal" class="quick-score-drawer focus-launch-drawer" aria-labelledby="focus-launch-title">
+    <div class="quick-score-head"><div><small>FOCUS TAPE</small><h2 id="focus-launch-title">启动其他专注</h2></div><button id="close-focus-launch" class="ui-button ui-button--quiet ui-button--icon modal-close" type="button" title="关闭" aria-label="关闭">×</button></div>
+    <form id="focus-launch-form" class="quick-score-form">
+      <p class="score-drawer-note">先选择科目，再从第二条纸带选择该科目下的项目。</p>
+      <div class="score-paper-bands" aria-label="专注科目与项目纸带选择器">
+        <i class="score-selection-guide" aria-hidden="true"></i>
+        <section class="score-paper-strip"><div class="score-paper-label"><span>科目</span><b id="focus-selected-subject">--</b></div><div id="focus-subject-strip" class="score-strip" data-focus-strip="subject" role="listbox" tabindex="0" aria-label="选择专注科目"></div></section>
+        <section class="score-paper-strip"><div class="score-paper-label"><span>项目</span><b id="focus-selected-item">--</b></div><div id="focus-item-strip" class="score-strip" data-focus-strip="item" role="listbox" tabindex="0" aria-label="选择专注项目"></div></section>
+      </div>
+      <div class="score-entry-preview"><span>即将开始</span><strong id="focus-entry-preview">请选择项目</strong><button id="toggle-focus-pin" class="ui-button ui-button--quiet focus-pin-toggle" type="button" aria-pressed="false">☆ 固定到快捷启动</button></div>
+      <div class="quick-score-actions"><span>固定项目优先，其余按最近使用补足</span><button id="submit-focus-launch" class="primary" type="submit">开始专注</button></div>
     </form>
   </dialog>{% endif %}
   {% if not is_guest %}<dialog id="confirm-action-modal" class="confirm-dialog" aria-labelledby="confirm-action-title"><div class="confirm-dialog-head"><span class="confirm-dialog-mark">!</span><div><h2 id="confirm-action-title">请确认操作</h2><p id="confirm-action-message">此操作无法撤销。</p></div></div><div class="confirm-dialog-actions"><button id="confirm-action-cancel" class="ui-button ui-button--quiet" type="button">取消</button><button id="confirm-action-submit" class="ui-button ui-button--primary" type="button">确认</button></div></dialog>{% endif %}

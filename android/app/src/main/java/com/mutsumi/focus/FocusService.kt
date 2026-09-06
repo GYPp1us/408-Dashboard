@@ -19,7 +19,8 @@ class FocusService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val networkExecutor = Executors.newSingleThreadExecutor()
     private var currentReminder: ReminderKind? = null
-    private var lastHeartbeatAt = 0L
+    private var lastServerSyncAt = 0L
+    private var serverSyncInFlight = false
     private var liveSessionId = 0L
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -28,7 +29,7 @@ class FocusService : Service() {
             val state = store.read()
             if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) {
                 refreshWakeLock()
-                maybeSendHeartbeat(state)
+                maybeSyncServer(state)
                 checkReminder(state)
                 handler.postDelayed(this, TICK_MS)
             } else {
@@ -103,17 +104,29 @@ class FocusService : Service() {
         }
     }
 
-    private fun maybeSendHeartbeat(state: FocusRuntimeState) {
-        if (state.mode !in setOf(FocusMode.FOCUSING, FocusMode.PAUSED) || state.sessionId <= 0) return
+    private fun maybeSyncServer(state: FocusRuntimeState) {
         val now = System.currentTimeMillis()
-        if (now - lastHeartbeatAt < HEARTBEAT_MS) return
-        lastHeartbeatAt = now
+        if (serverSyncInFlight || now - lastServerSyncAt < SERVER_SYNC_MS) return
+        lastServerSyncAt = now
+        serverSyncInFlight = true
         networkExecutor.execute {
-            val result = FocusApi.heartbeat(state)
-            if (result.status == 401 || result.status == 403) {
-                handler.post {
+            val heartbeat = if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED) && state.sessionId > 0) {
+                FocusApi.heartbeat(state)
+            } else null
+            val remote = FocusApi.fetchState(state)
+            handler.post {
+                serverSyncInFlight = false
+                if (heartbeat?.status == 401 || heartbeat?.status == 403 || remote.status == 401 || remote.status == 403) {
                     store.write(FocusRuntimeState())
                     stopRuntime(removeNotification = true)
+                    return@post
+                }
+                val incoming = remote.state
+                if (remote.successful && incoming != null) {
+                    val reduced = FocusStateReducer.reduce(store.read(), incoming, store.endedAcknowledgedCount())
+                    store.write(reduced)
+                    applyState(reduced)
+                    sendBroadcast(Intent(ACTION_REFRESH_WEB).setPackage(packageName))
                 }
             }
         }
@@ -173,8 +186,8 @@ class FocusService : Service() {
         currentReminder = due.kind
         val onContinue = { acknowledgeReminder(due.kind, openApp = false) }
         val onOpen = { acknowledgeReminder(due.kind, openApp = true) }
-        val shown = FocusAccessibilityService.show(due.kind, onContinue, onOpen) ||
-            applicationOverlay.show(due.kind, onContinue, onOpen)
+        val shown = applicationOverlay.show(due.kind, onContinue, onOpen) ||
+            FocusAccessibilityService.show(due.kind, onContinue, onOpen)
         if (!shown) {
             notificationManager.notify(
                 OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID,
@@ -248,7 +261,7 @@ class FocusService : Service() {
         private const val ACTION_SYNC = "com.mutsumi.focus.SYNC"
         private const val ACTION_CHECK = "com.mutsumi.focus.CHECK"
         private const val TICK_MS = 15_000L
-        private const val HEARTBEAT_MS = 15_000L
+        private const val SERVER_SYNC_MS = 15_000L
         private const val WAKE_LOCK_WINDOW_MS = 10 * 60_000L
 
         fun sync(context: Context, state: FocusRuntimeState) {

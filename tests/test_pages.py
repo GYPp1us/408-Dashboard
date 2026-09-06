@@ -42,18 +42,23 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "7h 标准" in html
     assert html.index("今日截至当前") < html.index("投入最多的三个科目") < html.index("近七个记录日日均专注")
     assert 'id="focus-comparison-view"' in html
-    assert 'id="focus-diff-track"' in html
-    assert 'id="focus-diff-fill"' in html
+    assert 'id="focus-diff-track"' not in html
+    assert 'id="focus-diff-fill"' not in html
     assert 'id="focus-compare-time" class="focus-compare-time">和昨天相比</small>' in html
     assert "截至 --:--:--" not in html
     assert 'id="focus-compare-baseline"' not in html
-    assert "−30m" in html and "+30m" in html
+    assert "−30m" not in html and "+30m" not in html
     assert 'id="focus-message-card"' not in html
     assert 'id="focus-leaderboard"' in html
-    assert 'id="focus-leaderboard-chips"' in html
+    assert 'id="focus-leaderboard-profile"' in html
     assert 'id="toggle-focus-pause"' in html
     assert 'id="focus-pause-icon">暂停</span>' in html
     assert 'id="start-rest"' in html
+    assert 'id="open-focus-launch"' in html
+    assert 'id="focus-launch-modal"' in html
+    assert 'data-activity-view="heat"' in html
+    assert 'data-activity-view="focus"' in html
+    assert 'data-activity-view="score"' in html
     assert 'id="focus-state-overlay"' in html
     assert 'id="focus-state-overlay-title"' in html
     assert 'id="lock-focus"' in html
@@ -74,8 +79,8 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "上午学习窗口 · 距离午休" not in html
     assert "focus-summary" in html
     assert "session-goal-chart" in html
-    assert "today-subject-chart" in html
-    assert "summary-today-total" in html
+    assert "today-subject-chart" not in html
+    assert "summary-today-total" not in html
     assert "rest-timer" in html
     assert "长期计划" not in html
     assert "时间窗口、专注状态和长期数据在同一个工作面完成过渡。" not in html
@@ -108,20 +113,20 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "function renderFocusComparison(active)" in javascript
     assert "function renderFocusLeaderboard(leaderboard, activeExtra = 0)" in javascript
     assert "历日排名" in javascript
-    assert 'focus_item_id: Number(track.dataset.focusItemId)' in javascript
+    assert "async function startFocusItem(focusItemId)" in javascript
+    assert "focus_item_id: Number(focusItemId)" in javascript
     assert 'id="score-paper-bands"' in authenticated_client.get("/owner").get_data(as_text=True)
     assert "function renderScoreEntry()" in javascript
     assert "function setScoreStripSelection(strip, option)" in javascript
     assert "function syncScoreStripSelection(strip, snapToSelection = false)" in javascript
     assert "function workWindowProgress(now, windows)" in javascript
-    assert "Math.log1p(Math.abs(delta) / 60) / Math.log1p(480)" in javascript
     assert "function focusElapsedSeconds(session, now = Date.now())" in javascript
     assert 'api("/api/focus/pause"' in javascript
     assert "function startRest()" in javascript
     assert "function exitFocusStateOverlay()" in javascript
     assert "function notifyNativeFocusState" in javascript
     assert "window.MutsumiAndroid" in javascript
-    assert "portraitRestEntry.hidden = Boolean(active)" in javascript
+    assert "portraitRestEntry.hidden = Boolean(active)" not in javascript
     assert 'api("/api/focus/lock"' in javascript
     assert 'api("/api/daily-settlement"' in javascript
     assert "DAILY_TARGET_SECONDS = 7 * 3600" in javascript
@@ -158,16 +163,29 @@ def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authentic
     assert "setInterval(tick, 1000)" not in javascript
 
 
-def test_portrait_dashboard_is_a_single_column_and_hides_status_details():
+def test_browser_keeps_horizontal_dashboard_while_native_portrait_is_scoped():
     from pathlib import Path
 
     css = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
 
     assert "@media (orientation:portrait)" in css
-    assert "grid-template-columns:1fr" in css
-    assert ".score-board,.exam-countdown,.today-study,.console-date" in css
-    assert ".portrait-rest-entry" in css
-    assert ".site-home-hero { flex-direction:column" in css
+    assert "@media (max-width:1099px)" not in css
+    assert "@media (max-width:720px)" not in css
+    assert "html.native-app .time-grid,html.native-app .dashboard-grid" in css
+    assert "html.native-app .score-board,html.native-app .exam-countdown" in css
+    assert ".dashboard-grid { display:grid; grid-template-columns:minmax(200px,.8fr) minmax(330px,1.35fr) minmax(440px,1.85fr)" in css
+
+
+def test_android_user_agent_marks_only_the_native_shell(authenticated_client):
+    browser = authenticated_client.get("/owner").get_data(as_text=True)
+    native = authenticated_client.get(
+        "/owner",
+        headers={"User-Agent": "Mozilla/5.0 MutsumiFocus/0.2.0"},
+    ).get_data(as_text=True)
+
+    assert '<html lang="zh-CN">' in browser
+    assert '<html lang="zh-CN" class="native-app">' in native
+    assert "initial-scale=0.5, minimum-scale=0.5" in native
 
 
 def test_focus_client_token_has_legacy_browser_fallbacks(authenticated_client):

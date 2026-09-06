@@ -58,9 +58,9 @@ class FocusStateStore(context: Context) {
         preferences.edit().putBoolean("onboarding_seen", true).apply()
     }
 
-    fun promptedSessionId(): Long = preferences.getLong("prompted_session", -1)
+    fun lastPageUrl(): String? = preferences.getString("last_page_url", null)
 
-    fun setPromptedSessionId(sessionId: Long) {
-        preferences.edit().putLong("prompted_session", sessionId).apply()
+    fun setLastPageUrl(url: String) {
+        preferences.edit().putString("last_page_url", url).apply()
     }
 }

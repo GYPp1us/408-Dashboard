@@ -4,6 +4,7 @@ import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
@@ -28,12 +29,17 @@ object PermissionStatus {
     fun batteryUnrestricted(context: Context): Boolean =
         context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
 
-    fun promotedNotifications(context: Context): Boolean =
-        Build.VERSION.SDK_INT < 36 || context.getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
+    fun promotedNotifications(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 36) return true
+        val settingsIntent = Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        return settingsIntent.resolveActivity(context.packageManager) == null ||
+            context.getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
+    }
 
     fun reminderOverlayAvailable(context: Context): Boolean = accessibility(context) || overlay(context)
 
     fun allRecommended(context: Context): Boolean =
-        notifications(context) && overlay(context) && accessibility(context) &&
-            batteryUnrestricted(context) && promotedNotifications(context)
+        notifications(context) && overlay(context) && batteryUnrestricted(context) &&
+            promotedNotifications(context)
 }

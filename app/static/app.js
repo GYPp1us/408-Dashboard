@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "heat", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
   const DAILY_TARGET_SECONDS = 7 * 3600;
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
@@ -21,6 +21,7 @@
   const formatMinutes = (minutes) => formatSeconds(Math.max(0, Math.round(minutes * 60)));
   const formatSignedSeconds = (seconds) => `${seconds > 0 ? "+" : seconds < 0 ? "−" : "±"}${formatSeconds(Math.abs(seconds))}`;
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+  const QUICK_FOCUS_STORAGE = "mutsumiQuickFocusV2";
 
   function focusElapsedSeconds(session, now = Date.now()) {
     if (!session?.started_at) return 0;
@@ -415,9 +416,6 @@
     const configuredHours = [...new Set((visibleHours || []).map(Number))].filter((hour) => Number.isInteger(hour) && hour >= 0 && hour < 24 && hour % 2 === 0);
     const shownHours = configuredHours.length ? configuredHours : Array.from({ length: 12 }, (_, index) => index * 2);
     const buckets = shownHours.map((hour) => hour / 2);
-    const rowTemplate = `repeat(${buckets.length},1fr)`;
-    hours.style.gridTemplateRows = rowTemplate;
-    grid.style.gridTemplateRows = rowTemplate;
     hours.innerHTML = shownHours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("");
     const max = Math.max(120, ...heatmap.flatMap((day) => buckets.map((bucket) => day[bucket] || 0)));
     const renderCell = (minutes, dayIndex, bucket) => {
@@ -429,6 +427,90 @@
     grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
       $("#heat-detail").textContent = cell.dataset.detail;
     }));
+    const updateGeometry = () => {
+      const width = grid.clientWidth;
+      if (!width) return;
+      const gapRatio = .27;
+      const cell = width / (30 + 29 * gapRatio);
+      const gap = cell * gapRatio;
+      grid.style.gridTemplateColumns = `repeat(30,${cell}px)`;
+      grid.style.gridTemplateRows = `repeat(${buckets.length},${cell}px)`;
+      grid.style.gap = `${gap}px`;
+      hours.style.gridTemplateRows = `repeat(${buckets.length},${cell}px)`;
+      hours.style.gap = `${gap}px`;
+    };
+    state.heatGeometryUpdate = updateGeometry;
+    state.heatResizeObserver?.disconnect();
+    if (window.ResizeObserver) {
+      state.heatResizeObserver = new ResizeObserver(updateGeometry);
+      state.heatResizeObserver.observe(grid);
+    }
+    requestAnimationFrame(updateGeometry);
+  }
+
+  function renderFocusTrendChart(leaderboard) {
+    const canvas = $("#focus-trend-chart");
+    const empty = $("#focus-trend-empty");
+    if (!canvas || !empty || !window.Chart) return;
+    state.focusTrendChart?.destroy();
+    state.focusTrendChart = null;
+    const entries = (leaderboard?.entries || [])
+      .filter((entry) => Number(entry.seconds || 0) > 0)
+      .sort((left, right) => String(left.date).localeCompare(String(right.date)))
+      .slice(-14);
+    canvas.hidden = !entries.length;
+    empty.hidden = Boolean(entries.length);
+    if (!entries.length) return;
+    const palette = getThemePalette();
+    state.focusTrendChart = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: entries.map((entry) => String(entry.date).slice(5).replace("-", "/")),
+        datasets: [{
+          data: entries.map((entry) => Math.round(Number(entry.seconds) / 60)),
+          borderColor: palette[0],
+          backgroundColor: `${palette[0]}26`,
+          fill: true,
+          tension: .3,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => formatMinutes(context.raw) } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: "#758079", maxRotation: 0, autoSkip: true } },
+          y: { beginAtZero: true, grid: { color: "rgba(117,128,121,.13)" }, ticks: { color: "#758079", callback: (value) => `${Math.round(Number(value) / 60)}h` } },
+        },
+        animation: { duration: 320 },
+      },
+    });
+  }
+
+  function selectActivityView(name) {
+    state.activityView = ["heat", "focus", "score"].includes(name) ? name : "heat";
+    document.querySelectorAll("[data-activity-view-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.activityViewPanel !== state.activityView;
+    });
+    document.querySelectorAll("[data-activity-view]").forEach((button) => {
+      const selected = button.dataset.activityView === state.activityView;
+      button.classList.toggle("is-active", selected);
+      button.setAttribute("aria-selected", String(selected));
+    });
+    requestAnimationFrame(() => {
+      if (state.activityView === "focus") state.focusTrendChart?.resize();
+      if (state.activityView === "score") state.scoreChart?.resize();
+      if (state.activityView === "heat") state.heatGeometryUpdate?.();
+    });
+  }
+
+  function bindActivitySwitch() {
+    document.querySelectorAll("[data-activity-view]").forEach((button) => {
+      button.addEventListener("click", () => selectActivityView(button.dataset.activityView));
+    });
   }
 
   function renderScores(scores, selector = "#score-table") {
@@ -521,15 +603,47 @@
       view.classList.toggle("behind", delta < 0);
       $("#focus-compare-today").textContent = formatSeconds(todaySeconds);
       $("#focus-compare-trend").textContent = delta > 0 ? `提前 +${formatSeconds(delta)}` : delta < 0 ? `落后 −${formatSeconds(Math.abs(delta))}` : "持平 ±00:00:00";
-      const logRatio = Math.min(1, Math.log1p(Math.abs(delta) / 60) / Math.log1p(480));
-      const diffWidth = logRatio * 50;
-      const diffFill = $("#focus-diff-fill");
-      diffFill.style.left = `${delta < 0 ? 50 - diffWidth : 50}%`;
-      diffFill.style.width = `${diffWidth}%`;
-      $("#focus-diff-track").setAttribute("aria-label", `今日与昨日工作窗折算基线相差 ${delta >= 0 ? "+" : "-"}${formatSeconds(Math.abs(delta))}`);
       renderFocusLeaderboard(state.dashboard?.focus_leaderboard, extraSeconds);
     };
     setSecondTask("focusComparison", tick);
+  }
+
+  function visibleLeaderboardEntries(entries, today) {
+    if (today.rank <= 6) return entries.filter((entry) => entry.rank <= 6).slice(0, 6);
+    const first = entries.slice(0, 3);
+    const previous = [...entries].reverse().find((entry) => entry.rank < today.rank);
+    const result = [...first];
+    if (previous && !result.some((entry) => entry.date === previous.date)) result.push({ isGap: true }, previous);
+    if (!result.some((entry) => entry.date === today.date)) result.push(today);
+    return result;
+  }
+
+  function renderQuantileProfile(target, entries, today) {
+    if (!target) return;
+    const maxSeconds = Math.max(today.seconds, ...entries.map((entry) => entry.seconds));
+    const step = Math.max(900, Math.ceil(maxSeconds / 8 / 900) * 900);
+    const bins = Array.from({ length: 8 }, (_value, index) => ({
+      lower: index * step,
+      count: entries.filter((entry) => entry.seconds >= index * step && entry.seconds < (index + 1) * step).length,
+      index,
+    }));
+    const current = Math.min(7, Math.floor(today.seconds / step));
+    const maxCount = Math.max(1, ...bins.map((bin) => bin.count));
+    target.innerHTML = bins.reverse().map((bin) => {
+      const kind = bin.index < current ? " is-profitable" : bin.index > current ? " is-muted" : " is-current";
+      const width = Math.max(bin.count ? 12 : 2, (bin.count / maxCount) * 100);
+      const label = bin.lower >= 3600 ? `${Math.round(bin.lower / 360) / 10}h` : `${Math.round(bin.lower / 60)}m`;
+      return `<div class="focus-profile-row${kind}"><span>${label}</span><i style="width:${width}%"></i><b>${bin.count || ""}</b></div>`;
+    }).join("");
+  }
+
+  function renderLeaderboardRows(target, entries, today, animate = false) {
+    target.innerHTML = entries.map((entry) => {
+      if (entry.isGap) return '<div class="focus-leaderboard-gap" aria-hidden="true">···</div>';
+      const isToday = entry.date === today.date;
+      const gapText = entry.rank === 1 ? "榜首" : `−${formatSeconds(Number(entry.gap_to_previous_seconds || 0))}`;
+      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}${animate ? " is-swapping" : ""}" data-leaderboard-date="${escapeHtml(entry.date)}"><div class="focus-leaderboard-identity"><time>${isToday ? "今天" : escapeHtml(String(entry.date).slice(5).replace("-", "/"))}</time><b>#${entry.rank}</b></div><div class="focus-leaderboard-metric"><span>时间</span><strong>${formatSeconds(entry.seconds)}</strong></div><div class="focus-leaderboard-metric"><span>diff</span><strong>${gapText}</strong></div></div>`;
+    }).join("");
   }
 
   function renderFocusLeaderboard(leaderboard, activeExtra = 0) {
@@ -556,13 +670,14 @@
     const summary = $("#focus-leaderboard-summary");
     const percentile = $("#focus-leaderboard-percentile");
     const dayCountTarget = $("#focus-leaderboard-day-count");
-    const chips = $("#focus-leaderboard-chips");
+    const profile = $("#focus-leaderboard-profile");
     if (!today || !today.seconds) {
       rowsTarget.innerHTML = '<div class="loading-row">今天产生有效专注后会进入榜单。</div>';
       if (summary) summary.textContent = "今天尚未上榜";
       if (percentile) percentile.textContent = "--";
       if (dayCountTarget) dayCountTarget.textContent = `${dayCount} 个记录日`;
-      if (chips) chips.replaceChildren();
+      if (profile) profile.replaceChildren();
+      state.leaderboardRank = null;
       return;
     }
     const percent = Math.round((dayCount - today.rank + 1) / dayCount * 100);
@@ -570,18 +685,27 @@
     if (summary) summary.textContent = today.rank === 1 ? "今日暂列第 1 名" : `今日第 ${today.rank} 名 · 距上一名 ${formatSeconds(gap)}`;
     if (percentile) percentile.textContent = `${percent}%`;
     if (dayCountTarget) dayCountTarget.textContent = `${dayCount} 个记录日`;
-    if (chips) {
-      const filled = Math.max(1, Math.ceil(percent / 10));
-      chips.innerHTML = Array.from({ length: 10 }, (_value, index) => `<i class="${index < filled ? "is-filled" : ""}"></i>`).join("");
+    renderQuantileProfile(profile, entries, today);
+    const finalEntries = visibleLeaderboardEntries(entries, today);
+    if (state.leaderboardTimer && state.leaderboardPendingRank === today.rank) return;
+    window.clearTimeout(state.leaderboardTimer);
+    const rankImproved = state.leaderboardRank != null && today.rank < state.leaderboardRank;
+    state.leaderboardRank = today.rank;
+    if (!rankImproved) {
+      state.leaderboardPendingRank = null;
+      renderLeaderboardRows(rowsTarget, finalEntries, today);
+      return;
     }
-    const visible = entries.slice(0, 4);
-    if (!visible.some((entry) => entry.date === today.date)) visible.push(today);
-    visible.sort((left, right) => left.rank - right.rank || String(right.date).localeCompare(String(left.date)));
-    rowsTarget.innerHTML = visible.map((entry) => {
-      const isToday = entry.date === today.date;
-      const gapText = entry.rank === 1 ? "榜首" : `差 ${formatSeconds(Number(entry.gap_to_previous_seconds || 0))}`;
-      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}"><b>#${entry.rank}</b><time>${isToday ? "今天" : escapeHtml(String(entry.date).slice(5).replace("-", "/"))}</time><strong>${formatSeconds(entry.seconds)}</strong><small>${gapText}</small></div>`;
-    }).join("");
+    const displaced = entries.find((entry) => entry.rank > today.rank && entry.date !== today.date);
+    const interim = [...entries.slice(0, 3), { isGap: true }, today];
+    if (displaced && !interim.some((entry) => entry.date === displaced.date)) interim.push(displaced);
+    renderLeaderboardRows(rowsTarget, interim, today, true);
+    state.leaderboardPendingRank = today.rank;
+    state.leaderboardTimer = window.setTimeout(() => {
+      renderLeaderboardRows(rowsTarget, finalEntries, today);
+      state.leaderboardPendingRank = null;
+      state.leaderboardTimer = null;
+    }, 500);
   }
 
   function renderGuestSummary(data) {
@@ -615,7 +739,7 @@
     if (summary) summary.hidden = true;
   }
 
-  function showFocusSummary(session, todaySessions) {
+  function showFocusSummary(session) {
     const overview = $("#focus-investment-view");
     const comparison = $("#focus-comparison-view");
     const summary = $("#focus-summary");
@@ -634,22 +758,6 @@
       data: { datasets: [{ data: [Math.min(duration, 3600), Math.max(0, gap)], backgroundColor: [palette[0], "#e5e7ea"], borderWidth: 0 }] },
       options: { responsive: true, maintainAspectRatio: false, cutout: "72%", plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 350 } },
     }));
-    const totals = new Map();
-    (todaySessions || []).forEach((item) => {
-      const seconds = Number(item.effective_seconds ?? focusElapsedSeconds(item));
-      totals.set(item.subject, (totals.get(item.subject) || 0) + seconds);
-    });
-    if (!totals.size) totals.set(session.subject, duration);
-    const subjects = [...totals.keys()];
-    const values = [...totals.values()];
-    $("#summary-today-total").textContent = formatSeconds(values.reduce((sum, value) => sum + value, 0));
-    state.summaryCharts.push(new Chart($("#today-subject-chart"), {
-      type: "doughnut",
-      data: { labels: subjects, datasets: [{ data: values, backgroundColor: subjects.map((_, index) => palette[index % palette.length]), borderColor: "#fff", borderWidth: 2 }] },
-      options: { responsive: true, maintainAspectRatio: false, cutout: "58%", plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => `${context.label} ${formatSeconds(context.raw)}` } } }, animation: { duration: 350 } },
-    }));
-    const total = Math.max(1, values.reduce((sum, value) => sum + value, 0));
-    $("#today-subject-legend").innerHTML = subjects.map((subject, index) => `<span><i style="background:${palette[index % palette.length]}"></i>${escapeHtml(subject)} ${Math.round((values[index] / total) * 100)}%</span>`).join("");
     const restStartedAt = Date.now();
     const tick = (now) => {
       const elapsed = Math.floor((now - restStartedAt) / 1000);
@@ -770,32 +878,263 @@
   }
 
   function syncScoreChartTheme(active) {
-    if (!state.scoreChart) return;
     const palette = getThemePalette(Boolean(active));
-    state.scoreChart.data.datasets.forEach((dataset, index) => {
-      dataset.borderColor = palette[index % palette.length];
-      dataset.backgroundColor = palette[index % palette.length];
-    });
-    state.scoreChart.update("none");
+    if (state.scoreChart) {
+      state.scoreChart.data.datasets.forEach((dataset, index) => {
+        dataset.borderColor = palette[index % palette.length];
+        dataset.backgroundColor = palette[index % palette.length];
+      });
+      state.scoreChart.update("none");
+    }
+    if (state.focusTrendChart) {
+      state.focusTrendChart.data.datasets.forEach((dataset) => {
+        dataset.borderColor = palette[0];
+        dataset.backgroundColor = `${palette[0]}26`;
+      });
+      state.focusTrendChart.update("none");
+    }
+  }
+
+  function loadQuickFocus() {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(QUICK_FOCUS_STORAGE) || "{}");
+      state.quickFocus.pinned = Array.isArray(saved.pinned) ? saved.pinned.map(Number).filter(Number.isInteger).slice(0, 4) : [];
+      state.quickFocus.recent = Array.isArray(saved.recent) ? saved.recent.map(Number).filter(Number.isInteger).slice(0, 12) : [];
+    } catch (_error) {
+      state.quickFocus = { pinned: [], recent: [] };
+    }
+  }
+
+  function saveQuickFocus() {
+    try { window.localStorage.setItem(QUICK_FOCUS_STORAGE, JSON.stringify(state.quickFocus)); }
+    catch (_error) {}
+  }
+
+  function quickModeIds(modes) {
+    const valid = new Set(modes.map((item) => Number(item.id)));
+    const pinned = state.quickFocus.pinned.filter((id) => valid.has(id));
+    const recent = state.quickFocus.recent.filter((id) => valid.has(id) && !pinned.includes(id));
+    const remaining = modes.map((item) => Number(item.id)).filter((id) => !pinned.includes(id) && !recent.includes(id));
+    state.quickFocus.pinned = pinned;
+    state.quickFocus.recent = recent;
+    return [...pinned, ...recent, ...remaining].slice(0, 4);
+  }
+
+  function rememberFocusItem(focusItemId) {
+    const id = Number(focusItemId);
+    state.quickFocus.recent = [id, ...state.quickFocus.recent.filter((item) => item !== id)].slice(0, 12);
+    saveQuickFocus();
+  }
+
+  function toggleQuickPin(focusItemId) {
+    const id = Number(focusItemId);
+    if (state.quickFocus.pinned.includes(id)) {
+      state.quickFocus.pinned = state.quickFocus.pinned.filter((item) => item !== id);
+    } else {
+      state.quickFocus.pinned = [id, ...state.quickFocus.pinned.filter((item) => item !== id)].slice(0, 4);
+    }
+    saveQuickFocus();
+    renderModes(state.dashboard?.focus_items || state.dashboard?.focus_modes || []);
+    updateFocusLaunchPreview();
   }
 
   function renderModes(modes = []) {
     const target = $("#focus-modes");
     if (!target) return;
-    target.innerHTML = modes.map((item) => {
+    const byId = new Map(modes.map((item) => [Number(item.id), item]));
+    const quickModes = quickModeIds(modes).map((id) => byId.get(id)).filter(Boolean);
+    target.innerHTML = quickModes.map((item) => {
       const label = item.label || `${item.subject} · ${item.name}`;
-      return `<div class="mode"><div class="drag-launch" data-focus-item-id="${Number(item.id)}" data-focus-item="${escapeHtml(label)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">${escapeHtml(label)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(label)}">→</span></div></div>`;
+      const pinned = state.quickFocus.pinned.includes(Number(item.id));
+      return `<div class="mode"><div class="drag-launch" data-focus-item-id="${Number(item.id)}" data-focus-item="${escapeHtml(label)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">${escapeHtml(label)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(label)}">→</span></div><button class="quick-pin${pinned ? " is-pinned" : ""}" type="button" data-quick-pin="${Number(item.id)}" title="${pinned ? "取消固定" : "固定到快捷启动"}" aria-label="${pinned ? "取消固定" : "固定"} ${escapeHtml(label)}">${pinned ? "★" : "☆"}</button></div>`;
     }).join("");
+    target.querySelectorAll("[data-quick-pin]").forEach((button) => button.addEventListener("click", () => toggleQuickPin(button.dataset.quickPin)));
     initDragLaunchers();
+  }
+
+  function focusLaunchItems() {
+    const items = state.dashboard?.focus_items || state.dashboard?.focus_modes || [];
+    return items.filter((item) => Number(item.subject_id) === Number(state.focusLaunch.subjectId));
+  }
+
+  function selectedFocusLaunchItem() {
+    return focusLaunchItems().find((item) => Number(item.id) === Number(state.focusLaunch.itemId)) || null;
+  }
+
+  function centerFocusStripOption(strip, value, behavior = "auto") {
+    const option = [...strip.querySelectorAll("[data-focus-option]")].find((item) => item.dataset.value === String(value));
+    if (!option) return;
+    strip.scrollTo({ left: Math.max(0, option.offsetLeft + option.offsetWidth / 2 - strip.clientWidth / 2), behavior });
+  }
+
+  function updateFocusLaunchPreview() {
+    const subjects = state.dashboard?.subjects || [];
+    const subject = subjects.find((item) => Number(item.id) === Number(state.focusLaunch.subjectId));
+    const item = selectedFocusLaunchItem();
+    $("#focus-selected-subject")?.replaceChildren(document.createTextNode(subject?.name || "--"));
+    $("#focus-selected-item")?.replaceChildren(document.createTextNode(item?.name || "--"));
+    $("#focus-entry-preview")?.replaceChildren(document.createTextNode(item ? (item.label || `${subject?.name || ""} · ${item.name}`) : "该科目暂无项目"));
+    const submit = $("#submit-focus-launch");
+    if (submit) submit.disabled = !item;
+    const pin = $("#toggle-focus-pin");
+    if (pin) {
+      const pinned = Boolean(item && state.quickFocus.pinned.includes(Number(item.id)));
+      pin.disabled = !item;
+      pin.classList.toggle("is-pinned", pinned);
+      pin.setAttribute("aria-pressed", String(pinned));
+      pin.textContent = pinned ? "★ 已固定到快捷启动" : "☆ 固定到快捷启动";
+    }
+  }
+
+  function selectFocusStripValue(type, value, behavior = "smooth") {
+    const numeric = Number(value);
+    if (type === "subject") {
+      if (numeric === Number(state.focusLaunch.subjectId)) return;
+      state.focusLaunch.subjectId = numeric;
+      const items = focusLaunchItems();
+      state.focusLaunch.itemId = items[0]?.id ?? null;
+      renderFocusStrip("item", items.map((item) => ({ value: item.id, label: item.name })));
+    } else {
+      state.focusLaunch.itemId = numeric;
+    }
+    const strip = $(`#focus-${type}-strip`);
+    strip?.querySelectorAll("[data-focus-option]").forEach((option) => {
+      const selected = option.dataset.value === String(numeric);
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-selected", String(selected));
+    });
+    if (strip) centerFocusStripOption(strip, numeric, behavior);
+    updateFocusLaunchPreview();
+  }
+
+  function syncFocusStripSelection(strip, snap = false) {
+    const options = [...strip.querySelectorAll("[data-focus-option]")];
+    if (!options.length) return;
+    const center = strip.getBoundingClientRect().left + strip.clientWidth / 2;
+    const closest = options.reduce((best, option) => {
+      const bounds = option.getBoundingClientRect();
+      const distance = Math.abs(bounds.left + bounds.width / 2 - center);
+      return !best || distance < best.distance ? { option, distance } : best;
+    }, null)?.option;
+    if (closest) selectFocusStripValue(strip.dataset.focusStrip, closest.dataset.value, snap ? "smooth" : "auto");
+  }
+
+  function bindFocusStrip(strip) {
+    if (!strip || strip.dataset.bound) return;
+    strip.dataset.bound = "1";
+    let dragging = null;
+    let frame = null;
+    strip.addEventListener("scroll", () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = null; syncFocusStripSelection(strip); });
+    }, { passive: true });
+    strip.addEventListener("pointerdown", (event) => {
+      dragging = { pointerId: event.pointerId, startX: event.clientX, scrollLeft: strip.scrollLeft };
+      strip.setPointerCapture?.(event.pointerId);
+      strip.classList.add("is-dragging");
+    });
+    strip.addEventListener("pointermove", (event) => {
+      if (!dragging || dragging.pointerId !== event.pointerId) return;
+      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX);
+    });
+    const finish = (event) => {
+      if (!dragging || dragging.pointerId !== event.pointerId) return;
+      strip.releasePointerCapture?.(event.pointerId);
+      dragging = null;
+      strip.classList.remove("is-dragging");
+      syncFocusStripSelection(strip, true);
+    };
+    strip.addEventListener("pointerup", finish);
+    strip.addEventListener("pointercancel", finish);
+    strip.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const options = [...strip.querySelectorAll("[data-focus-option]")];
+      const currentValue = strip.dataset.focusStrip === "subject" ? state.focusLaunch.subjectId : state.focusLaunch.itemId;
+      const current = options.findIndex((item) => item.dataset.value === String(currentValue));
+      const next = Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowRight" ? 1 : -1)));
+      if (options[next]) {
+        event.preventDefault();
+        selectFocusStripValue(strip.dataset.focusStrip, options[next].dataset.value);
+      }
+    });
+  }
+
+  function renderFocusStrip(type, options) {
+    const strip = $(`#focus-${type}-strip`);
+    if (!strip) return;
+    const selected = type === "subject" ? state.focusLaunch.subjectId : state.focusLaunch.itemId;
+    strip.innerHTML = options.map((option) => `<button class="score-strip-option${String(option.value) === String(selected) ? " is-selected" : ""}" type="button" data-focus-option data-value="${Number(option.value)}" role="option" aria-selected="${String(option.value) === String(selected)}">${escapeHtml(option.label)}</button>`).join("");
+    strip.querySelectorAll("[data-focus-option]").forEach((option) => option.addEventListener("click", () => selectFocusStripValue(type, option.dataset.value)));
+    bindFocusStrip(strip);
+    requestAnimationFrame(() => centerFocusStripOption(strip, selected));
+  }
+
+  function renderFocusLaunch() {
+    const subjects = state.dashboard?.subjects || [];
+    if (!subjects.some((item) => Number(item.id) === Number(state.focusLaunch.subjectId))) {
+      state.focusLaunch.subjectId = subjects[0]?.id ?? null;
+    }
+    let items = focusLaunchItems();
+    if (!items.some((item) => Number(item.id) === Number(state.focusLaunch.itemId))) {
+      state.focusLaunch.itemId = items[0]?.id ?? null;
+      items = focusLaunchItems();
+    }
+    renderFocusStrip("subject", subjects.map((subject) => ({ value: subject.id, label: subject.name })));
+    renderFocusStrip("item", items.map((item) => ({ value: item.id, label: item.name })));
+    updateFocusLaunchPreview();
+  }
+
+  function openFocusLaunch() {
+    const modal = $("#focus-launch-modal");
+    if (!modal || modal.open || state.dashboard?.focus?.active) return;
+    renderFocusLaunch();
+    modal.showModal();
+    requestAnimationFrame(() => {
+      modal.classList.add("is-open");
+      $("#focus-subject-strip")?.focus();
+    });
+  }
+
+  function closeFocusLaunch() {
+    const modal = $("#focus-launch-modal");
+    if (!modal?.open || modal.dataset.closing) return;
+    modal.dataset.closing = "1";
+    modal.classList.remove("is-open");
+    window.setTimeout(() => {
+      if (modal.open) modal.close();
+      delete modal.dataset.closing;
+    }, 180);
+  }
+
+  async function submitFocusLaunch(event) {
+    event.preventDefault();
+    const item = selectedFocusLaunchItem();
+    if (!item) return;
+    if (await startFocusItem(Number(item.id))) closeFocusLaunch();
+  }
+
+  function bindFocusLaunch() {
+    const modal = $("#focus-launch-modal");
+    if (!modal) return;
+    $("#open-focus-launch")?.addEventListener("click", openFocusLaunch);
+    $("#close-focus-launch")?.addEventListener("click", closeFocusLaunch);
+    $("#focus-launch-form")?.addEventListener("submit", submitFocusLaunch);
+    $("#toggle-focus-pin")?.addEventListener("click", () => {
+      const item = selectedFocusLaunchItem();
+      if (item) toggleQuickPin(item.id);
+    });
+    modal.addEventListener("cancel", (event) => { event.preventDefault(); closeFocusLaunch(); });
   }
 
   function renderDailySettlement(data) {
     const banner = $("#daily-settlement-banner");
     const achievement = $("#daily-achievement");
     const modes = $("#focus-modes");
+    const actions = $(".focus-launch-actions");
     const settlement = data.daily_settlement;
     if (banner) banner.hidden = !data.can_settle_today;
     if (modes) modes.hidden = Boolean(settlement);
+    if (actions) actions.hidden = Boolean(settlement);
     if (!achievement) return;
     achievement.hidden = !settlement;
     if (!settlement) {
@@ -867,25 +1206,32 @@
     });
   }
 
-  async function commitFocusStart(track, thumb, max) {
-    if (state.starting) return;
+  async function startFocusItem(focusItemId) {
+    if (state.starting) return false;
     state.starting = true;
-    track.classList.add("armed");
     try {
-      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(track.dataset.focusItemId), mode: "专注", planned_minutes: 0, client_token: createClientToken() }) });
+      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(focusItemId), mode: "专注", planned_minutes: 0, client_token: createClientToken() }) });
+      rememberFocusItem(focusItemId);
       state.recentlyEnded = null;
       const today = state.dashboard?.focus?.today || [];
       state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session, today: [...today.filter((item) => item.id !== session.session.id), session.session] } };
       state.dashboardFetchedAt = Date.now();
       applyFocusState(session.session, true);
       showToast("专注已启动");
+      return true;
     } catch (error) {
-      gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb) });
-      track.classList.remove("armed");
       showToast(error.message);
+      return false;
     } finally {
       state.starting = false;
     }
+  }
+
+  async function commitFocusStart(track, thumb) {
+    track.classList.add("armed");
+    if (await startFocusItem(Number(track.dataset.focusItemId))) return;
+    gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb) });
+    track.classList.remove("armed");
   }
 
   function animateLayout() {
@@ -902,6 +1248,15 @@
     button.title = paused ? "继续专注" : "暂停专注";
     button.setAttribute("aria-label", button.title);
     $("#focus-pause-icon").textContent = paused ? "继续" : "暂停";
+  }
+
+  function updateFocusSubjectOverflow() {
+    const viewport = $(".focus-subject-viewport");
+    const subject = $("#focus-subject");
+    if (!viewport || !subject) return;
+    const overflow = Math.max(0, subject.scrollWidth - viewport.clientWidth);
+    subject.style.setProperty("--focus-subject-overflow", `${overflow}px`);
+    subject.classList.toggle("is-overflowing", overflow > 1);
   }
 
   async function toggleFocusPause() {
@@ -964,8 +1319,6 @@
     }
     document.body.classList.toggle("is-focusing", Boolean(active));
     document.body.classList.toggle("is-paused", Boolean(active?.paused_at));
-    const portraitRestEntry = $(".portrait-rest-entry");
-    if (portraitRestEntry) portraitRestEntry.hidden = Boolean(active);
     renderFocusStateOverlay(active);
     notifyNativeFocusState(active);
     syncScoreChartTheme(active);
@@ -991,7 +1344,8 @@
     renderFocusComparison(active);
     updatePauseControl(active);
     updateFocusLockControl(active);
-    $("#focus-subject").textContent = `${active.subject} · 专注`;
+    $("#focus-subject").textContent = active.subject;
+    requestAnimationFrame(updateFocusSubjectOverflow);
     $("#focus-start").textContent = new Date(active.started_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     const tick = (now) => {
       const elapsed = focusElapsedSeconds(active, now);
@@ -1028,8 +1382,9 @@
     state.dashboardFetchedAt = Date.now();
     state.dashboardSignature = dashboardSignature(data);
     document.body.classList.toggle("is-settled", Boolean(data.daily_settlement));
-    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_items || data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderFriendDiffBoard(data.friends); renderGuestSummary(data);
+    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_items || data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderFocusTrendChart(data.focus_leaderboard); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderFriendDiffBoard(data.friends); renderGuestSummary(data);
     renderDailySettlement(data);
+    selectActivityView(state.activityView);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
   }
@@ -1141,7 +1496,7 @@
       const result = await api("/api/focus/end", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
       state.focusRecoverySessionId = null;
       await loadDashboard();
-      showFocusSummary(result.session, state.dashboard?.focus?.today || []);
+      showFocusSummary(result.session);
       showToast("本段专注已结束");
       return true;
     } catch (error) { showToast(error.message); }
@@ -1769,6 +2124,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
+    loadQuickFocus();
     try {
       const savedRest = Number(window.localStorage.getItem("mutsumiRestStartedAt"));
       state.restStartedAt = Number.isFinite(savedRest) && savedRest > 0 ? savedRest : null;
@@ -1790,6 +2146,8 @@
     $("#close-focus-summary")?.addEventListener("click", closeFocusSummary);
     $("#toggle-focus-pause")?.addEventListener("click", toggleFocusPause);
     bindFocusStateOverlay();
+    bindFocusLaunch();
+    bindActivitySwitch();
     bindQuickScore();
     bindInvestmentRange();
     initDragSettlement();
@@ -1798,6 +2156,7 @@
     bindAccountForms();
     bindConfirmations();
     bindButtonMotion();
+    window.addEventListener("resize", updateFocusSubjectOverflow);
     try {
       if (document.body.dataset.page === "settings") {
         await loadSettings();
