@@ -45,15 +45,27 @@ def seconds_until_exam(now: datetime, exam_date: str) -> int:
 
 
 def aggregate_focus_heatmap(sessions: Iterable[tuple[datetime, datetime]], now: datetime) -> list[list[int]]:
-    first_day = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=29)
-    heatmap = [[0 for _ in range(12)] for _ in range(30)]
-    for start, end in sessions:
+    local_sessions = [
+        (start.astimezone(now.tzinfo), min(end.astimezone(now.tzinfo), now))
+        for start, end in sessions
+        if end > start
+    ]
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    minimum_first_day = today - timedelta(days=24)
+    recorded_first_day = min(
+        (start.replace(hour=0, minute=0, second=0, microsecond=0) for start, end in local_sessions if end > start),
+        default=minimum_first_day,
+    )
+    first_day = min(minimum_first_day, recorded_first_day)
+    day_count = (today.date() - first_day.date()).days + 1
+    heatmap = [[0 for _ in range(12)] for _ in range(day_count)]
+    for start, end in local_sessions:
         cursor = max(start, first_day)
         while cursor < end:
             bucket_start = cursor.replace(hour=(cursor.hour // 2) * 2, minute=0, second=0, microsecond=0)
             segment_end = min(bucket_start + timedelta(hours=2), end)
             day_index = (cursor.date() - first_day.date()).days
-            if 0 <= day_index < 30:
+            if 0 <= day_index < day_count:
                 heatmap[day_index][cursor.hour // 2] += int((segment_end - cursor).total_seconds() // 60)
             cursor = segment_end
     return heatmap

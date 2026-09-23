@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale={% if 'MutsumiFocus/' in request.headers.get('User-Agent', '') %}0.5, minimum-scale=0.5{% else %}1{% endif %}">
   <title>{% block title %}408 Focus Console{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  {% if page_name in ['focus-kline', 'focus_kline'] %}<link rel="stylesheet" href="{{ url_for('static', filename='focus_kline.css') }}">{% endif %}
 </head>
 <body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}" data-role="{{ 'guest' if is_guest else 'admin' }}" data-settings-tab="{{ settings_tab|default('system') }}">
   <div class="app-shell">
@@ -59,7 +60,9 @@
   <script src="{{ url_for('static', filename='vendor/gsap.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/Draggable.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/Flip.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+  {% if page_name not in ['focus-kline', 'focus_kline'] %}<script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>{% endif %}
+  {% if page_name in ['focus-kline', 'focus_kline'] %}<script src="{{ url_for('static', filename='vendor/lightweight-charts.standalone.production.js') }}"></script>{% endif %}
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  {% if page_name in ['focus-kline', 'focus_kline'] %}<script src="{{ url_for('static', filename='focus_kline.js') }}" defer></script>{% endif %}
 </body>
 </html>

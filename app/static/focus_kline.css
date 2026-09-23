@@ -1,0 +1,73 @@
+/* Dedicated market surface for the Focus Index page. The base console remains unchanged. */
+body.page-focus-kline { background:#e9edef; }
+body.page-focus-kline .app-main { padding-top:18px; }
+.focus-kline-page { max-width:1460px; margin:0 auto; }
+.kline-page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:22px; margin-bottom:13px; }
+.kline-back-link { display:inline-block; margin-bottom:8px; color:var(--muted); font-size:11px; }
+.kline-eyebrow { margin:0; color:var(--accent-deep); font-size:10px; font-weight:800; letter-spacing:1.7px; }
+.kline-page-head h1 { margin:4px 0 3px; font-size:26px; line-height:1.1; }
+.kline-page-note { margin:0; color:var(--muted); font-size:11px; }
+.kline-market-state { display:flex; align-items:center; gap:7px; min-width:148px; padding:9px 11px; border:1px solid var(--line); border-radius:6px; background:rgba(255,255,255,.75); color:var(--muted); font-size:10px; }
+.kline-market-state strong { margin-left:auto; color:var(--accent-deep); font-size:12px; }
+.kline-state-dot { width:7px; height:7px; border-radius:50%; background:#8d9792; box-shadow:0 0 0 3px #edf0ef; }
+.kline-state-dot.is-focus { background:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.kline-state-dot.is-rest { background:#b47a59; box-shadow:0 0 0 3px #f5ebe6; }
+.kline-quote-card { display:grid; grid-template-columns:minmax(260px,1fr) minmax(420px,1.35fr); min-height:144px; border:1px solid #d4dcd8; border-radius:8px; background:#fff; box-shadow:0 8px 24px rgba(36,46,42,.06); }
+.kline-quote-main { padding:17px 20px 14px; border-right:1px solid var(--line); }
+.kline-symbol { display:flex; align-items:baseline; gap:9px; color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.9px; }
+.kline-symbol small { color:#9aa49f; font-size:10px; font-weight:500; letter-spacing:0; }
+.kline-quote-main > strong { display:block; margin-top:8px; color:var(--ink); font-family:"IBM Plex Mono","Roboto Mono",monospace; font-size:42px; font-weight:650; letter-spacing:-1.8px; line-height:1; }
+.kline-quote-main > strong.is-tick-up { color:var(--score-negative); animation:kline-tick-pulse .46s ease-out; }
+.kline-quote-main > strong.is-tick-down { color:var(--score-positive); animation:kline-tick-pulse .46s ease-out; }
+@keyframes kline-tick-pulse { 0% { transform:translateY(-1px); opacity:.66; } 100% { transform:none; opacity:1; } }
+.kline-change-line { display:flex; align-items:baseline; gap:9px; margin-top:8px; font-family:"IBM Plex Mono","Roboto Mono",monospace; }
+.kline-change-line b { color:var(--muted); font-size:15px; }
+.kline-change-line span { color:var(--muted); font-size:12px; }
+.kline-change-line.is-up b,.kline-change-line.is-up span { color:var(--score-negative); }
+.kline-change-line.is-down b,.kline-change-line.is-down span { color:var(--score-positive); }
+.kline-updated { display:block; margin-top:10px; color:#97a19c; font-size:10px; }
+.kline-quote-metrics { display:grid; grid-template-columns:repeat(3,1fr); align-items:center; gap:0; padding:16px 8px; }
+.kline-quote-metrics > div { display:flex; min-height:56px; flex-direction:column; justify-content:center; gap:7px; padding:0 14px; border-left:1px solid #edf0ef; }
+.kline-quote-metrics > div:first-child { border-left:0; }
+.kline-quote-metrics span { color:var(--muted); font-size:10px; }
+.kline-quote-metrics strong { color:var(--ink); font-family:"IBM Plex Mono","Roboto Mono",monospace; font-size:20px; font-weight:650; white-space:nowrap; }
+.kline-quote-metrics strong i { color:var(--muted); font-size:15px; font-style:normal; }
+.kline-chart-grid { display:grid; grid-template-columns:1fr; gap:10px; margin-top:10px; }
+.kline-market-card { min-width:0; padding:14px 15px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+.kline-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; min-height:32px; }
+.kline-card-head h2 { margin:0; font-size:14px; }
+.kline-card-head span { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
+.kline-unit-badge,.kline-live-badge { padding:4px 6px; border-radius:4px; background:#edf0ef; color:var(--muted); font-size:9px; font-weight:600; white-space:nowrap; }
+.kline-intraday-badges { display:flex; align-items:center; gap:5px; }
+.kline-tick-tape { min-width:76px; padding:4px 6px; border:1px solid transparent; border-radius:4px; background:#f4f6f5; color:var(--muted); font-family:"IBM Plex Mono","Roboto Mono",monospace; font-size:9px; text-align:center; white-space:nowrap; }
+.kline-tick-tape[hidden] { display:none; }
+.kline-tick-tape.is-up { border-color:#efc7be; background:#faebe8; color:var(--score-negative); }
+.kline-tick-tape.is-down { border-color:#bfddd0; background:#e7f3ef; color:var(--score-positive); }
+.kline-card-tools { display:flex; align-items:center; gap:7px; }.kline-range-switch { display:flex; align-items:center; overflow:hidden; border:1px solid var(--line); border-radius:4px; background:#fafcfb; }.kline-range-switch button { min-width:30px; height:22px; padding:0 6px; border:0; border-left:1px solid var(--line); background:transparent; color:var(--muted); font-size:9px; }.kline-range-switch button:first-child { border-left:0; }.kline-range-switch button.is-active { background:var(--accent-soft); color:var(--accent-deep); font-weight:750; }
+.kline-live-badge.is-live { background:var(--accent-soft); color:var(--accent-deep); }
+.kline-chart-wrap { position:relative; height:294px; margin-top:8px; }
+.kline-daily-card .kline-chart-wrap { height:354px; }.kline-intraday-card .kline-chart-wrap { height:224px; }.kline-intraday-card.is-empty .kline-chart-wrap { height:62px; }
+.kline-chart-host { position:relative; width:100%; height:100%; overflow:hidden; }
+.kline-chart-host > .tv-lightweight-charts { width:100% !important; height:100% !important; }
+.kline-noon-marker { position:absolute; z-index:2; top:7px; bottom:25px; width:0; border-left:1px dashed #aab5af; pointer-events:none; }
+.kline-noon-marker span { position:absolute; top:0; left:0; transform:translateX(-50%); padding:2px 5px; border:1px solid #dfe5e2; border-radius:3px; background:rgba(255,255,255,.94); color:#64736b; font-size:10px; white-space:nowrap; }
+.kline-chart-empty { position:absolute; inset:0; display:grid; place-items:center; color:var(--muted); font-size:12px; }
+.kline-chart-empty[hidden] { display:none; }
+.kline-chart-foot { display:flex; gap:15px; min-height:17px; margin-top:5px; color:var(--muted); font-size:10px; }
+.kline-chart-foot span:first-child { color:var(--score-negative); }.kline-chart-foot span:nth-child(2) { color:var(--score-positive); }
+.kline-event-legend { min-height:17px; margin-top:5px; color:var(--muted); font-size:10px; }
+.kline-bottom-grid { display:grid; grid-template-columns:minmax(280px,.8fr) minmax(0,1.2fr); gap:10px; margin-top:10px; }
+.kline-ohlc-list { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:0; margin:17px 0 16px; }
+.kline-ohlc-list > div { padding:0 10px; border-left:1px solid #edf0ef; }.kline-ohlc-list > div:first-child { padding-left:0; border-left:0; }
+.kline-ohlc-list dt { color:var(--muted); font-size:10px; }.kline-ohlc-list dd { margin:7px 0 0; color:var(--ink); font-family:"IBM Plex Mono","Roboto Mono",monospace; font-size:17px; font-weight:650; }
+.kline-day-change { padding:4px 6px; border-radius:4px; background:#edf0ef; color:var(--muted); font-family:"IBM Plex Mono","Roboto Mono",monospace; font-size:11px; }
+.kline-day-change.is-up { background:#faebe8; color:var(--score-negative); }.kline-day-change.is-down { background:#e7f3ef; color:var(--score-positive); }
+.kline-focus-meter { display:flex; align-items:flex-end; justify-content:space-between; gap:15px; padding-top:11px; border-top:1px solid #edf0ef; }.kline-focus-meter span { display:block; color:var(--muted); font-size:10px; }.kline-focus-meter strong { display:block; margin-top:4px; font-family:"IBM Plex Mono","Roboto Mono",monospace; font-size:17px; }
+.kline-meter-track { width:48%; height:8px; overflow:hidden; border-radius:4px; background:#e4e9e6; }.kline-meter-track i { display:block; width:0; height:100%; border-radius:inherit; background:var(--accent); transition:width .3s ease; }
+.kline-params-card { padding-bottom:11px; }.kline-quiet-button { min-height:23px; padding:0 7px; border:1px solid var(--line); border-radius:4px; background:#fff; color:var(--muted); font-size:10px; }.kline-quiet-button:hover { border-color:var(--accent-border); color:var(--accent-deep); }
+.kline-params-form { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)) auto; align-items:end; gap:8px; margin-top:16px; }.kline-params-form label { display:flex; min-width:0; flex-direction:column; gap:4px; color:var(--muted); font-size:10px; white-space:nowrap; }.kline-params-form label > span { color:#9aa49f; font-size:9px; }.kline-params-form input { width:100%; height:31px; margin:0; padding:0 7px; border:1px solid #d4dcd8; border-radius:4px; background:#fff; color:var(--ink); font-family:"IBM Plex Mono","Roboto Mono",monospace; font-size:13px; }.kline-params-form input:focus { outline:2px solid var(--accent-ring); border-color:var(--accent); }.kline-save-button { height:31px; padding:0 10px; border:1px solid var(--accent); border-radius:4px; background:var(--accent); color:#fff; font-size:10px; font-weight:750; white-space:nowrap; }.kline-save-button:disabled { opacity:.6; cursor:wait; }
+.kline-param-feedback,.kline-data-feedback { min-height:13px; margin:8px 0 0; color:var(--muted); font-size:10px; }.kline-param-feedback.is-error,.kline-data-feedback.is-error { color:var(--score-negative); }.kline-param-feedback.is-ok { color:var(--score-positive); }.kline-data-feedback { margin:8px 2px 0; }
+.kline-attribution { margin:9px 2px 0; color:#95a09a; font-size:9px; }.kline-attribution a { color:#65776d; text-decoration:underline; text-underline-offset:2px; }
+@media (max-width:1080px) {
+  .kline-quote-card { grid-template-columns:1fr; }.kline-quote-main { border-right:0; border-bottom:1px solid var(--line); }.kline-chart-grid,.kline-bottom-grid { grid-template-columns:1fr; }.kline-params-form { grid-template-columns:repeat(3,minmax(0,1fr)); }.kline-save-button { grid-column:span 3; }
+}

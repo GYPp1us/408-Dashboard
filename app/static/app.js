@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "heat", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, heatWindowStart: null, heatHistoryLength: 0, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "heat", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
   const DAILY_TARGET_SECONDS = 7 * 3600;
   const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
@@ -412,23 +412,53 @@
   function renderHeatmap(heatmap, visibleHours) {
     const hours = $("#heat-hours");
     const grid = $("#heat-grid");
-    if (!hours || !grid) return;
+    const days = $("#heat-days");
+    if (!hours || !grid || !days) return;
     const configuredHours = [...new Set((visibleHours || []).map(Number))].filter((hour) => Number.isInteger(hour) && hour >= 0 && hour < 24 && hour % 2 === 0);
     const shownHours = configuredHours.length ? configuredHours : Array.from({ length: 12 }, (_, index) => index * 2);
     const buckets = shownHours.map((hour) => hour / 2);
-    const displayDays = (heatmap || []).slice(-25);
-    const dayCount = displayDays.length || 25;
+    const historyDays = (heatmap || []).length ? heatmap : Array.from({ length: 25 }, () => Array(12).fill(0));
+    const dayCount = Math.min(25, historyDays.length);
+    const maxStart = Math.max(0, historyDays.length - dayCount);
+    const previousMaxStart = Math.max(0, state.heatHistoryLength - dayCount);
+    const wasAtLatest = state.heatWindowStart === null || state.heatWindowStart >= previousMaxStart;
+    state.heatWindowStart = wasAtLatest ? maxStart : Math.min(maxStart, Math.max(0, state.heatWindowStart));
+    state.heatHistoryLength = historyDays.length;
     hours.innerHTML = shownHours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("");
-    const max = Math.max(120, ...displayDays.flatMap((day) => buckets.map((bucket) => day[bucket] || 0)));
-    const renderCell = (minutes, dayIndex, bucket) => {
+    const max = Math.max(120, ...historyDays.flatMap((day) => buckets.map((bucket) => day[bucket] || 0)));
+    let suppressClickUntil = 0;
+    const formatDay = (absoluteIndex) => {
+      const daysAgo = historyDays.length - 1 - absoluteIndex;
+      return daysAgo === 0 ? "今天" : `${daysAgo} 天前`;
+    };
+    const fadeClass = (dayIndex) => {
+      const fades = [];
+      if (state.heatWindowStart > 0 && dayIndex < 3) fades.push(`fade-${25 + dayIndex * 25}`);
+      if (state.heatWindowStart < maxStart && dayIndex >= dayCount - 3) fades.push(`fade-${25 + (dayCount - 1 - dayIndex) * 25}`);
+      return fades.length ? ` ${fades.join(" ")}` : "";
+    };
+    const renderCell = (minutes, dayIndex, absoluteIndex, bucket) => {
       const level = minutes === 0 ? 0 : Math.min(4, Math.ceil((minutes / max) * 4));
       const startHour = bucket * 2;
-      return `<i class="heat-cell${level ? ` l${level}` : ""}" data-detail="最近第 ${dayCount - dayIndex} 天 ${String(startHour).padStart(2, "0")}:00-${String(startHour + 2).padStart(2, "0")}:00 · ${minutes} 分钟" title="${minutes} 分钟"></i>`;
+      return `<i class="heat-cell${level ? ` l${level}` : ""}${fadeClass(dayIndex)}" data-detail="${formatDay(absoluteIndex)} ${String(startHour).padStart(2, "0")}:00-${String(startHour + 2).padStart(2, "0")}:00 · ${minutes} 分钟" title="${minutes} 分钟"></i>`;
     };
-    grid.innerHTML = buckets.map((bucket) => displayDays.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, bucket)).join("")).join("");
-    grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
-      $("#heat-detail").textContent = cell.dataset.detail;
-    }));
+    const renderWindow = () => {
+      const displayDays = historyDays.slice(state.heatWindowStart, state.heatWindowStart + dayCount);
+      grid.innerHTML = buckets.map((bucket) => displayDays.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, state.heatWindowStart + dayIndex, bucket)).join("")).join("");
+      grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
+        if (Date.now() < suppressClickUntil) return;
+        $("#heat-detail").textContent = cell.dataset.detail;
+      }));
+      const labelIndexes = [0, 1, 2, 3].map((index) => Math.round((dayCount - 1) * index / 3));
+      days.innerHTML = labelIndexes.map((index) => `<span>${formatDay(state.heatWindowStart + index)}</span>`).join("");
+    };
+    const moveWindow = (nextStart) => {
+      const clamped = Math.min(maxStart, Math.max(0, nextStart));
+      if (clamped === state.heatWindowStart) return;
+      state.heatWindowStart = clamped;
+      renderWindow();
+    };
+    renderWindow();
     const updateGeometry = () => {
       const width = grid.clientWidth;
       if (!width) return;
@@ -447,6 +477,31 @@
       state.heatResizeObserver = new ResizeObserver(updateGeometry);
       state.heatResizeObserver.observe(grid);
     }
+    let drag = null;
+    grid.onpointerdown = (event) => {
+      if (maxStart === 0) return;
+      drag = { pointerId: event.pointerId, startX: event.clientX, windowStart: state.heatWindowStart, moved: false };
+      grid.setPointerCapture(event.pointerId);
+      grid.classList.add("is-dragging");
+    };
+    grid.onpointermove = (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const delta = event.clientX - drag.startX;
+      if (Math.abs(delta) > 4) drag.moved = true;
+      if (!drag.moved) return;
+      event.preventDefault();
+      const dayWidth = grid.clientWidth / dayCount;
+      moveWindow(drag.windowStart - Math.round(delta / Math.max(1, dayWidth)));
+    };
+    const endDrag = (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      if (drag.moved) suppressClickUntil = Date.now() + 250;
+      drag = null;
+      grid.classList.remove("is-dragging");
+      if (grid.hasPointerCapture(event.pointerId)) grid.releasePointerCapture(event.pointerId);
+    };
+    grid.onpointerup = endDrag;
+    grid.onpointercancel = endDrag;
     requestAnimationFrame(updateGeometry);
   }
 
@@ -624,8 +679,8 @@
 
   function renderQuantileProfile(target, entries, today) {
     if (!target) return;
-    const historicalEntries = entries.filter((entry) => entry.date !== today.date);
     const step = 20 * 60;
+    const historicalEntries = entries.filter((entry) => entry.date !== today.date && Number(entry.seconds || 0) >= step);
     const maxSeconds = Math.max(Number(today.seconds || 0), 0, ...historicalEntries.map((entry) => Number(entry.seconds || 0)));
     const binCount = Math.max(1, Math.floor(maxSeconds / step) + 1);
     const bins = Array.from({ length: binCount }, (_value, index) => ({
@@ -634,11 +689,22 @@
     }));
     const current = Math.min(binCount - 1, Math.floor(today.seconds / step));
     const widthUnits = Math.max(5, ...bins.map((bin) => bin.count));
-    target.innerHTML = bins.reverse().map((bin) => {
+    const displayBins = [...bins].reverse();
+    target.style.gridTemplateRows = `repeat(${displayBins.length}, minmax(0, 1fr))`;
+    target.innerHTML = displayBins.map((bin) => {
       const kind = bin.index < current ? " is-profitable" : bin.index > current ? " is-muted" : " is-current";
-      const width = bin.index === current ? 100 : (bin.count / widthUnits) * 100;
-      return `<div class="focus-profile-row${kind}"><i style="width:${width}%"></i></div>`;
+      const width = (bin.count / widthUnits) * 100;
+      const currentMarker = bin.index === current ? '<b class="focus-profile-current-marker" aria-hidden="true"></b>' : '';
+      return `<div class="focus-profile-row${kind}"><b class="focus-profile-marker" aria-hidden="true"></b><i style="width:${width}%"></i>${currentMarker}</div>`;
     }).join("");
+    const updateProfileGeometry = () => {
+      const styles = getComputedStyle(target);
+      const gap = parseFloat(styles.rowGap || styles.gap) || 0;
+      const padding = (parseFloat(styles.paddingTop) || 0) + (parseFloat(styles.paddingBottom) || 0);
+      const rowHeight = (target.clientHeight - padding - gap * Math.max(0, displayBins.length - 1)) / displayBins.length;
+      target.style.setProperty("--profile-row-height", `${Math.max(3, rowHeight)}px`);
+    };
+    requestAnimationFrame(updateProfileGeometry);
   }
 
   function renderLeaderboardRows(target, entries, today, animate = false) {

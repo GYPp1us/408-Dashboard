@@ -166,6 +166,13 @@ DEFAULT_SETTINGS = {
     "exam_date": "2026-12-26",
     "timezone": "Asia/Shanghai",
     "heatmap_visible_hours": "0,2,4,6,8,10,12,14,16,18,20,22",
+    # Focus K-line parameters are persisted as strings alongside the existing
+    # user settings.  K values are percentage points per focused hour.
+    "focus_kline_a_low": "4",
+    "focus_kline_a_mid": "7",
+    "focus_kline_a_high": "9",
+    "focus_kline_k_low_percent": "3.333333",
+    "focus_kline_k_high_percent": "5",
     "focus_messages_json": json.dumps(DEFAULT_FOCUS_MESSAGES, ensure_ascii=False, separators=(",", ":")),
 }
 

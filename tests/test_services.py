@@ -43,14 +43,14 @@ def test_current_time_uses_configured_timezone():
     assert current_time("Asia/Shanghai").utcoffset().total_seconds() == 8 * 3600
 
 
-def test_heatmap_returns_30_days_and_24_hours():
+def test_heatmap_returns_at_least_25_days_and_24_hours():
     from app.services import aggregate_focus_heatmap
 
     end = datetime(2026, 7, 13, 10, 0, tzinfo=timezone.utc)
     sessions = [(end - timedelta(hours=2), end)]
     heatmap = aggregate_focus_heatmap(sessions, end)
 
-    assert len(heatmap) == 30
+    assert len(heatmap) == 25
     assert all(len(day) == 12 for day in heatmap)
     assert sum(sum(day) for day in heatmap) == 120
 
@@ -62,8 +62,20 @@ def test_heatmap_keeps_day_and_two_hour_bucket_aligned():
     start = datetime(2026, 7, 13, 16, 0, tzinfo=timezone.utc)
     heatmap = aggregate_focus_heatmap([(start, start + timedelta(minutes=1))], now)
 
-    assert heatmap[28][8] == 1
+    assert heatmap[23][8] == 1
     assert sum(sum(day) for day in heatmap) == 1
+
+
+def test_heatmap_includes_every_day_back_to_the_first_record():
+    from app.services import aggregate_focus_heatmap
+
+    now = datetime(2026, 7, 14, 20, 0, tzinfo=timezone.utc)
+    start = now - timedelta(days=40, hours=4)
+    heatmap = aggregate_focus_heatmap([(start, start + timedelta(minutes=30))], now)
+
+    assert len(heatmap) == 41
+    assert heatmap[0][8] == 30
+    assert sum(sum(day) for day in heatmap) == 30
 
 
 def test_today_summary_counts_only_sessions_in_local_day():
