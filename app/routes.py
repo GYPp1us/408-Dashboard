@@ -218,7 +218,13 @@ def _focus_kline_parameters(settings: dict) -> FocusKlineParameters:
         return FocusKlineParameters()
 
 
-def _focus_kline_payload(connection, user_id: int | None, settings: dict, now: datetime | None = None) -> dict:
+def _focus_kline_payload(
+    connection,
+    user_id: int | None,
+    settings: dict,
+    now: datetime | None = None,
+    intraday_date: str | None = None,
+) -> dict:
     """Build the API payload without creating or updating any DB rows."""
 
     timezone_name = settings.get("timezone", "Asia/Shanghai")
@@ -239,6 +245,19 @@ def _focus_kline_payload(connection, user_id: int | None, settings: dict, now: d
             trading_sessions=trading_sessions_from_settings(settings),
         )
     latest = candles[-1] if candles else None
+    selected_intraday = next((row for row in candles if row["date"] == intraday_date), None) if intraday_date else None
+    if selected_intraday is None:
+        selected_intraday = next((row for row in reversed(candles) if not row["delisted"] and row["intraday"]), None)
+    selected_intraday_date = selected_intraday["date"] if selected_intraday else None
+    # Minute bars are much larger than daily OHLC data. Keep one requested
+    # intraday series in the response; the browser requests another date only
+    # when the user selects that daily candle.
+    compact_candles = [
+        {**row, "intraday": row["intraday"] if row["date"] == selected_intraday_date else []}
+        for row in candles
+    ]
+    compact_daily = [{**row, "intraday": []} for row in candles]
+    compact_latest = {**latest, "intraday": []} if latest else None
     previous_close = candles[-2]["close"] if len(candles) > 1 else INITIAL_INDEX
     focus = current_focus_state(connection, int(user_id)) if user_id is not None else {
         "state": "rest",
@@ -255,10 +274,11 @@ def _focus_kline_payload(connection, user_id: int | None, settings: dict, now: d
     }
     return {
         "parameters": public_parameters,
-        "candles": candles,
-        "daily": candles,
-        "today": latest or {},
-        "intraday": (latest or {}).get("intraday", []),
+        "candles": compact_candles,
+        "daily": compact_daily,
+        "today": compact_latest or {},
+        "intraday": selected_intraday["intraday"] if selected_intraday else [],
+        "intraday_date": selected_intraday_date,
         "index": {"current": latest["close"] if latest else INITIAL_INDEX},
         "previous_close": previous_close,
         "today_focus_seconds": latest["focus_seconds"] if latest else 0,
@@ -269,8 +289,8 @@ def _focus_kline_payload(connection, user_id: int | None, settings: dict, now: d
         "limit_down": latest["limit_down"] if latest else INITIAL_INDEX * (1 - LIMIT_RETURN),
         "limit_up": latest["limit_up"] if latest else INITIAL_INDEX * (1 + LIMIT_RETURN),
         "updated_at": current.isoformat(),
-        "latest": latest,
-        "current": latest,
+        "latest": compact_latest,
+        "current": compact_latest,
         "model_version": MODEL_VERSION,
         "initial_index": INITIAL_INDEX,
         "price_tick": PRICE_TICK,
@@ -382,11 +402,19 @@ def register_routes(app):
     def focus_kline_api():
         """Return the complete historical OHLC series without DB writes."""
 
+        requested_date = request.args.get("date")
+        if requested_date:
+            try:
+                parsed_date = datetime.strptime(requested_date, "%Y-%m-%d").date()
+            except ValueError:
+                return jsonify(error="invalid_date"), 400
+            if parsed_date.isoformat() != requested_date:
+                return jsonify(error="invalid_date"), 400
         connection = connect(app.config["DATABASE"])
         try:
             viewer_id = _viewer_user_id(connection)
             settings = get_settings(connection, viewer_id)
-            return jsonify(_focus_kline_payload(connection, viewer_id, settings))
+            return jsonify(_focus_kline_payload(connection, viewer_id, settings, intraday_date=requested_date))
         finally:
             connection.close()
 
