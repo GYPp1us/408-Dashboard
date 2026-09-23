@@ -59,7 +59,7 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'data-activity-view="heat"' in html
     assert 'data-activity-view="focus"' in html
     assert 'data-activity-view="score"' in html
-    assert "近 25 天专注热度" in html
+    assert "专注热度 · 25 天视窗" in html
     assert html.index('class="activity-switch"') < html.index('id="activity-heat-view"')
     assert 'id="focus-state-overlay"' in html
     assert 'id="focus-state-overlay-title"' in html
@@ -114,8 +114,14 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert "subjectsWithActiveTime(baseline.today_subjects, extraSeconds)" in javascript
     assert "function renderFocusComparison(active)" in javascript
     assert "function renderFocusLeaderboard(leaderboard, activeExtra = 0)" in javascript
-    assert "const displayDays = (heatmap || []).slice(-25);" in javascript
+    assert "const historyDays = (heatmap || []).length ? heatmap" in javascript
+    assert "historyDays.slice(state.heatWindowStart, state.heatWindowStart + dayCount)" in javascript
+    assert "grid.onpointermove = (event) =>" in javascript
+    assert "fade-${25 + dayIndex * 25}" in javascript
     assert "const step = 20 * 60;" in javascript
+    assert "Number(entry.seconds || 0) >= step" in javascript
+    assert "focus-profile-marker" in javascript
+    assert "focus-profile-current-marker" in javascript
     assert "entries.filter((entry) => entry.date !== today.date)" in javascript
     assert 'switcher?.addEventListener("click", (event) =>' in javascript
     assert 'event.target.closest("[data-activity-view]")' in javascript
@@ -182,7 +188,7 @@ def test_browser_keeps_horizontal_dashboard_while_native_portrait_is_scoped():
     assert "@media (max-width:720px)" not in css
     assert "html.native-app .time-grid,html.native-app .dashboard-grid" in css
     assert "html.native-app .score-board,html.native-app .exam-countdown" in css
-    assert ".dashboard-grid { display:grid; grid-template-columns:minmax(420px,1.15fr) minmax(330px,1.15fr) minmax(440px,1.7fr)" in css
+    assert ".dashboard-grid { display:grid; grid-template-columns:minmax(300px,1.5fr) minmax(330px,3fr) minmax(440px,2fr)" in css
 
 
 def test_android_user_agent_marks_only_the_native_shell(authenticated_client):

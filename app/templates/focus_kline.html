@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}专注指数 · 408 Focus Console{% endblock %}
+{% block content %}
+<section class="focus-kline-page" data-focus-kline-root data-kline-api="/api/focus-kline" aria-labelledby="focus-kline-title">
+  <header class="kline-page-head">
+    <div>
+      <a class="kline-back-link" href="{% if auth_user %}{{ url_for('user_dashboard', username=auth_user.username) }}{% else %}{{ url_for('guest_dashboard') }}{% endif %}">← 返回统计图</a>
+      <p class="kline-eyebrow">FOCUS MARKET · DAILY INDEX</p>
+      <h1 id="focus-kline-title">专注指数</h1>
+      <p class="kline-page-note">把每日有效专注量化成一根行情线：行为决定趋势，盘中波动只描述当日路径。</p>
+    </div>
+    <div class="kline-market-state" aria-live="polite"><span class="kline-state-dot" data-kline-state-dot></span><span>当前状态</span><strong id="kline-state">读取中</strong></div>
+  </header>
+
+  <section class="kline-quote-card" aria-label="专注指数行情摘要">
+    <div class="kline-quote-main">
+      <span class="kline-symbol">408 FOCUS INDEX <small id="kline-market-date">—</small></span>
+      <strong id="kline-current" data-focus-kline-points>100.000</strong>
+      <div class="kline-change-line"><b id="kline-change">±0.000</b><span id="kline-change-pct" data-focus-kline-change>0.00%</span></div>
+      <small id="kline-last-updated" class="kline-updated">等待历史数据</small>
+      <span id="focus-kline-points" hidden aria-hidden="true">100.000</span><span id="focus-kline-change" hidden aria-hidden="true">0.00%</span><span id="focus-kline-hours" hidden aria-hidden="true">00:00:00</span>
+    </div>
+    <div class="kline-quote-metrics">
+      <div><span>今日专注</span><strong id="kline-focus-total">00:00:00</strong></div>
+      <div><span>今日状态</span><strong id="kline-focus-status">休市</strong></div>
+      <div><span>可交易区间</span><strong><i id="kline-limit-low">90.000</i> — <i id="kline-limit-high">110.000</i></strong></div>
+    </div>
+  </section>
+
+  <section class="kline-chart-grid" aria-label="专注指数图表">
+    <article class="kline-market-card kline-daily-card">
+      <div class="kline-card-head"><div><h2>日线 K 线</h2><span>历史有效专注 · 每日 OHLC · 点击蜡烛回看分时</span></div><div class="kline-card-tools"><div class="kline-range-switch" role="group" aria-label="日线区间"><button type="button" data-kline-range="30">1M</button><button type="button" data-kline-range="90">3M</button><button type="button" class="is-active" data-kline-range="0">全部</button></div><b class="kline-unit-badge">单位：点</b></div></div>
+      <div class="kline-chart-wrap"><div id="kline-daily-chart" class="kline-chart-host" role="img" aria-label="每日专注指数 K 线图"></div><div id="kline-daily-empty" class="kline-chart-empty" hidden>暂无历史专注数据</div></div>
+      <div class="kline-chart-foot"><span>红涨</span><span>绿跌</span><span>虚线：±10% 涨跌停</span></div>
+    </article>
+    <article class="kline-market-card kline-intraday-card">
+      <div class="kline-card-head"><div><h2 id="kline-intraday-title">分时走势</h2><span id="kline-intraday-caption">默认回看最近一个有盘中记录的交易日</span></div><div class="kline-intraday-badges"><b id="kline-tick-tape" class="kline-tick-tape" hidden aria-live="off">逐笔</b><b id="kline-selected-day" class="kline-live-badge">回看中</b></div></div>
+      <div class="kline-chart-wrap"><div id="kline-intraday-chart" class="kline-chart-host" role="img" aria-label="今日专注指数分时走势"></div><div id="kline-intraday-empty" class="kline-chart-empty" hidden>暂无今日分时数据</div></div>
+      <div id="kline-events" class="kline-event-legend">1 分钟正式采样 · 当前分钟秒级逐笔 · 午休时段断线</div>
+    </article>
+  </section>
+
+  <section class="kline-bottom-grid">
+    <article class="kline-market-card kline-ohlc-card">
+      <div class="kline-card-head"><div><h2>今日 OHLC</h2><span id="kline-day-label">当前交易日</span></div><b id="kline-day-change" class="kline-day-change">±0.000</b></div>
+      <dl class="kline-ohlc-list">
+        <div><dt>开盘</dt><dd id="kline-open">100.000</dd></div>
+        <div><dt>最高</dt><dd id="kline-high">100.000</dd></div>
+        <div><dt>最低</dt><dd id="kline-low">100.000</dd></div>
+        <div><dt>收盘</dt><dd id="kline-close">100.000</dd></div>
+        <div><dt>振幅</dt><dd id="kline-amplitude">0.00%</dd></div>
+      </dl>
+      <div class="kline-focus-meter"><div><span>当日累计专注</span><strong id="kline-focus-meter-value">00:00:00</strong></div><div class="kline-meter-track"><i id="kline-focus-meter-fill"></i></div></div>
+    </article>
+    <article class="kline-market-card kline-params-card">
+      <div class="kline-card-head"><div><h2>指数参数</h2><span>只调整五个收盘锚点与线性倍率</span></div><button id="kline-reset-defaults" class="kline-quiet-button" type="button" data-focus-kline-reset>恢复默认值</button></div>
+      <form id="kline-params-form" class="kline-params-form">
+        <label>低位锚点 A_low <span>小时</span><input id="kline-param-a-low" name="a_low_hours" data-focus-kline-setting="a_low" type="number" min="0" max="24" step="0.25" inputmode="decimal"></label>
+        <label>目标锚点 A_mid <span>小时</span><input id="kline-param-a-mid" name="a_mid_hours" data-focus-kline-setting="a_mid" type="number" min="0" max="24" step="0.25" inputmode="decimal"></label>
+        <label>高位锚点 A_high <span>小时</span><input id="kline-param-a-high" name="a_high_hours" data-focus-kline-setting="a_high" type="number" min="0" max="24" step="0.25" inputmode="decimal"></label>
+        <label>低区倍率 K_low <span>% / h</span><input id="kline-param-k-low" name="k_low_percent_per_hour" data-focus-kline-setting="k_low_percent" type="number" min="0" max="20" step="0.01" inputmode="decimal"></label>
+        <label>高区倍率 K_high <span>% / h</span><input id="kline-param-k-high" name="k_high_percent_per_hour" data-focus-kline-setting="k_high_percent" type="number" min="0" max="20" step="0.01" inputmode="decimal"></label>
+        <button class="kline-save-button" type="submit">应用参数</button>
+      </form>
+      <p id="kline-param-feedback" class="kline-param-feedback" role="status"></p>
+    </article>
+  </section>
+  <p id="kline-data-feedback" class="kline-data-feedback" role="status"></p>
+  <footer class="kline-attribution"><span>金融图表由</span> <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts</a> 提供</footer>
+</section>
+{% endblock %}

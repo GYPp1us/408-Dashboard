@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import logging
 import re
 
 import secrets
@@ -8,12 +9,29 @@ from flask import abort, jsonify, redirect, render_template, request, session, u
 
 from .auth import admin_required, current_user_id, is_guest, login_required, user_required
 from .db import add_friend, connect, consume_migration_code, create_focus_item, create_migration_code, create_subject, delete_focus_item, delete_subject, export_migration_data, finish_focus_session, get_daily_settlement, get_focus_item, get_focus_item_by_name, get_focus_messages, get_settings, get_subject, get_subject_by_name, get_user, get_user_by_username, issue_invitation, list_focus_items, list_focus_modes, list_friends, list_invitations, list_latest_scores, list_plans, list_public_users, list_scores, list_subjects, record_foreground_heartbeat, remove_friend, reorder_focus_items, save_focus_messages, update_focus_item, update_subject
+from .focus_kline import (
+    DEFAULT_BAR_MINUTES,
+    INITIAL_INDEX,
+    LIMIT_RETURN,
+    MODEL_VERSION,
+    PRICE_FLOOR,
+    PRICE_TICK,
+    SETTING_KEYS,
+    FocusKlineParameters,
+    build_focus_klines,
+    build_focus_kline,
+    current_focus_state,
+    group_focus_segments_by_day,
+    trading_sessions_from_settings,
+    validate_setting_payload,
+)
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 HEATMAP_HOURS = tuple(range(0, 24, 2))
 DAILY_TARGET_SECONDS = 7 * 3600
+LOGGER = logging.getLogger(__name__)
 
 
 def _heatmap_hours(value: str) -> list[int]:
@@ -185,6 +203,101 @@ def _viewer_user_id(connection) -> int | None:
     return None
 
 
+def _focus_kline_parameters(settings: dict) -> FocusKlineParameters:
+    """Convert string-valued settings into the algorithm's public config."""
+
+    try:
+        return FocusKlineParameters(
+            a_low=float(settings.get(SETTING_KEYS["a_low_hours"], 4)),
+            a_mid=float(settings.get(SETTING_KEYS["a_mid_hours"], 7)),
+            a_high=float(settings.get(SETTING_KEYS["a_high_hours"], 9)),
+            k_low=float(settings.get(SETTING_KEYS["k_low_percent_per_hour"], 3.333333)) / 100,
+            k_high=float(settings.get(SETTING_KEYS["k_high_percent_per_hour"], 5)) / 100,
+        )
+    except (TypeError, ValueError):
+        return FocusKlineParameters()
+
+
+def _focus_kline_payload(connection, user_id: int | None, settings: dict, now: datetime | None = None) -> dict:
+    """Build the API payload without creating or updating any DB rows."""
+
+    timezone_name = settings.get("timezone", "Asia/Shanghai")
+    current = now or _now(timezone_name)
+    parameters = _focus_kline_parameters(settings)
+    if user_id is None:
+        candles = []
+    else:
+        sessions = _focus_sessions(connection, current, _pause_map(connection), user_id)
+        segments = [(start, end) for _, start, end in sessions]
+        seconds_by_day, segments_by_day = group_focus_segments_by_day(segments)
+        candles = build_focus_klines(
+            seconds_by_day,
+            daily_segments=segments_by_day,
+            now=current,
+            user_key=int(user_id),
+            parameters=parameters,
+            trading_sessions=trading_sessions_from_settings(settings),
+        )
+    latest = candles[-1] if candles else None
+    previous_close = candles[-2]["close"] if len(candles) > 1 else INITIAL_INDEX
+    focus = current_focus_state(connection, int(user_id)) if user_id is not None else {
+        "state": "rest",
+        "is_focusing": False,
+        "is_paused": False,
+    }
+    status = "delisted" if latest and latest.get("delisted") else focus["state"]
+    public_parameters = {
+        "a_low_hours": parameters.a_low,
+        "a_mid_hours": parameters.a_mid,
+        "a_high_hours": parameters.a_high,
+        "k_low_percent_per_hour": round(float(parameters.k_low) * 100, 6),
+        "k_high_percent_per_hour": round(float(parameters.k_high) * 100, 6),
+    }
+    return {
+        "parameters": public_parameters,
+        "candles": candles,
+        "daily": candles,
+        "today": latest or {},
+        "intraday": (latest or {}).get("intraday", []),
+        "index": {"current": latest["close"] if latest else INITIAL_INDEX},
+        "previous_close": previous_close,
+        "today_focus_seconds": latest["focus_seconds"] if latest else 0,
+        "status": status,
+        "focus_state": focus["state"],
+        "is_focusing": focus["is_focusing"],
+        "is_paused": focus["is_paused"],
+        "limit_down": latest["limit_down"] if latest else INITIAL_INDEX * (1 - LIMIT_RETURN),
+        "limit_up": latest["limit_up"] if latest else INITIAL_INDEX * (1 + LIMIT_RETURN),
+        "updated_at": current.isoformat(),
+        "latest": latest,
+        "current": latest,
+        "model_version": MODEL_VERSION,
+        "initial_index": INITIAL_INDEX,
+        "price_tick": PRICE_TICK,
+        "intraday_bar_minutes": DEFAULT_BAR_MINUTES,
+        "price_floor": PRICE_FLOOR,
+    }
+
+
+def _refresh_focus_kline(connection, user_id: int | None, settings: dict | None = None) -> None:
+    """Refresh the complete derived series after a session/settings write.
+
+    Cache refresh is best-effort.  The source session/settings transaction is
+    already committed before this helper is called; a cache schema or disk
+    error must not turn a successful focus action into a 500 response.  The
+    GET endpoint always rebuilds a pure payload from source rows.
+    """
+
+    if user_id is None:
+        return
+    values = settings or get_settings(connection, user_id)
+    try:
+        build_focus_kline(connection, user_id, values.get("timezone", "Asia/Shanghai"), values)
+    except Exception:  # pragma: no cover - defensive boundary around derived cache
+        connection.rollback()
+        LOGGER.exception("focus_kline_cache_refresh_failed", extra={"user_id": user_id})
+
+
 def _friend_diff_payload(connection, now: datetime, user_id: int | None) -> list[dict]:
     if user_id is None or is_guest():
         return []
@@ -256,6 +369,62 @@ def register_routes(app):
         if session.get("authenticated") and not is_guest() and session.get("username"):
             return redirect(url_for("user_dashboard", username=session["username"]))
         return redirect(url_for("dashboard"))
+
+    @app.get("/focus-kline", strict_slashes=False)
+    @login_required
+    def focus_kline_page():
+        """Standalone market-style view of the derived focus index."""
+
+        return render_template("focus_kline.html", page_name="focus-kline", is_guest=is_guest())
+
+    @app.get("/api/focus-kline")
+    @login_required
+    def focus_kline_api():
+        """Return the complete historical OHLC series without DB writes."""
+
+        connection = connect(app.config["DATABASE"])
+        try:
+            viewer_id = _viewer_user_id(connection)
+            settings = get_settings(connection, viewer_id)
+            return jsonify(_focus_kline_payload(connection, viewer_id, settings))
+        finally:
+            connection.close()
+
+    @app.route("/api/focus-kline/settings", methods=["GET", "PATCH"])
+    @app.post("/api/focus-kline/parameters")
+    @login_required
+    def focus_kline_settings_api():
+        """Read or persist the five public focus-index parameters."""
+
+        if request.method in {"PATCH", "POST"} and is_guest():
+            return jsonify(error="guest_read_only"), 403
+        connection = connect(app.config["DATABASE"])
+        try:
+            user_id = _viewer_user_id(connection)
+            settings = get_settings(connection, user_id)
+            if request.method in {"PATCH", "POST"}:
+                payload = request.get_json(silent=True) or {}
+                try:
+                    values = validate_setting_payload(payload, settings)
+                except ValueError as error:
+                    return jsonify(error=str(error)), 400
+                for key, value in values.items():
+                    connection.execute(
+                        "INSERT INTO user_settings(user_id, key, value) VALUES (?, ?, ?) "
+                        "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value",
+                        (current_user_id(), key, value),
+                    )
+                connection.commit()
+                settings = get_settings(connection, user_id)
+                _refresh_focus_kline(connection, user_id, settings)
+            parameters = _focus_kline_payload(connection, user_id, settings)["parameters"]
+            result = jsonify(
+                settings={key: settings.get(key) for key in SETTING_KEYS.values()},
+                parameters=parameters,
+            )
+            return result
+        finally:
+            connection.close()
 
     @app.get("/account")
     @user_required
@@ -406,6 +575,7 @@ def register_routes(app):
                 (current_user_id(), subject_id, focus_item_id, subject, mode, planned_minutes, started_at, client_token or None, started_at),
             )
             connection.commit()
+            _refresh_focus_kline(connection, current_user_id(), settings)
             return jsonify(session=_row(connection, cursor.lastrowid)), 201
         finally:
             connection.close()
@@ -501,6 +671,7 @@ def register_routes(app):
             ended_at = _now("UTC").isoformat()
             finish_focus_session(connection, int(session_id), ended_at)
             connection.commit()
+            _refresh_focus_kline(connection, current_user_id())
             return jsonify(session=_row(connection, int(session_id)))
         finally:
             connection.close()
@@ -529,6 +700,7 @@ def register_routes(app):
                 connection.execute("UPDATE focus_pauses SET ended_at = ? WHERE id = ?", (now, open_pause["id"]))
                 connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE id = ?", (now, session_id))
             connection.commit()
+            _refresh_focus_kline(connection, current_user_id())
             return jsonify(session=_row(connection, int(session_id)))
         finally:
             connection.close()
@@ -740,10 +912,19 @@ def register_routes(app):
                     return jsonify(error=str(error)), 400
                 except sqlite3.IntegrityError:
                     return jsonify(error="duplicate_subject"), 409
-                allowed = {"morning_start", "lunch_start", "library_open", "library_close", "exam_date", "timezone", "heatmap_visible_hours"}
+                kline_keys = set(SETTING_KEYS.values())
+                allowed = {"morning_start", "lunch_start", "library_open", "library_close", "exam_date", "timezone", "heatmap_visible_hours"} | kline_keys
+                kline_values = {}
+                if any(key in payload for key in kline_keys):
+                    try:
+                        kline_values = validate_setting_payload(payload, get_settings(connection, current_user_id()))
+                    except ValueError as error:
+                        return jsonify(error=str(error)), 400
                 for key, value in payload.items():
                     if key not in allowed:
                         continue
+                    if key in kline_values:
+                        value = kline_values[key]
                     if key.endswith("_start") or key.endswith("_close") or key == "library_open":
                         if not isinstance(value, str) or not TIME_RE.fullmatch(value):
                             return jsonify(error=f"invalid_time:{key}"), 400
@@ -762,6 +943,12 @@ def register_routes(app):
                         (current_user_id(), key, str(value)),
                     )
                 connection.commit()
+                # The K-line is a derived view of both sessions and settings.
+                # Rebuild it after any account-setting write (not only through
+                # the dedicated K-line endpoint), so timezone/parameter edits
+                # cannot leave a persisted cache behind.  The API itself is
+                # still served from the pure source-row adapter above.
+                _refresh_focus_kline(connection, current_user_id())
             user_id = current_user_id()
             return jsonify(
                 settings=get_settings(connection, user_id),

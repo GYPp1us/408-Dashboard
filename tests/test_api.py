@@ -38,7 +38,7 @@ def test_dashboard_payload_contains_home_and_focus_data(authenticated_client):
 
     assert response.status_code == 200
     assert {"now", "windows", "focus", "today_focus", "focus_investment", "heatmap", "scores", "score_history", "plans"} <= payload.keys()
-    assert len(payload["heatmap"]) == 30
+    assert len(payload["heatmap"]) == 25
     assert all(len(day) == 12 for day in payload["heatmap"])
     assert payload["heatmap_visible_hours"] == list(range(0, 24, 2))
     assert payload["focus"]["today"] == []
