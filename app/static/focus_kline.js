@@ -134,6 +134,7 @@
       isFocusing,
       focusSeconds: finite(source.today_focus_seconds ?? source.focus_seconds ?? latest.focusSeconds, latest.focusSeconds),
       updatedAt: source.updated_at ?? source.generated_at ?? source.now ?? new Date().toISOString(),
+      intradayDate: String(source.intraday_date ?? source.selected_date ?? ""),
       limits: latestLimits,
       parameters,
       initialIndex: finite(source.initial_index, 100),
@@ -440,8 +441,16 @@
       const value = param?.time;
       const date = typeof value === "string" ? value : value && typeof value === "object" ? `${value.year}-${String(value.month).padStart(2, "0")}-${String(value.day).padStart(2, "0")}` : "";
       if (date && data.days.some((item) => item.date === date)) {
+        const clickedDay = data.days.find((item) => item.date === date);
         state.selectedDate = date;
-        refreshCharts(data);
+        if (clickedDay?.intraday.length) {
+          refreshCharts(data);
+        } else {
+          const url = new URL(window.location.href);
+          url.searchParams.set("date", date);
+          window.history.replaceState(null, "", url);
+          loadKline();
+        }
       }
     });
     chart.timeScale().fitContent();
@@ -620,13 +629,16 @@
     if (!page) return;
     let data;
     const query = new URL(window.location.href).searchParams;
+    const requestedDate = query.get("date") || state.selectedDate;
     if (query.get("demo") === "1") {
       data = demoPayload();
       showFeedback("#kline-data-feedback", "本地演示数据 · 接入 /api/focus-kline 后将自动替换为真实历史。", "ok");
     } else {
       showFeedback("#kline-data-feedback", "正在读取专注历史…");
       try {
-        const response = await fetch(page.dataset.klineApi || "/api/focus-kline", { credentials: "same-origin" });
+        const apiUrl = new URL(page.dataset.klineApi || "/api/focus-kline", window.location.href);
+        if (requestedDate) apiUrl.searchParams.set("date", requestedDate);
+        const response = await fetch(apiUrl, { credentials: "same-origin" });
         if (!response.ok) throw new Error(`load_${response.status}`);
         data = normalizePayload(await response.json());
         showFeedback("#kline-data-feedback", `已载入 ${data.days.length} 个交易日；指数分度 ${data.priceTick.toFixed(3)}。`, "ok");
@@ -635,8 +647,9 @@
         data = normalizePayload({});
       }
     }
-    const requestedDate = query.get("date") || state.selectedDate;
-    state.selectedDate = requestedDate && data.days.some((day) => day.date === requestedDate) ? requestedDate : null;
+    state.selectedDate = requestedDate && data.days.some((day) => day.date === requestedDate)
+      ? requestedDate
+      : data.days.some((day) => day.date === data.intradayDate) ? data.intradayDate : null;
     destroyCharts();
     state.payload = data;
     renderStatus(data);
