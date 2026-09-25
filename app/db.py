@@ -8,6 +8,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
+REPORTER_HEARTBEAT_TIMEOUT_SECONDS = 45
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -42,6 +45,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
     value TEXT NOT NULL,
     PRIMARY KEY (user_id, key)
 );
+CREATE TABLE IF NOT EXISTS focus_reporter_keys (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    nonce TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS user_subjects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -73,7 +81,8 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
     interruption_count INTEGER NOT NULL DEFAULT 0,
     last_foreground_at TEXT,
     focus_locked INTEGER NOT NULL DEFAULT 0,
-    trusted INTEGER NOT NULL DEFAULT 1
+    trusted INTEGER NOT NULL DEFAULT 1,
+    reporter_source TEXT
 );
 CREATE TABLE IF NOT EXISTS focus_pauses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -747,6 +756,7 @@ def _hierarchy_ensure_history_columns(connection: sqlite3.Connection) -> None:
         "focus_locked": "INTEGER NOT NULL DEFAULT 0",
         "trusted": "INTEGER NOT NULL DEFAULT 1",
         "ended_reason": "TEXT",
+        "reporter_source": "TEXT",
     })
     for table in ("scores", "plans"):
         _hierarchy_add_columns(connection, table, {
@@ -1310,8 +1320,9 @@ def finish_focus_session(connection: sqlite3.Connection, session_id: int, ended_
 
 def expire_unattended_focus(connection: sqlite3.Connection, now: datetime, timeout_seconds: int = 30) -> int | None:
     cutoff = now - timedelta(seconds=timeout_seconds)
+    reporter_cutoff = now - timedelta(seconds=REPORTER_HEARTBEAT_TIMEOUT_SECONDS)
     query = """
-        SELECT id, last_foreground_at
+        SELECT id, last_foreground_at, reporter_source
         FROM focus_sessions
         WHERE status = 'active'
           AND focus_locked = 0
@@ -1321,20 +1332,23 @@ def expire_unattended_focus(connection: sqlite3.Connection, now: datetime, timeo
                 AND focus_pauses.ended_at IS NULL
           )
           AND last_foreground_at IS NOT NULL
-          AND last_foreground_at <= ?
+          AND ((reporter_source IS NULL AND last_foreground_at <= ?)
+               OR (reporter_source IS NOT NULL AND last_foreground_at <= ?))
         ORDER BY id DESC
         LIMIT 1
     """
-    if not connection.execute(query, (cutoff.isoformat(),)).fetchone():
+    params = (cutoff.isoformat(), reporter_cutoff.isoformat())
+    if not connection.execute(query, params).fetchone():
         return None
     connection.execute("BEGIN IMMEDIATE")
-    row = connection.execute(query, (cutoff.isoformat(),)).fetchone()
+    row = connection.execute(query, params).fetchone()
     if not row:
         connection.commit()
         return None
     last_foreground_at = datetime.fromisoformat(row["last_foreground_at"])
-    ended_at = (last_foreground_at + timedelta(seconds=timeout_seconds)).isoformat()
-    finish_focus_session(connection, row["id"], ended_at, "foreground_timeout")
+    grace = REPORTER_HEARTBEAT_TIMEOUT_SECONDS if row["reporter_source"] else timeout_seconds
+    ended_at = (last_foreground_at + timedelta(seconds=grace)).isoformat()
+    finish_focus_session(connection, row["id"], ended_at, "reporter_timeout" if row["reporter_source"] else "foreground_timeout")
     connection.commit()
     return int(row["id"])
 
@@ -1357,7 +1371,7 @@ def record_foreground_heartbeat(
         }
     connection.execute("BEGIN IMMEDIATE")
     active = connection.execute(
-        "SELECT id FROM focus_sessions WHERE status = 'active' AND user_id = ? ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM focus_sessions WHERE status = 'active' AND reporter_source IS NULL AND user_id = ? ORDER BY id DESC LIMIT 1",
         (user_id,),
     ).fetchone()
     recovered = False
@@ -1369,7 +1383,7 @@ def record_foreground_heartbeat(
         session_id = int(active["id"])
     elif session_id is not None and allow_recovery:
         row = connection.execute(
-            "SELECT id FROM focus_sessions WHERE id = ? AND user_id = ? AND status = 'completed' AND ended_reason = 'foreground_timeout'",
+            "SELECT id FROM focus_sessions WHERE id = ? AND user_id = ? AND reporter_source IS NULL AND status = 'completed' AND ended_reason = 'foreground_timeout'",
             (session_id, user_id),
         ).fetchone()
         if row:

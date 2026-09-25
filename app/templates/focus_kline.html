@@ -7,7 +7,7 @@
       <a class="kline-back-link" href="{% if auth_user %}{{ url_for('user_dashboard', username=auth_user.username) }}{% else %}{{ url_for('guest_dashboard') }}{% endif %}">← 返回统计图</a>
       <p class="kline-eyebrow">FOCUS MARKET · DAILY INDEX</p>
       <h1 id="focus-kline-title">专注指数</h1>
-      <p class="kline-page-note">把每日有效专注量化成一根行情线：行为决定趋势，盘中波动只描述当日路径。</p>
+      <p class="kline-page-note">把每日有效专注量化成一根行情线：行为决定趋势；收盘低于 10 点时，次日从 10 点重新开盘。</p>
     </div>
     <div class="kline-market-state" aria-live="polite"><span class="kline-state-dot" data-kline-state-dot></span><span>当前状态</span><strong id="kline-state">读取中</strong></div>
   </header>

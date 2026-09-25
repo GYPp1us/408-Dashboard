@@ -38,6 +38,8 @@ def test_focus_kline_api_recomputes_and_returns_market_contract(authenticated_cl
     payload = response.get_json()
     assert payload["initial_index"] == 100.0
     assert payload["price_tick"] == 0.001
+    assert payload["price_floor"] == 0.001
+    assert payload["reset_open_price"] == 10.0
     assert payload["intraday_bar_minutes"] == 1
     assert {"daily", "today", "intraday", "parameters", "limit_down", "limit_up"} <= payload.keys()
     assert payload["parameters"]["a_low_hours"] == 4.0
@@ -45,11 +47,15 @@ def test_focus_kline_api_recomputes_and_returns_market_contract(authenticated_cl
     assert payload["parameters"]["a_high_hours"] == 9.0
 
 
-def test_focus_kline_api_prioritizes_delisted_status(authenticated_client):
+def test_focus_kline_api_reopens_after_sub_ten_close_and_keeps_live_status(authenticated_client, monkeypatch):
     from datetime import date, datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
 
-    from app.db import connect, get_settings
-    from app.focus_kline import build_focus_kline
+    from app import routes
+    from app.db import connect
+
+    now = datetime(2026, 2, 7, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(routes, "_now", lambda timezone_name="UTC": now if timezone_name != "UTC" else now.astimezone(timezone.utc))
 
     connection = connect(authenticated_client.application.config["DATABASE"])
     owner_id = connection.execute(
@@ -77,26 +83,17 @@ def test_focus_kline_api_prioritizes_delisted_status(authenticated_client):
             user_id, subject, mode, planned_minutes, started_at, status
         ) VALUES (?, '退市后仍专注', '专注', 30, ?, 'active')
         """,
-        (owner_id, (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()),
+        (owner_id, (now - timedelta(minutes=1)).isoformat()),
     )
     connection.commit()
 
     payload = authenticated_client.get("/api/focus-kline").get_json()
-    assert payload["today"]["delisted"] is True
-    assert payload["today"]["close"] == 10.0
-    assert payload["status"] == "delisted"
+    assert payload["today"]["open"] == 10.0
+    assert payload["today"]["delisted"] is False
+    assert payload["intraday"]
+    assert payload["status"] == "focus"
     assert payload["focus_state"] == "focus"
     assert payload["is_focusing"] is True
-
-    facade = build_focus_kline(
-        connection,
-        owner_id,
-        get_settings(connection, owner_id)["timezone"],
-        get_settings(connection, owner_id),
-    )
-    assert facade["status"] == "delisted"
-    assert facade["focus_state"] == "focus"
-    assert facade["is_focusing"] is True
     connection.close()
 
 

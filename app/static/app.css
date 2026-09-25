@@ -323,6 +323,11 @@ body.is-resting { --accent:#6f8f78; --accent-soft:#eef4ef; --accent-deep:#4f7058
 .settings-actions span { color:var(--muted); font-size:10px; }
 .settings-actions .primary { height:36px; margin:0; padding:0 18px; border-radius:5px; }
 .settings-data-grid { margin-top:12px; }
+.reporter-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.reporter-actions .ui-button { min-height:34px; padding:0 12px; }
+.reporter-link-box { margin-top:10px; padding:10px 12px; border:1px solid var(--line); border-radius:5px; background:var(--accent-soft); }
+.reporter-link-box code { display:block; overflow-wrap:anywhere; color:var(--accent-deep); font:500 11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; user-select:all; }
+.reporter-note { display:block; margin-top:9px; color:var(--muted); font-size:10px; }
 .settings-data-grid .inline-form { grid-template-columns:1.2fr 1fr 1fr auto; }
 .settings-data-grid .inline-form .primary { height:34px; }
 .settings-tabs { display:flex; gap:4px; margin:0 0 12px; border-bottom:1px solid var(--line); }

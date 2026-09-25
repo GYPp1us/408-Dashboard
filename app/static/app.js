@@ -1843,7 +1843,29 @@
       showToast(error.message);
     } finally {
       button.disabled = false;
+    }
   }
+
+  async function loadReporterConnection(rotate = false) {
+    const url = rotate ? "/api/focus-reporter/connection/rotate" : "/api/focus-reporter/connection";
+    const details = await api(url, { method: "POST", body: "{}" });
+    const box = $("#reporter-link-box");
+    const link = $("#reporter-link");
+    if (link) link.textContent = details.report_url;
+    if (box) box.hidden = false;
+    return details;
+  }
+
+  function reporterPrompt(details) {
+    return [
+      "请为当前学习软件接入 408 Dashboard 专注上报。",
+      `先 GET ${details.catalog_url} 获取科目 subjects 和事项 focus_items，按其数字 id 选择 subject_id、focus_item_id。`,
+      `每 10–30 秒向 ${details.report_url} POST 一次 JSON（Content-Type: application/json）：`,
+      '{"source":"app_name","state":"focus","subject_id":1,"focus_item_id":1}',
+      '其中 source 是本软件固定的英文标识；两个 id 必须换成目录中对应且匹配的实际 id。停止专注时立即发送 {"source":"app_name","state":"idle"}。',
+      "重复的 focus 帧是心跳，只形成一段连续专注；断联 45 秒后自动结束。使用服务端接收时间。409 表示另一处专注正在进行或当日已经结算。",
+      "链接里的 key 等同密码，不要放进公开仓库、日志或截图。",
+    ].join("\n");
   }
 
   function scoreEntryValue() {
@@ -2166,6 +2188,29 @@
       } catch (_error) {
         showToast("复制失败，请手动选择迁移码");
       }
+    });
+    $("#copy-reporter-link")?.addEventListener("click", async () => {
+      try {
+        const details = await loadReporterConnection();
+        await copyText(details.report_url);
+        showToast("上报链接已复制");
+      } catch (error) { showToast(error.message); }
+    });
+    $("#copy-reporter-prompt")?.addEventListener("click", async () => {
+      try {
+        const details = await loadReporterConnection();
+        await copyText(reporterPrompt(details));
+        showToast("接入提示已复制");
+      } catch (error) { showToast(error.message); }
+    });
+    $("#rotate-reporter-key")?.addEventListener("click", async () => {
+      const confirmed = await requestConfirmation({ title: "更换上报 key", message: "旧链接将立即失效，其他软件需要更新为新链接。", label: "更换 key", tone: "danger" });
+      if (!confirmed) return;
+      try {
+        await loadReporterConnection(true);
+        $("#reporter-note").textContent = "key 已更换；请复制新链接并更新其他软件。";
+        showToast("上报 key 已更换");
+      } catch (error) { showToast(error.message); }
     });
   }
 

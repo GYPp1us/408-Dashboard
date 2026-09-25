@@ -8,7 +8,7 @@ import sqlite3
 from flask import abort, jsonify, redirect, render_template, request, session, url_for
 
 from .auth import admin_required, current_user_id, is_guest, login_required, user_required
-from .db import add_friend, connect, consume_migration_code, create_focus_item, create_migration_code, create_subject, delete_focus_item, delete_subject, export_migration_data, finish_focus_session, get_daily_settlement, get_focus_item, get_focus_item_by_name, get_focus_messages, get_settings, get_subject, get_subject_by_name, get_user, get_user_by_username, issue_invitation, list_focus_items, list_focus_modes, list_friends, list_invitations, list_latest_scores, list_plans, list_public_users, list_scores, list_subjects, record_foreground_heartbeat, remove_friend, reorder_focus_items, save_focus_messages, update_focus_item, update_subject
+from .db import REPORTER_HEARTBEAT_TIMEOUT_SECONDS, add_friend, connect, consume_migration_code, create_focus_item, create_migration_code, create_subject, delete_focus_item, delete_subject, export_migration_data, finish_focus_session, get_daily_settlement, get_focus_item, get_focus_item_by_name, get_focus_messages, get_settings, get_subject, get_subject_by_name, get_user, get_user_by_username, issue_invitation, list_focus_items, list_focus_modes, list_friends, list_invitations, list_latest_scores, list_plans, list_public_users, list_scores, list_subjects, record_foreground_heartbeat, remove_friend, reorder_focus_items, save_focus_messages, update_focus_item, update_subject
 from .focus_kline import (
     DEFAULT_BAR_MINUTES,
     INITIAL_INDEX,
@@ -25,6 +25,7 @@ from .focus_kline import (
     trading_sessions_from_settings,
     validate_setting_payload,
 )
+from .focus_reporter import ReporterError, apply_frame, authenticate_reporter, connection_details
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 
 
@@ -71,6 +72,9 @@ def _pause_map(connection) -> dict[int, list[dict]]:
 def _session_segments(row: dict, pauses: list[dict], now: datetime) -> list[tuple[datetime, datetime]]:
     start = datetime.fromisoformat(row["started_at"]).astimezone(now.tzinfo)
     end = datetime.fromisoformat(row["ended_at"]).astimezone(now.tzinfo) if row.get("ended_at") else now
+    if not row.get("ended_at") and row.get("reporter_source") and row.get("last_foreground_at"):
+        last_seen = datetime.fromisoformat(row["last_foreground_at"]).astimezone(now.tzinfo)
+        end = min(end, last_seen + timedelta(seconds=REPORTER_HEARTBEAT_TIMEOUT_SECONDS))
     cursor = start
     segments = []
     for pause in pauses:
@@ -156,6 +160,9 @@ def _today_focus_rows(connection, now: datetime, pauses: dict[int, list[dict]] |
         payload = _session_payload(row_data, pause_rows.get(row["id"], []), now)
         start = datetime.fromisoformat(payload["started_at"]).astimezone(now.tzinfo)
         end = datetime.fromisoformat(payload["ended_at"]).astimezone(now.tzinfo) if payload["ended_at"] else now
+        if not payload["ended_at"] and payload.get("reporter_source") and payload.get("last_foreground_at"):
+            last_seen = datetime.fromisoformat(payload["last_foreground_at"]).astimezone(now.tzinfo)
+            end = min(end, last_seen + timedelta(seconds=REPORTER_HEARTBEAT_TIMEOUT_SECONDS))
         if end <= day_start or start >= day_end:
             continue
         payload["started_at"] = max(start, day_start).isoformat()
@@ -247,7 +254,7 @@ def _focus_kline_payload(
     latest = candles[-1] if candles else None
     selected_intraday = next((row for row in candles if row["date"] == intraday_date), None) if intraday_date else None
     if selected_intraday is None:
-        selected_intraday = next((row for row in reversed(candles) if not row["delisted"] and row["intraday"]), None)
+        selected_intraday = next((row for row in reversed(candles) if row["intraday"]), None)
     selected_intraday_date = selected_intraday["date"] if selected_intraday else None
     # Minute bars are much larger than daily OHLC data. Keep one requested
     # intraday series in the response; the browser requests another date only
@@ -264,7 +271,7 @@ def _focus_kline_payload(
         "is_focusing": False,
         "is_paused": False,
     }
-    status = "delisted" if latest and latest.get("delisted") else focus["state"]
+    status = focus["state"]
     public_parameters = {
         "a_low_hours": parameters.a_low,
         "a_mid_hours": parameters.a_mid,
@@ -295,7 +302,8 @@ def _focus_kline_payload(
         "initial_index": INITIAL_INDEX,
         "price_tick": PRICE_TICK,
         "intraday_bar_minutes": DEFAULT_BAR_MINUTES,
-        "price_floor": PRICE_FLOOR,
+        "price_floor": PRICE_TICK,
+        "reset_open_price": PRICE_FLOOR,
     }
 
 
@@ -454,6 +462,65 @@ def register_routes(app):
         finally:
             connection.close()
 
+    @app.post("/api/focus-reporter/connection")
+    @user_required
+    def focus_reporter_connection():
+        connection = connect(app.config["DATABASE"])
+        try:
+            response = jsonify(connection_details(connection, current_user_id(), app.config["SECRET_KEY"]))
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        finally:
+            connection.close()
+
+    @app.post("/api/focus-reporter/connection/rotate")
+    @user_required
+    def rotate_focus_reporter_connection():
+        connection = connect(app.config["DATABASE"])
+        try:
+            response = jsonify(connection_details(connection, current_user_id(), app.config["SECRET_KEY"], rotate=True))
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        finally:
+            connection.close()
+
+    @app.get("/api/focus-reporter/<key>/catalog")
+    def focus_reporter_catalog(key):
+        connection = connect(app.config["DATABASE"])
+        try:
+            user_id = authenticate_reporter(connection, key, app.config["SECRET_KEY"])
+            if user_id is None:
+                return jsonify(error="invalid_reporter_key"), 401
+            response = jsonify(subjects=list_subjects(connection, user_id), focus_items=list_focus_items(connection, user_id))
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        finally:
+            connection.close()
+
+    @app.post("/api/focus-reporter/<key>/frame")
+    def focus_reporter_frame(key):
+        connection = connect(app.config["DATABASE"])
+        try:
+            user_id = authenticate_reporter(connection, key, app.config["SECRET_KEY"])
+            if user_id is None:
+                return jsonify(error="invalid_reporter_key"), 401
+            if request.content_length is not None and request.content_length > 4096:
+                return jsonify(error="frame_too_large"), 413
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict):
+                return jsonify(error="json_object_required"), 400
+            try:
+                result = apply_frame(connection, user_id, payload, _now("UTC"))
+            except ReporterError as error:
+                return jsonify(error=error.code), error.status
+            if result["changed"]:
+                _refresh_focus_kline(connection, user_id)
+            response = jsonify(result)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        finally:
+            connection.close()
+
     @app.get("/account")
     @user_required
     def account_page():
@@ -472,7 +539,7 @@ def register_routes(app):
     def dashboard_api():
         connection = connect(app.config["DATABASE"])
         viewer_id = _viewer_user_id(connection)
-        connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active' AND user_id = ?", (_now("UTC").isoformat(), viewer_id))
+        connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active' AND reporter_source IS NULL AND user_id = ?", (_now("UTC").isoformat(), viewer_id))
         connection.commit()
         settings = get_settings(connection, viewer_id)
         now = _now(settings.get("timezone", "Asia/Shanghai"))
