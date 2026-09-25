@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
 CREATE TABLE IF NOT EXISTS focus_reporter_keys (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     nonce TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    token TEXT
 );
 CREATE TABLE IF NOT EXISTS user_subjects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -873,6 +874,7 @@ def init_db(connection: sqlite3.Connection, *, allow_subject_migration_review: b
     )
     connection.executescript(SCHEMA)
     _hierarchy_ensure_history_columns(connection)
+    _hierarchy_add_columns(connection, "focus_reporter_keys", {"token": "TEXT"})
     _migrate_focus_hierarchy(connection)
     connection.execute("DROP INDEX IF EXISTS one_active_focus")
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_focus_per_user ON focus_sessions(user_id) WHERE status = 'active' AND user_id IS NOT NULL")
@@ -882,6 +884,7 @@ def init_db(connection: sqlite3.Connection, *, allow_subject_migration_review: b
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS unique_user_subject_key ON user_subjects(user_id, subject_key)")
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS unique_user_focus_item_key ON user_focus_items(user_id, subject_id, item_key)")
     connection.execute("CREATE INDEX IF NOT EXISTS user_focus_item_order ON user_focus_items(user_id, sort_order, id)")
+    connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS unique_focus_reporter_token ON focus_reporter_keys(token) WHERE token IS NOT NULL")
     for key, value in DEFAULT_SETTINGS.items():
         connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
     connection.execute(

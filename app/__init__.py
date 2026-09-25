@@ -7,6 +7,7 @@ from .config import default_config
 from .auth import register_auth
 from .db import connect, ensure_site_owner, init_db
 from .focus_monitor import start_focus_monitor
+from .focus_reporter import materialize_legacy_reporter_keys
 from .routes import register_routes
 
 
@@ -20,6 +21,7 @@ def create_app(overrides: dict | None = None) -> Flask:
     Path(app.config["DATABASE"]).parent.mkdir(parents=True, exist_ok=True)
     connection = connect(app.config["DATABASE"])
     init_db(connection)
+    materialize_legacy_reporter_keys(connection, app.config["SECRET_KEY"])
     ensure_site_owner(
         connection,
         app.config["ADMIN_USERNAME"],

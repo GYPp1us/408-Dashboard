@@ -160,7 +160,7 @@ X-Migration-Code: <一次性迁移码>
 
 ### 外部专注上报
 
-登录后在设置页“外部专注上报”复制上报链接或接入提示。链接中的 key 是账户凭据；“更换 key”会立即撤销旧链接。`GET <catalog_url>` 返回当前账户的科目与事项 ID。上报者每 10–30 秒向 `<report_url>` 发送一个 JSON 状态帧，停止时立即发送 `idle`：
+登录后在设置页“外部专注上报”复制上报链接或接入提示。链接中的 key 是长期有效的账户凭据，不会因服务重启、版本更新或应用密钥轮换而失效；只有主动“更换 key”才会立即撤销旧链接。45 秒是专注会话的断联超时，并非 key 有效期。`GET <catalog_url>` 返回当前账户的科目与事项 ID。上报者每 10–30 秒向 `<report_url>` 发送一个 JSON 状态帧，停止时立即发送 `idle`：
 
 ```json
 {"source":"study_app","state":"focus","subject_id":1,"focus_item_id":1}

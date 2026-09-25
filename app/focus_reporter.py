@@ -26,32 +26,58 @@ class ReporterError(ValueError):
         self.status = status
 
 
-def _token(user_id: int, nonce: str, secret_key: str) -> str:
+def _legacy_token(user_id: int, nonce: str, secret_key: str) -> str:
     message = f"focus-reporter-v1:{user_id}:{nonce}".encode("utf-8")
     digest = hmac.new(secret_key.encode("utf-8"), message, hashlib.sha256).hexdigest()
     return f"{user_id}.{digest}"
 
 
+def materialize_legacy_reporter_keys(connection: sqlite3.Connection, secret_key: str) -> int:
+    """Persist issued v1 keys before a later app-secret rotation can change them."""
+
+    if connection.execute("SELECT 1 FROM focus_reporter_keys WHERE token IS NULL LIMIT 1").fetchone() is None:
+        return 0
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        rows = connection.execute(
+            "SELECT user_id, nonce FROM focus_reporter_keys WHERE token IS NULL"
+        ).fetchall()
+        for row in rows:
+            connection.execute(
+                "UPDATE focus_reporter_keys SET token = ? WHERE user_id = ? AND token IS NULL",
+                (_legacy_token(int(row["user_id"]), row["nonce"], secret_key), row["user_id"]),
+            )
+        connection.commit()
+        return len(rows)
+    except Exception:
+        connection.rollback()
+        raise
+
+
 def connection_details(connection: sqlite3.Connection, user_id: int, secret_key: str, *, rotate: bool = False) -> dict[str, str]:
-    """Issue a stable link; rotation immediately invalidates the old key."""
+    """Issue a durable link; only explicit rotation invalidates the old key."""
 
     connection.execute("BEGIN IMMEDIATE")
     try:
-        row = connection.execute("SELECT nonce FROM focus_reporter_keys WHERE user_id = ?", (user_id,)).fetchone()
+        row = connection.execute("SELECT nonce, token FROM focus_reporter_keys WHERE user_id = ?", (user_id,)).fetchone()
         if row is None or rotate:
             nonce = secrets.token_urlsafe(24)
+            token = f"{user_id}.{secrets.token_hex(32)}"
             connection.execute(
-                "INSERT INTO focus_reporter_keys(user_id, nonce, created_at) VALUES (?, ?, ?) "
-                "ON CONFLICT(user_id) DO UPDATE SET nonce = excluded.nonce, created_at = excluded.created_at",
-                (user_id, nonce, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO focus_reporter_keys(user_id, nonce, created_at, token) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET nonce = excluded.nonce, created_at = excluded.created_at, token = excluded.token",
+                (user_id, nonce, datetime.now(timezone.utc).isoformat(), token),
             )
         else:
-            nonce = row["nonce"]
+            token = row["token"]
+            if token is None:
+                token = _legacy_token(user_id, row["nonce"], secret_key)
+                connection.execute("UPDATE focus_reporter_keys SET token = ? WHERE user_id = ?", (token, user_id))
         connection.commit()
     except Exception:
         connection.rollback()
         raise
-    base = f"{REPORT_BASE_URL}/api/focus-reporter/{_token(user_id, nonce, secret_key)}"
+    base = f"{REPORT_BASE_URL}/api/focus-reporter/{token}"
     return {"report_url": f"{base}/frame", "catalog_url": f"{base}/catalog"}
 
 
@@ -60,10 +86,10 @@ def authenticate_reporter(connection: sqlite3.Connection, key: str, secret_key: 
     if not match:
         return None
     user_id = int(match.group(1))
-    row = connection.execute("SELECT nonce FROM focus_reporter_keys WHERE user_id = ?", (user_id,)).fetchone()
+    row = connection.execute("SELECT nonce, token FROM focus_reporter_keys WHERE user_id = ?", (user_id,)).fetchone()
     if row is None:
         return None
-    expected = _token(user_id, row["nonce"], secret_key)
+    expected = row["token"] or _legacy_token(user_id, row["nonce"], secret_key)
     return user_id if hmac.compare_digest(expected, key) else None
 
 
