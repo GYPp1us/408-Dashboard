@@ -42,6 +42,73 @@ def test_reporter_key_catalog_rotation_and_guest_boundary(reporter_client):
     assert guest.post("/api/focus-reporter/connection").status_code == 403
 
 
+def test_existing_key_is_preserved_through_schema_upgrade_and_secret_rotation(tmp_path):
+    from app import create_app
+    from app.db import connect
+    from app.focus_reporter import _legacy_token
+
+    database = str(tmp_path / "legacy-reporter.sqlite3")
+    config = {
+        "TESTING": True,
+        "DATABASE": database,
+        "SECRET_KEY": "old-app-secret",
+        "ADMIN_PASSWORD": "test-password",
+        "COOKIE_SECURE": False,
+    }
+    create_app(config)
+    connection = connect(database)
+    try:
+        user_id = connection.execute("SELECT id FROM users WHERE role = 'site_owner'").fetchone()[0]
+        connection.execute("DROP TABLE focus_reporter_keys")
+        connection.execute(
+            "CREATE TABLE focus_reporter_keys (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, "
+            "nonce TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+        nonce = "existing-issued-nonce"
+        legacy_key = _legacy_token(user_id, nonce, config["SECRET_KEY"])
+        connection.execute(
+            "INSERT INTO focus_reporter_keys(user_id, nonce, created_at) VALUES (?, ?, ?)",
+            (user_id, nonce, "2026-09-25T00:00:00+00:00"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    create_app(config)
+    connection = connect(database)
+    try:
+        stored = connection.execute("SELECT token FROM focus_reporter_keys WHERE user_id = ?", (user_id,)).fetchone()
+        assert stored["token"] == legacy_key
+    finally:
+        connection.close()
+
+    rotated_app = create_app({**config, "SECRET_KEY": "new-app-secret"})
+    client = rotated_app.test_client()
+    assert client.get(f"/api/focus-reporter/{legacy_key}/catalog").status_code == 200
+    assert client.post("/login", data={"password": "test-password"}).status_code in (200, 302)
+    details = client.post("/api/focus-reporter/connection").get_json()
+    assert f"/{legacy_key}/frame" in details["report_url"]
+
+
+def test_new_key_survives_app_secret_rotation(tmp_path):
+    from app import create_app
+
+    config = {
+        "TESTING": True,
+        "DATABASE": str(tmp_path / "durable-reporter.sqlite3"),
+        "SECRET_KEY": "first-secret",
+        "ADMIN_PASSWORD": "test-password",
+        "COOKIE_SECURE": False,
+    }
+    first = create_app(config).test_client()
+    first.post("/login", data={"password": "test-password"})
+    details = first.post("/api/focus-reporter/connection").get_json()
+    second = create_app({**config, "SECRET_KEY": "second-secret"}).test_client()
+    second.post("/login", data={"password": "test-password"})
+    assert second.post("/api/focus-reporter/connection").get_json() == details
+    assert second.get(urlparse(details["catalog_url"]).path).status_code == 200
+
+
 def test_reporter_frames_form_one_session_and_reject_conflicts(reporter_client):
     from app.db import connect
 
