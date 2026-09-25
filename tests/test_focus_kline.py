@@ -314,7 +314,7 @@ def test_custom_anchor_parameters_rebuild_the_intraday_anchor_path():
     assert defaults["intraday"] != custom["intraday"]
 
 
-def test_price_below_ten_delists_and_never_falls_again():
+def test_close_below_ten_reopens_at_ten_and_can_recover():
     from app.focus_kline import build_focus_klines
 
     now = datetime(2026, 8, 1, 23, 0, tzinfo=timezone.utc)
@@ -322,12 +322,17 @@ def test_price_below_ten_delists_and_never_falls_again():
     daily = {start + timedelta(days=index): 0 for index in range(36)}
     rows = build_focus_klines(daily, now=now)
 
-    delisted_rows = [row for row in rows if row["delisted"]]
-    assert delisted_rows
-    first_delisted = rows.index(delisted_rows[0])
-    assert all(row["close"] == 10.0 for row in rows[first_delisted:])
-    assert all(row["close"] >= 10.0 for row in rows)
-    assert all(row["status"] == "delisted" for row in rows[first_delisted:])
+    first_below = next(index for index, row in enumerate(rows) if row["delisted"])
+    assert rows[first_below]["close"] < 10.0
+    assert rows[first_below]["intraday"]
+    assert rows[first_below + 1]["open"] == 10.0
+    assert rows[first_below + 1]["previous_close"] == 10.0
+    assert rows[first_below + 1]["intraday"]
+    daily[start + timedelta(days=first_below + 1)] = 9 * 3600
+    recovered = build_focus_klines(daily, now=now)
+    assert recovered[first_below + 1]["open"] == 10.0
+    assert recovered[first_below + 1]["close"] == 11.0
+    assert recovered[first_below + 1]["delisted"] is False
     assert all(row["high"] >= row["open"] >= row["low"] for row in rows)
 
 

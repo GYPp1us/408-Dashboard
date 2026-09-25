@@ -57,7 +57,6 @@
     const text = String(value || "").trim().toLowerCase();
     if (["focus", "focused", "active", "专注", "进行中"].includes(text)) return "focus";
     if (["rest", "resting", "idle", "paused", "inactive", "休息", "未专注", "空闲", "closed"].includes(text)) return "rest";
-    if (["delisted", "退市"].includes(text)) return "delisted";
     return text ? "rest" : "unknown";
   }
 
@@ -210,7 +209,7 @@
   }
 
   function isLiveMarketMinute(data, selected, latestPoint) {
-    if (!selected || selected.date !== data.today.date || selected.delisted || !latestPoint) return false;
+    if (!selected || selected.date !== data.today.date || !latestPoint) return false;
     const now = Date.now();
     if (selected.tradingSessions.length) {
       return selected.tradingSessions.some((session) => {
@@ -378,8 +377,8 @@
   function selectedDay(data) {
     const requested = data.days.find((day) => day.date === state.selectedDate);
     if (requested) return requested;
-    const latestListed = [...data.days].reverse().find((day) => !day.delisted && day.intraday.length);
-    const fallback = latestListed || data.days.at(-1) || data.today;
+    const latestWithPath = [...data.days].reverse().find((day) => day.intraday.length);
+    const fallback = latestWithPath || data.days.at(-1) || data.today;
     state.selectedDate = fallback.date;
     return fallback;
   }
@@ -413,27 +412,25 @@
     const series = chart.addSeries(library.CandlestickSeries, { upColor: "#d66c58", downColor: "#4d8a73", borderVisible: false, wickUpColor: "#d66c58", wickDownColor: "#4d8a73", priceFormat: { type: "price", precision: 3, minMove: data.priceTick } });
     series.setData(days.map((item) => ({ time: item.date, open: item.open, high: item.high, low: item.low, close: item.close })));
     const liveDay = days.find((item) => item.date === data.today.date);
-    if (liveDay && !liveDay.delisted) {
+    if (liveDay) {
       state.liveDailySeries = series;
       state.liveDailyCandle = { time: liveDay.date, open: liveDay.open, high: liveDay.high, low: liveDay.low, close: liveDay.close };
     }
     addLimitLines(series, data);
-    // Delisted candles remain frozen after the first breach.  Only the
-    // first breached day is a delisting event; later candles may still be
-    // today's quote or the historical day being inspected.
-    const firstDelistedDate = data.days.find((item) => item.delisted)?.date || "";
+    // A sub-10 close is followed by a fresh 10-point opening on the next day.
+    const lastResetDate = [...days].reverse().find((item) => item.delisted)?.date || "";
     const selected = selectedDay(data);
-    const markerDates = new Set([days.at(-1)?.date, firstDelistedDate, selected.date]);
+    const markerDates = new Set([days.at(-1)?.date, lastResetDate, selected.date]);
     const markers = days.filter((item) => markerDates.has(item.date)).map((item) => {
-      const isFirstDelisted = item.date === firstDelistedDate;
+      const isReset = item.date === lastResetDate;
       const isSelected = item.date === selected.date;
       const isToday = item.date === data.today.date;
       return {
         time: item.date,
-        position: isFirstDelisted ? "belowBar" : "aboveBar",
-        color: isFirstDelisted ? "#758079" : isSelected ? "#8067b3" : "#b47a59",
-        shape: isFirstDelisted ? "arrowDown" : isSelected ? "circle" : "square",
-        text: isFirstDelisted ? "首次退市" : isSelected && !isToday ? "回看" : isToday ? "今日" : "",
+        position: isReset ? "belowBar" : "aboveBar",
+        color: isReset ? "#758079" : isSelected ? "#8067b3" : "#b47a59",
+        shape: isReset ? "arrowUp" : isSelected ? "circle" : "square",
+        text: isReset ? "次日 10 点开盘" : isSelected && !isToday ? "回看" : isToday ? "今日" : "",
       };
     });
     if (markers.length) library.createSeriesMarkers(series, markers);
@@ -475,7 +472,7 @@
     card?.classList.toggle("is-empty", !points.length);
     setText("#kline-intraday-caption", dayCaption(data, selected));
     setText("#kline-selected-day", dayBadge(data, selected));
-    setText("#kline-intraday-empty", selected.delisted ? `${selected.date} 已退市，无盘中记录` : `${selected.date} 暂无盘中记录`);
+    setText("#kline-intraday-empty", `${selected.date} 暂无盘中记录`);
     if (empty) empty.hidden = Boolean(points.length);
     host.hidden = !points.length;
     if (!points.length) return;
@@ -532,9 +529,8 @@
     const dot = $("[data-kline-state-dot]");
     dot?.classList.toggle("is-focus", data.status === "focus");
     dot?.classList.toggle("is-rest", data.status === "rest");
-    dot?.classList.toggle("is-delisted", data.status === "delisted");
-    setText("#kline-state", data.status === "focus" ? "专注中" : data.status === "delisted" ? "已退市" : data.status === "rest" ? "休息 / 未专注" : "等待数据");
-    setText("#kline-session-state", data.status === "focus" ? "LIVE · 专注中" : data.status === "delisted" ? "已退市" : data.status === "rest" ? "休息中" : "等待开盘");
+    setText("#kline-state", data.status === "focus" ? "专注中" : data.status === "rest" ? "休息 / 未专注" : "等待数据");
+    setText("#kline-session-state", data.status === "focus" ? "LIVE · 专注中" : data.status === "rest" ? "休息中" : "等待开盘");
     $("#kline-session-state")?.classList.toggle("is-live", data.status === "focus");
   }
 
@@ -553,7 +549,7 @@
     setText("#kline-market-date", data.today.date);
     setText("#kline-last-updated", `更新于 ${formatTime(data.updatedAt)}`);
     setText("#kline-focus-total", formatSeconds(data.focusSeconds));
-    const focusStatus = data.isFocusing === true || data.focusState === "focus" ? "专注中" : data.isFocusing === false || data.focusState === "rest" || data.status === "delisted" ? "休息 / 未专注" : "暂无状态";
+    const focusStatus = data.isFocusing === true || data.focusState === "focus" ? "专注中" : data.isFocusing === false || data.focusState === "rest" ? "休息 / 未专注" : "暂无状态";
     setText("#kline-focus-status", focusStatus);
     setText("#kline-limit-low", point(data.limits.low));
     setText("#kline-limit-high", point(data.limits.high));

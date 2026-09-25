@@ -30,6 +30,8 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .db import REPORTER_HEARTBEAT_TIMEOUT_SECONDS
+
 
 INITIAL_INDEX = 100.0
 PRICE_TICK = 0.001
@@ -37,7 +39,7 @@ PRICE_FLOOR = 10.0
 LIMIT_RETURN = 0.10
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_BAR_MINUTES = 1
-MODEL_VERSION = "focus-kline-v5"
+MODEL_VERSION = "focus-kline-v6"
 
 # The app's existing study windows define the market clock.  Focus outside
 # these windows can move an opening quote, but is never rendered as a
@@ -252,7 +254,7 @@ def _coerce_now(now: datetime | None, target_zone: Any) -> datetime:
     return _coerce_datetime(value, target_zone)
 
 
-def _price(value: float, *, floor: float = PRICE_FLOOR) -> float:
+def _price(value: float, *, floor: float = PRICE_TICK) -> float:
     """Round to the 0.001 index tick without binary tail noise."""
 
     if not math.isfinite(value):
@@ -396,6 +398,12 @@ def _session_segments(
         end = _coerce_datetime(raw_end, target_zone) if raw_end else now
     except (TypeError, ValueError):
         end = now
+    if not raw_end and row.get("reporter_source") and row.get("last_foreground_at"):
+        try:
+            last_seen = _coerce_datetime(row["last_foreground_at"], target_zone)
+            end = min(end, last_seen + timedelta(seconds=REPORTER_HEARTBEAT_TIMEOUT_SECONDS))
+        except (TypeError, ValueError):
+            pass
     end = min(end, now)
     if end <= start:
         return []
@@ -430,7 +438,7 @@ def _load_effective_segments(
     target_zone: Any,
 ) -> list[tuple[datetime, datetime]]:
     rows = connection.execute(
-        "SELECT id, started_at, ended_at, status FROM focus_sessions WHERE user_id = ? ORDER BY started_at, id",
+        "SELECT id, started_at, ended_at, status, reporter_source, last_foreground_at FROM focus_sessions WHERE user_id = ? ORDER BY started_at, id",
         (user_id,),
     ).fetchall()
     pauses: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -597,7 +605,7 @@ def _intraday_path(
         else:
             session_open = _price(previous_price * (1.0 + lunch_gap_return))
             session_open = max(
-                PRICE_FLOOR,
+                PRICE_TICK,
                 min(
                     _price(reference_price * (1.0 + LIMIT_RETURN), floor=0.001),
                     max(_price(reference_price * (1.0 - LIMIT_RETURN), floor=0.001), session_open),
@@ -660,7 +668,7 @@ def _intraday_path(
                 taper = min(1.0, ((1.0 - progress) / NOISE_CLOSE_TAPER_FRACTION) ** 2)
                 market_return = max(-LIMIT_RETURN, min(LIMIT_RETURN, anchor + (momentum + noise) * taper))
                 value = _price(reference_price * (1.0 + market_return))
-                lower_bound = max(PRICE_FLOOR, _price(reference_price * (1.0 - LIMIT_RETURN), floor=0.001))
+                lower_bound = max(PRICE_TICK, _price(reference_price * (1.0 - LIMIT_RETURN)))
                 upper_bound = _price(reference_price * (1.0 + LIMIT_RETURN), floor=0.001)
                 value = min(max(value, lower_bound), upper_bound)
                 value, limit_rebound_state = _reflect_limit_price(
@@ -729,8 +737,7 @@ def build_focus_klines(
     if first_day > last_day:
         first_day = last_day
     result: list[dict[str, Any]] = []
-    previous_close = _price(initial_price, floor=0.001)
-    delisted = previous_close < PRICE_FLOOR
+    previous_close = _price(initial_price)
 
     day = first_day
     while day <= last_day:
@@ -758,72 +765,57 @@ def build_focus_klines(
         focus_hours = focus_seconds / 3600.0
         pre_open_window_seconds = max(0, int((market_open - day_start).total_seconds()))
         lunch_window_seconds = max(0, int((windows[1]["start"] - windows[0]["end"]).total_seconds())) if len(windows) > 1 else 0
-        pre_open_gap = _gap_return(pre_open_seconds, pre_open_window_seconds) if has_segment_detail else 0.0
+        reset_open = previous_close < PRICE_FLOOR
+        pre_open_gap = _gap_return(pre_open_seconds, pre_open_window_seconds) if has_segment_detail and not reset_open else 0.0
         lunch_gap = _gap_return(lunch_seconds, lunch_window_seconds) if has_segment_detail else 0.0
         complete_day = day < current.date() or current >= market_close
-        reference_price = _price(previous_close)
-
-        if delisted or reference_price <= PRICE_FLOOR:
-            delisted = True
-            open_price = close = low = high = _price(PRICE_FLOOR)
-            path: list[dict[str, Any]] = []
-            status = "delisted"
+        # A completed close below 10 is a reset trigger, not an absorbing
+        # delisting state. The next day opens at exactly 10 and can rally.
+        reference_price = _price(PRICE_FLOOR if reset_open else previous_close)
+        lower_bound = _price(reference_price * (1.0 - LIMIT_RETURN))
+        upper_bound = _price(reference_price * (1.0 + LIMIT_RETURN))
+        open_price = _price(PRICE_FLOOR if reset_open else reference_price * (1.0 + pre_open_gap))
+        open_price = min(max(open_price, lower_bound), upper_bound)
+        fundamental_return = close_return(focus_hours, config)
+        target_close = min(max(_price(reference_price * (1.0 + fundamental_return)), lower_bound), upper_bound)
+        path = _intraday_path(
+            day=day,
+            reference_price=reference_price,
+            open_price=open_price,
+            target_close=target_close,
+            parameters=config,
+            segments=segments,
+            now=current,
+            user_key=user_key,
+            bar_minutes=bar_minutes,
+            sessions=normalized_sessions,
+            lunch_gap_return=lunch_gap,
+            complete_day=complete_day,
+            aggregate_focus_seconds=None if has_segment_detail else focus_seconds,
+        )
+        close = _price(path[-1]["price"]) if path else open_price
+        if complete_day:
+            close = target_close
+            if path:
+                path[-1]["price"] = close
+        below_reset_threshold = complete_day and close < PRICE_FLOOR
+        if below_reset_threshold:
+            status = "below_floor"
+        elif day != current.date():
+            status = "closed"
+        elif not path:
+            status = "pre_open"
+        elif current < windows[0]["end"]:
+            status = "active"
+        elif len(windows) > 1 and current < windows[1]["start"]:
+            status = "break"
+        elif current < windows[-1]["end"]:
+            status = "active"
         else:
-            lower_bound = max(PRICE_FLOOR, _price(reference_price * (1.0 - LIMIT_RETURN), floor=0.001))
-            upper_bound = _price(reference_price * (1.0 + LIMIT_RETURN), floor=0.001)
-            open_price = _price(reference_price * (1.0 + pre_open_gap))
-            open_price = min(max(open_price, lower_bound), upper_bound)
-            fundamental_return = close_return(focus_hours, config)
-            target = reference_price * (1.0 + fundamental_return)
-            target_close = min(max(_price(target), lower_bound), upper_bound)
-            path = _intraday_path(
-                day=day,
-                reference_price=reference_price,
-                open_price=open_price,
-                target_close=target_close,
-                parameters=config,
-                segments=segments,
-                now=current,
-                user_key=user_key,
-                bar_minutes=bar_minutes,
-                sessions=normalized_sessions,
-                lunch_gap_return=lunch_gap,
-                complete_day=complete_day,
-                aggregate_focus_seconds=None if has_segment_detail else focus_seconds,
-            )
-            would_delist = complete_day and target < PRICE_FLOOR
-            if would_delist:
-                delisted = True
-                target_close = _price(PRICE_FLOOR)
-                if path:
-                    path[-1]["price"] = target_close
-                close = target_close
-                status = "delisted"
-            else:
-                close = _price(path[-1]["price"]) if path else open_price
-                if complete_day:
-                    close = target_close
-                    if path:
-                        path[-1]["price"] = close
-                if day != current.date():
-                    status = "closed"
-                elif not path:
-                    status = "pre_open"
-                elif current < windows[0]["end"]:
-                    status = "active"
-                elif len(windows) > 1 and current < windows[1]["start"]:
-                    status = "break"
-                elif current < windows[-1]["end"]:
-                    status = "active"
-                else:
-                    status = "closed"
-            prices = [float(point["price"]) for point in path] or [open_price, close]
-            low = _price(min(prices))
-            high = _price(max(prices))
-            low = max(low, lower_bound)
-            high = min(high, upper_bound)
-            low = min(low, _price(min(open_price, close)))
-            high = max(high, _price(max(open_price, close)))
+            status = "closed"
+        prices = [float(point["price"]) for point in path] or [open_price, close]
+        low = min(max(_price(min(prices)), lower_bound), open_price, close)
+        high = max(min(_price(max(prices)), upper_bound), open_price, close)
         change = _price(abs(close - reference_price), floor=0.001) if close != reference_price else 0.0
         if close < reference_price:
             change = -change
@@ -846,9 +838,9 @@ def build_focus_klines(
                 "pre_open_gap_pct": round(pre_open_gap * 100.0, 3),
                 "lunch_gap_pct": round(lunch_gap * 100.0, 3),
                 "status": status,
-                "delisted": bool(delisted),
+                "delisted": bool(below_reset_threshold),
                 "limit_up": _price(reference_price * (1.0 + LIMIT_RETURN)),
-                "limit_down": max(PRICE_FLOOR if delisted else 0.001, _price(reference_price * (1.0 - LIMIT_RETURN), floor=0.001)),
+                "limit_down": lower_bound,
                 "trading_sessions": [
                     {"name": item["name"], "start": item["start"].isoformat(), "end": item["end"].isoformat()}
                     for item in windows
@@ -1006,12 +998,16 @@ def current_focus_state(connection: sqlite3.Connection, user_id: int) -> dict[st
     """
 
     active = connection.execute(
-        "SELECT id FROM focus_sessions WHERE user_id = ? AND status = 'active' "
+        "SELECT id, reporter_source, last_foreground_at FROM focus_sessions WHERE user_id = ? AND status = 'active' "
         "ORDER BY id DESC LIMIT 1",
         (int(user_id),),
     ).fetchone()
     if not active:
         return {"state": "rest", "is_focusing": False, "is_paused": False}
+    if active["reporter_source"] and active["last_foreground_at"]:
+        last_seen = datetime.fromisoformat(active["last_foreground_at"]).astimezone(timezone.utc)
+        if datetime.now(timezone.utc) >= last_seen + timedelta(seconds=REPORTER_HEARTBEAT_TIMEOUT_SECONDS):
+            return {"state": "rest", "is_focusing": False, "is_paused": False}
     paused = connection.execute(
         "SELECT 1 FROM focus_pauses WHERE session_id = ? AND ended_at IS NULL LIMIT 1",
         (int(active["id"]),),
@@ -1055,7 +1051,7 @@ def build_focus_kline(
     latest = candles[-1] if candles else None
     previous_close = candles[-2]["close"] if len(candles) > 1 else INITIAL_INDEX
     focus = current_focus_state(connection, int(user_id))
-    latest_status = "delisted" if latest and latest.get("delisted") else focus["state"]
+    latest_status = focus["state"]
     return {
         "parameters": public_parameters,
         "trading_sessions": [
@@ -1082,7 +1078,8 @@ def build_focus_kline(
         "initial_index": INITIAL_INDEX,
         "price_tick": PRICE_TICK,
         "intraday_bar_minutes": DEFAULT_BAR_MINUTES,
-        "price_floor": PRICE_FLOOR,
+        "price_floor": PRICE_TICK,
+        "reset_open_price": PRICE_FLOOR,
     }
 
 
