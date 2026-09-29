@@ -35,7 +35,7 @@
 .detail-error { color: var(--ink, #202735); }
 .detail-action-message { min-height: 1.5em; color: var(--muted, #667085); font-size: 13px; }
 [data-detail-kind].is-detail-pressing { outline: 2px solid var(--accent, #8067b3); outline-offset: 3px; }
-[data-detail-kind] { -webkit-touch-callout: none; }
+[data-detail-kind] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 @media (max-width: 700px) {
   .detail-drawer-head { padding: 18px 12px; gap: 6px; }
   .detail-drawer-content { padding: 16px 12px 28px; }
