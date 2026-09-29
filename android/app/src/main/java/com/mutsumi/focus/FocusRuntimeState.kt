@@ -72,6 +72,8 @@ object ReminderPolicy {
     const val PAUSED_DELAY_MS = 5 * 60_000L
     private val endedThresholds = longArrayOf(15 * 60_000L, 30 * 60_000L, 60 * 60_000L)
 
+    fun acknowledgedCount(current: Int, incomingIndex: Int): Int = maxOf(current, incomingIndex).coerceIn(0, 3)
+
     fun due(
         state: FocusRuntimeState,
         nowEpochMs: Long,

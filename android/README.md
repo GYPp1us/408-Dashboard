@@ -45,9 +45,14 @@ $env:MUTSUMI_VIVO_ATOMIC_SCENE = '<vivo 分配的 scene>'
 ## 隐私边界
 
 - JavaScript 桥只接受计时状态，并将 `baseUrl` 固定为编译时域名。
-- WebView 仅在同一 HTTPS 主机内导航，外链交给系统浏览器。
+- WebView 仅在同一 HTTPS 主机和端口内导航，外链交给系统浏览器。
+- APP 关闭 WebView 页面缩放及缩放控件，固定页面 viewport；指数图保留自身的手势操作。网页端仅在图表区域拦截浏览器的双指/Ctrl 加滚轮缩放，普通页面保留浏览器缩放。
+- 主页表情图片上传通过 AndroidX Activity Result 调起系统图片单选，只读用户选择的 `content://` 图片，不申请图库或存储权限。取消、页面导航和 Activity 销毁会结束 WebView 文件回调；同时出现的新选择请求会被取消。
+- `allowFileAccess=false` 和 `allowContentAccess=false` 保持不变：禁用的是页面直接加载本地 URL；用户通过文件输入明确选择的 URI 经独立的 WebView 文件选择回调传入。API 35 模拟器已通过实际系统选择器的 content URI 预览、原始图片上传、重载比例和取消保留原图；vivo 真机所用 WebView 的上传、取消及旋转屏幕行为仍待验证，范围见 [模拟器验证记录](../docs/android-emulator-validation.md)。
 - 无障碍配置明确使用 `canRetrieveWindowContent=false`，代码不处理事件、不读取节点、不执行手势。
 - 应用不使用全屏通知权限冒充电话或闹钟。
 - 登录 Cookie 只用于同源心跳及暂停、继续、结束 API。
 
 更完整的厂商限制与真机清单见 [OriginOS 说明](../docs/originos-atomic-island.md)。
+
+文件选择边界的实现依据：Chromium 的 [`ShouldBlockURL`](https://github.com/chromium/chromium/blob/main/android_webview/browser/network_service/net_helpers.cc) 将 `allowContentAccess` 检查用于 `content://` 资源 URL；[`FilesSelectedInChooser`](https://github.com/chromium/chromium/blob/main/android_webview/browser/aw_web_contents_delegate.cc) 将用户选择的 URI 作为 `NativeFileInfo` 传给文件选择结果，未经过该 URL 检查；Android [`File::DoInitialize`](https://github.com/chromium/chromium/blob/main/base/files/file_posix.cc) 则通过 `OpenAndroidFile` 打开 content URI。因此保留上述两个开关，无需为文件输入开放页面的本地资源访问。API 35 模拟器结果支持这一实现，仍不能替代 vivo 真机验证。

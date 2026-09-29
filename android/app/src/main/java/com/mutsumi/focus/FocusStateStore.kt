@@ -31,6 +31,9 @@ class FocusStateStore(context: Context) {
             .putLong("observed_at", state.observedAtEpochMs)
             .putString("base_url", state.baseUrl)
             .also { editor ->
+                if (!FocusStateReducer.canApplyResponse(previous, state)) {
+                    editor.putLong("transition_revision", transitionRevision() + 1)
+                }
                 if (previous.sessionId != state.sessionId || previous.mode != state.mode) {
                     editor.putLong("paused_snooze_until", 0)
                     if (previous.sessionId != state.sessionId) editor.putInt("ended_acknowledged", 0)
@@ -39,6 +42,8 @@ class FocusStateStore(context: Context) {
             }
             .apply()
     }
+
+    fun transitionRevision(): Long = preferences.getLong("transition_revision", 0)
 
     fun pausedSnoozeUntil(): Long = preferences.getLong("paused_snooze_until", 0)
 
@@ -49,7 +54,7 @@ class FocusStateStore(context: Context) {
     fun endedAcknowledgedCount(): Int = preferences.getInt("ended_acknowledged", 0)
 
     fun acknowledgeEnded(index: Int) {
-        preferences.edit().putInt("ended_acknowledged", index.coerceIn(0, 3)).apply()
+        preferences.edit().putInt("ended_acknowledged", ReminderPolicy.acknowledgedCount(endedAcknowledgedCount(), index)).apply()
     }
 
     fun onboardingSeen(): Boolean = preferences.getBoolean("onboarding_seen", false)

@@ -1,6 +1,5 @@
 package com.mutsumi.focus
 
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -92,7 +91,7 @@ class OriginOsAtomicPublisher(private val context: Context) {
         return builder.build()
     }
 
-    fun reminderNotification(kind: ReminderKind): Notification {
+    fun reminderNotification(kind: ReminderKind, sessionId: Long): Notification {
         val minutes = when (kind) {
             ReminderKind.PAUSED -> 5
             ReminderKind.ENDED_15 -> 15
@@ -107,7 +106,17 @@ class OriginOsAtomicPublisher(private val context: Context) {
             .setContentText("点此回到计时器；开启覆盖层权限可获得全屏滑动提醒")
             .setCategory(Notification.CATEGORY_REMINDER)
             .setAutoCancel(true)
-            .setContentIntent(serviceIntent(FocusService.ACTION_OPEN_FROM_REMINDER, 10 + kind.ordinal))
+            .setContentIntent(PendingIntent.getActivity(
+                context,
+                10 + kind.ordinal,
+                Intent(context, MainActivity::class.java).apply {
+                    action = FocusService.ACTION_OPEN_FROM_REMINDER
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    putExtra(FocusService.EXTRA_REMINDER_KIND, kind.ordinal)
+                    putExtra(FocusService.EXTRA_SESSION_ID, sessionId)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ))
             .build()
     }
 
@@ -136,11 +145,13 @@ class OriginOsAtomicPublisher(private val context: Context) {
     }
 
     @Suppress("NewApi")
-    @SuppressLint("WrongConstant")
     private fun attachAndroidLiveUpdate(builder: Notification.Builder, state: FocusRuntimeState) {
         if (Build.VERSION.SDK_INT < 36 || state.mode !in setOf(FocusMode.FOCUSING, FocusMode.PAUSED)) return
         builder.setStyle(Notification.ProgressStyle().setProgressIndeterminate(true).setStyledByProgress(true))
-        builder.setFlag(Notification.FLAG_PROMOTED_ONGOING, true)
+        // API 36.1 defines this public extra; use its documented wire name
+        // while compiling against 36 so older Android 16 builds stay safe.
+        // FLAG_PROMOTED_ONGOING is assigned by the system after eligibility checks.
+        builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
     }
 
     private fun serviceIntent(action: String, requestCode: Int): PendingIntent = PendingIntent.getService(

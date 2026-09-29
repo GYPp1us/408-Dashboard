@@ -34,8 +34,8 @@ android {
         applicationId = "com.mutsumi.focus"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "DASHBOARD_URL", "\"$dashboardUrl\"")
         buildConfigField("String", "VIVO_ATOMIC_SCENE", "\"$vivoAtomicScene\"")
@@ -65,6 +65,12 @@ android {
 
     buildFeatures {
         buildConfig = true
+    }
+
+    // An emulator may trust a generated local CA in Debug only. The supplied
+    // directory contains test resources, never production certificates/keys.
+    providers.environmentVariable("MUTSUMI_FOCUS_TEST_RES").orNull?.let {
+        sourceSets.getByName("debug").res.srcDir(it)
     }
 
     compileOptions {

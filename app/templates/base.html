@@ -1,13 +1,15 @@
 <!doctype html>
-<html lang="zh-CN"{% if 'MutsumiFocus/' in request.headers.get('User-Agent', '') %} class="native-app"{% endif %}>
+<html lang="zh-CN"{% if 'MutsumiFocus/' in request.headers.get('User-Agent', '') %} class="native-app"{% endif %} data-theme-mode="{{ ui_preferences.theme_mode }}" data-theme-palette="{{ ui_preferences.theme_palette }}">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale={% if 'MutsumiFocus/' in request.headers.get('User-Agent', '') %}0.5, minimum-scale=0.5{% else %}1{% endif %}">
+  <meta name="viewport" content="width=device-width, initial-scale={% if 'MutsumiFocus/' in request.headers.get('User-Agent', '') %}0.5, minimum-scale=0.5, maximum-scale=0.5, user-scalable=no{% else %}1{% endif %}">
   <title>{% block title %}408 Focus Console{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
-  {% if page_name in ['focus-kline', 'focus_kline'] %}<link rel="stylesheet" href="{{ url_for('static', filename='focus_kline.css') }}">{% endif %}
+  <link rel="stylesheet" href="{{ static_asset('app.css') }}">
+  {% if page_name in ['focus-kline', 'focus_kline'] %}<link rel="stylesheet" href="{{ static_asset('focus_kline.css') }}">{% endif %}
+  <link rel="stylesheet" href="{{ static_asset('dashboard-ui.css') }}">
+  {% if page_name == 'home' %}<link rel="stylesheet" href="{{ static_asset('dashboard-details.css') }}"><link rel="stylesheet" href="{{ static_asset('dashboard-index.css') }}">{% endif %}
 </head>
-<body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}" data-role="{{ 'guest' if is_guest else 'admin' }}" data-settings-tab="{{ settings_tab|default('system') }}">
+<body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}" data-role="{{ 'guest' if is_guest else 'admin' }}" data-settings-tab="{{ settings_tab|default('system') }}" data-viewer-id="{{ ui_preferences.viewer_id if ui_preferences.viewer_id is not none else 'public' }}" data-quick-focus-count="{{ ui_preferences.quick_focus_count }}">
   <div class="app-shell">
     <header class="status-bar">
       <div class="status-title"><i></i><strong>408 Focus Console</strong><span id="today-date" class="console-date">读取中</span></div>
@@ -57,12 +59,16 @@
     </div>
   </div>{% endif %}
   <div id="toast" class="toast" role="status"></div>
-  <script src="{{ url_for('static', filename='vendor/gsap.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='vendor/Draggable.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='vendor/Flip.min.js') }}"></script>
-  {% if page_name not in ['focus-kline', 'focus_kline'] %}<script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>{% endif %}
-  {% if page_name in ['focus-kline', 'focus_kline'] %}<script src="{{ url_for('static', filename='vendor/lightweight-charts.standalone.production.js') }}"></script>{% endif %}
-  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
-  {% if page_name in ['focus-kline', 'focus_kline'] %}<script src="{{ url_for('static', filename='focus_kline.js') }}" defer></script>{% endif %}
+  {% if page_name == 'home' %}{% include 'includes/detail_drawer.html' %}{% endif %}
+  <script src="{{ static_asset('vendor/gsap.min.js') }}"></script>
+  <script src="{{ static_asset('vendor/Draggable.min.js') }}"></script>
+  <script src="{{ static_asset('vendor/Flip.min.js') }}"></script>
+  {% if page_name not in ['focus-kline', 'focus_kline'] %}<script src="{{ static_asset('vendor/chart.umd.js') }}"></script>{% endif %}
+  {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('vendor/lightweight-charts.standalone.production.js') }}"></script>{% endif %}
+  <script src="{{ static_asset('dashboard-ui.js') }}" defer></script>
+  {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('chart-gestures.js') }}" defer></script>{% endif %}
+  {% if page_name == 'home' %}<script src="{{ static_asset('dashboard-details.js') }}" defer></script><script src="{{ static_asset('dashboard-index.js') }}" defer></script><script src="{{ static_asset('dashboard-artwork.js') }}" defer></script>{% endif %}
+  <script src="{{ static_asset('app.js') }}" defer></script>
+  {% if page_name in ['focus-kline', 'focus_kline'] %}<script src="{{ static_asset('focus_kline.js') }}" defer></script>{% endif %}
 </body>
 </html>

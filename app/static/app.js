@@ -1,14 +1,24 @@
 (() => {
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, heatWindowStart: null, heatHistoryLength: 0, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "heat", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, heatWindowStart: null, heatHistoryLength: 0, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "index", insightView: "investment", summaryReturnView: "investment", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
   const DAILY_TARGET_SECONDS = 7 * 3600;
-  const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
+  const chartColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const quickFocusCount = () => Number(window.DashboardUI?.preferences.quick_focus_count || 4);
+  const quickFocusStorageKey = () => `${QUICK_FOCUS_STORAGE}:${document.body.dataset.viewerId || 'public'}`;
+  const appFontFamily = '"Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
   const themePalettes = {
     idle: ["#d66c58", "#b25647", "#dd9073", "#97483e", "#c27758", "#e4a994", "#835144", "#d28a72"],
     focus: ["#8067b3", "#685295", "#9a86c3", "#59447f", "#8b77aa", "#b4a5d1", "#706186", "#9f8db8"],
     settled: ["#6f8f78", "#557763", "#8aa891", "#486653", "#789c81", "#abc0ad", "#5d8068", "#94ae99"],
   };
   const $ = (selector) => document.querySelector(selector);
-  const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => themePalettes[active ? "focus" : state.dashboard?.daily_settlement ? "settled" : "idle"];
+  const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => {
+    if (active) return themePalettes.focus;
+    if (state.dashboard?.daily_settlement) return themePalettes.settled;
+    const palette = document.documentElement.dataset.themePalette;
+    if (palette === "sage") return ["#638576", "#3e6656", "#91ad9d", "#406252", "#749886", "#b8cebf", "#4c7160", "#8cab9b"];
+    if (palette === "ocean") return ["#587eaa", "#3c608c", "#88a6cb", "#405a78", "#7495ba", "#aec4dd", "#4e6f94", "#90aecf"];
+    return themePalettes.idle;
+  };
   if (window.Chart) {
     Chart.defaults.font.family = appFontFamily;
     Chart.defaults.font.size = 14;
@@ -22,6 +32,48 @@
   const formatSignedSeconds = (seconds) => `${seconds > 0 ? "+" : seconds < 0 ? "−" : "±"}${formatSeconds(Math.abs(seconds))}`;
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
   const QUICK_FOCUS_STORAGE = "mutsumiQuickFocusV2";
+  const OWN_FOCUS_PAGES = new Set(["home", "settings", "account", "focus-kline", "focus_kline"]);
+  let focusIdentityRevoked = false;
+  const canManageOwnFocus = () => !focusIdentityRevoked && document.body.dataset.role !== "guest"
+    && OWN_FOCUS_PAGES.has(document.body.dataset.page)
+    && /^[1-9]\d*$/.test(document.body.dataset.viewerId || "");
+  const restStorageKey = () => `mutsumiRestStartedAt:${document.body.dataset.viewerId}`;
+
+  function clearNativeFocus() {
+    // Idle is a real ended transition in the native reducer, so identity reset
+    // needs its dedicated bridge method rather than a fabricated idle/rest state.
+    try { window.MutsumiAndroid?.clearFocusState?.(); }
+    catch (error) { console.warn("native_focus_clear_failed", error); }
+  }
+
+  function revokeFocusIdentity() {
+    focusIdentityRevoked = true;
+    window.clearInterval(state.heartbeatTimer);
+    window.clearInterval(state.syncTimer);
+    window.clearTimeout(state.heartbeatFailureTimer);
+    state.heartbeatFailureSince = null;
+    state.focusRecoverySessionId = null;
+    state.lastActiveSnapshot = null;
+    state.recentlyEnded = null;
+    state.restStartedAt = null;
+    state.nativeStateSignature = null;
+    try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
+    clearNativeFocus();
+    setSyncLost(false);
+  }
+
+  function initializeFocusIdentity() {
+    if (document.body.dataset.role === "guest" || document.body.dataset.viewerId === "public") {
+      clearNativeFocus();
+      return;
+    }
+    if (!canManageOwnFocus()) return;
+    try {
+      const previous = window.localStorage.getItem("mutsumiNativeFocusViewer");
+      if (previous && previous !== document.body.dataset.viewerId) clearNativeFocus();
+      window.localStorage.setItem("mutsumiNativeFocusViewer", document.body.dataset.viewerId);
+    } catch (_error) {}
+  }
 
   function focusElapsedSeconds(session, now = Date.now()) {
     if (!session?.started_at) return 0;
@@ -90,6 +142,7 @@
   async function api(url, options = {}) {
     const response = await fetch(url, { headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
     if (response.status === 401) {
+      revokeFocusIdentity();
       window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
       throw new Error("authentication_required");
     }
@@ -108,6 +161,11 @@
   }
 
   function notifyNativeFocusState(active = state.dashboard?.focus?.active) {
+    if (!canManageOwnFocus()) return;
+    if (active?.user_id != null && String(active.user_id) !== document.body.dataset.viewerId) {
+      revokeFocusIdentity();
+      return;
+    }
     if (!window.MutsumiAndroid || typeof window.MutsumiAndroid.syncFocusState !== "function") return;
     const mode = state.restStartedAt ? "rest" : active?.paused_at ? "paused" : active ? "focusing" : state.recentlyEnded ? "ended" : "idle";
     const payload = {
@@ -149,17 +207,17 @@
   }
 
   function startRest() {
-    if (state.dashboard?.focus?.active || state.restStartedAt) return;
+    if (!canManageOwnFocus() || state.dashboard?.focus?.active || state.restStartedAt) return;
     state.restStartedAt = Date.now();
     state.recentlyEnded = null;
-    try { window.localStorage.setItem("mutsumiRestStartedAt", String(state.restStartedAt)); } catch (_error) {}
+    try { window.localStorage.setItem(restStorageKey(), String(state.restStartedAt)); } catch (_error) {}
     renderFocusStateOverlay(null);
     notifyNativeFocusState(null);
   }
 
   function exitRest() {
     state.restStartedAt = null;
-    try { window.localStorage.removeItem("mutsumiRestStartedAt"); } catch (_error) {}
+    try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
     renderFocusStateOverlay(null);
     notifyNativeFocusState(null);
   }
@@ -216,7 +274,10 @@
     document.querySelectorAll("form[data-confirm]").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const confirmed = await requestConfirmation({ title: form.dataset.confirmTitle, message: form.dataset.confirmMessage, label: form.dataset.confirmLabel, tone: form.dataset.confirmTone });
-      if (confirmed) HTMLFormElement.prototype.submit.call(form);
+      if (confirmed) {
+        if (new URL(form.action, window.location.href).pathname === "/logout") revokeFocusIdentity();
+        HTMLFormElement.prototype.submit.call(form);
+      }
     }));
   }
 
@@ -414,6 +475,9 @@
     const grid = $("#heat-grid");
     const days = $("#heat-days");
     if (!hours || !grid || !days) return;
+    const signature = JSON.stringify([heatmap, visibleHours, String(state.dashboard?.now || "").slice(0, 10)]);
+    if (grid.dataset.signature === signature) { state.heatGeometryUpdate?.(); return; }
+    grid.dataset.signature = signature;
     const configuredHours = [...new Set((visibleHours || []).map(Number))].filter((hour) => Number.isInteger(hour) && hour >= 0 && hour < 24 && hour % 2 === 0);
     const shownHours = configuredHours.length ? configuredHours : Array.from({ length: 12 }, (_, index) => index * 2);
     const buckets = shownHours.map((hour) => hour / 2);
@@ -440,7 +504,10 @@
     const renderCell = (minutes, dayIndex, absoluteIndex, bucket) => {
       const level = minutes === 0 ? 0 : Math.min(4, Math.ceil((minutes / max) * 4));
       const startHour = bucket * 2;
-      return `<i class="heat-cell${level ? ` l${level}` : ""}${fadeClass(dayIndex)}" data-detail="${formatDay(absoluteIndex)} ${String(startHour).padStart(2, "0")}:00-${String(startHour + 2).padStart(2, "0")}:00 · ${minutes} 分钟" title="${minutes} 分钟"></i>`;
+      const date = new Date(`${String(state.dashboard?.now || new Date().toISOString()).slice(0, 10)}T12:00:00Z`);
+      date.setUTCDate(date.getUTCDate() - (historyDays.length - 1 - absoluteIndex));
+      const dayKey = date.toISOString().slice(0, 10);
+      return `<button type="button" role="gridcell" tabindex="-1" aria-label="${dayKey} ${startHour} 至 ${startHour + 2} 点，${minutes} 分钟" data-detail-kind="heat" data-detail-date="${dayKey}" data-detail-hour="${startHour}" data-detail-key="${dayKey}:${startHour}" class="heat-cell${level ? ` l${level}` : ""}${fadeClass(dayIndex)}" data-detail="${formatDay(absoluteIndex)} ${String(startHour).padStart(2, "0")}:00-${String(startHour + 2).padStart(2, "0")}:00 · ${minutes} 分钟" title="${minutes} 分钟"></button>`;
     };
     const renderWindow = () => {
       const displayDays = historyDays.slice(state.heatWindowStart, state.heatWindowStart + dayCount);
@@ -448,7 +515,18 @@
       grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
         if (Date.now() < suppressClickUntil) return;
         $("#heat-detail").textContent = cell.dataset.detail;
+        state.heatSelection = { date: cell.dataset.detailDate, hour: cell.dataset.detailHour };
+        const button = $("#open-heat-detail");
+        if (button) {
+          button.disabled = false;
+          button.dataset.detailDate = cell.dataset.detailDate;
+          button.dataset.detailHour = cell.dataset.detailHour;
+          button.dataset.detailKey = cell.dataset.detailKey;
+        }
+        grid.querySelectorAll(".heat-cell").forEach((item) => { item.tabIndex = item === cell ? 0 : -1; });
       }));
+      const selectedCell = [...grid.querySelectorAll(".heat-cell")].find((cell) => cell.dataset.detailDate === state.heatSelection?.date && cell.dataset.detailHour === state.heatSelection?.hour);
+      (selectedCell || grid.querySelector(".heat-cell"))?.setAttribute("tabindex", "0");
       const labelIndexes = [0, 1, 2, 3].map((index) => Math.round((dayCount - 1) * index / 3));
       days.innerHTML = labelIndexes.map((index) => `<span>${formatDay(state.heatWindowStart + index)}</span>`).join("");
     };
@@ -479,15 +557,17 @@
     }
     let drag = null;
     grid.onpointerdown = (event) => {
-      if (maxStart === 0) return;
+      if (maxStart === 0 || event.button !== 0 || !event.isPrimary) return;
       drag = { pointerId: event.pointerId, startX: event.clientX, windowStart: state.heatWindowStart, moved: false };
-      grid.setPointerCapture(event.pointerId);
-      grid.classList.add("is-dragging");
     };
     grid.onpointermove = (event) => {
       if (!drag || event.pointerId !== drag.pointerId) return;
       const delta = event.clientX - drag.startX;
-      if (Math.abs(delta) > 4) drag.moved = true;
+      if (!drag.moved && Math.abs(delta) > 4) {
+        drag.moved = true;
+        grid.setPointerCapture(event.pointerId);
+        grid.classList.add("is-dragging");
+      }
       if (!drag.moved) return;
       event.preventDefault();
       const dayWidth = grid.clientWidth / dayCount;
@@ -499,6 +579,20 @@
       drag = null;
       grid.classList.remove("is-dragging");
       if (grid.hasPointerCapture(event.pointerId)) grid.releasePointerCapture(event.pointerId);
+    };
+    grid.onkeydown = (event) => {
+      const cell = event.target.closest(".heat-cell");
+      if (!cell) return;
+      const cells = [...grid.querySelectorAll(".heat-cell")];
+      const index = cells.indexOf(cell);
+      const steps = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -dayCount, ArrowDown: dayCount };
+      if (!(event.key in steps)) return;
+      event.preventDefault();
+      if (event.key === "ArrowLeft" && index % dayCount === 0 && state.heatWindowStart > 0) { moveWindow(state.heatWindowStart - 1); grid.querySelectorAll(".heat-cell")[index]?.focus(); return; }
+      if (event.key === "ArrowRight" && index % dayCount === dayCount - 1 && state.heatWindowStart < maxStart) { moveWindow(state.heatWindowStart + 1); grid.querySelectorAll(".heat-cell")[index]?.focus(); return; }
+      const next = cells[Math.max(0, Math.min(cells.length - 1, index + steps[event.key]))];
+      cells.forEach((item) => { item.tabIndex = item === next ? 0 : -1; });
+      next.focus();
     };
     grid.onpointerup = endDrag;
     grid.onpointercancel = endDrag;
@@ -539,8 +633,8 @@
         maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => formatMinutes(context.raw) } } },
         scales: {
-          x: { grid: { display: false }, ticks: { color: "#758079", maxRotation: 0, autoSkip: true } },
-          y: { beginAtZero: true, grid: { color: "rgba(117,128,121,.13)" }, ticks: { color: "#758079", callback: (value) => `${Math.round(Number(value) / 60)}h` } },
+          x: { grid: { display: false }, ticks: { color: chartColor("--muted"), maxRotation: 0, autoSkip: true } },
+          y: { beginAtZero: true, grid: { color: "rgba(117,128,121,.13)" }, ticks: { color: chartColor("--muted"), callback: (value) => `${Math.round(Number(value) / 60)}h` } },
         },
         animation: { duration: 320 },
       },
@@ -548,7 +642,7 @@
   }
 
   function selectActivityView(name) {
-    state.activityView = ["heat", "focus", "score"].includes(name) ? name : "heat";
+    state.activityView = ["index", "heat", "focus", "score"].includes(name) ? name : "index";
     document.querySelectorAll("[data-activity-view-panel]").forEach((panel) => {
       panel.hidden = panel.dataset.activityViewPanel !== state.activityView;
     });
@@ -561,6 +655,7 @@
       if (state.activityView === "focus") state.focusTrendChart?.resize();
       if (state.activityView === "score") state.scoreChart?.resize();
       if (state.activityView === "heat") state.heatGeometryUpdate?.();
+      if (state.activityView === "index") { window.DashboardIndex?.refresh(); window.DashboardIndex?.resize(); }
     });
   }
 
@@ -646,7 +741,7 @@
 
   function renderFocusComparison(active) {
     const view = $("#focus-comparison-view");
-    if (!view || !active) {
+    if (!view) {
       removeSecondTask("focusComparison");
       return;
     }
@@ -664,7 +759,8 @@
       $("#focus-compare-trend").textContent = delta > 0 ? `提前 +${formatSeconds(delta)}` : delta < 0 ? `落后 −${formatSeconds(Math.abs(delta))}` : "持平 ±00:00:00";
       renderFocusLeaderboard(state.dashboard?.focus_leaderboard, extraSeconds);
     };
-    setSecondTask("focusComparison", tick);
+    if (active) setSecondTask("focusComparison", tick);
+    else { removeSecondTask("focusComparison"); tick(Date.now()); }
   }
 
   function visibleLeaderboardEntries(entries, today) {
@@ -796,17 +892,27 @@
       : '<div class="loading-row">今日暂无专注记录。</div>';
   }
 
+  function selectInsightView(name) {
+    const summaryAvailable = state.summaryCharts.length > 0;
+    state.insightView = ["investment", "comparison", "summary"].includes(name) && (name !== "summary" || summaryAvailable) ? name : "investment";
+    ["investment", "comparison", "summary"].forEach((view) => {
+      const target = $(view === "investment" ? "#focus-investment-view" : view === "comparison" ? "#focus-comparison-view" : "#focus-summary");
+      if (target) target.hidden = state.insightView !== view;
+    });
+    document.querySelectorAll("[data-insight-view]").forEach((button) => {
+      button.hidden = button.dataset.insightView === "summary" && !summaryAvailable;
+      const selected = button.dataset.insightView === state.insightView;
+      button.classList.toggle("is-active", selected);
+      button.setAttribute("aria-selected", String(selected));
+    });
+    requestAnimationFrame(() => state.summaryCharts.forEach((chart) => chart.resize()));
+  }
+
   function closeFocusSummary() {
     removeSecondTask("summary");
     state.summaryCharts.forEach((chart) => chart.destroy());
     state.summaryCharts = [];
-    const overview = $("#focus-investment-view");
-    const comparison = $("#focus-comparison-view");
-    const summary = $("#focus-summary");
-    const active = Boolean(state.dashboard?.focus?.active);
-    if (overview) overview.hidden = active;
-    if (comparison) comparison.hidden = !active;
-    if (summary) summary.hidden = true;
+    selectInsightView(state.insightView === "summary" ? state.summaryReturnView : state.insightView);
   }
 
   function showFocusSummary(session) {
@@ -814,6 +920,7 @@
     const comparison = $("#focus-comparison-view");
     const summary = $("#focus-summary");
     if (!overview || !summary || !window.Chart) return;
+    state.summaryReturnView = state.insightView === "summary" ? state.summaryReturnView : state.insightView;
     closeFocusSummary();
     overview.hidden = true;
     if (comparison) comparison.hidden = true;
@@ -825,7 +932,7 @@
     const palette = getThemePalette();
     state.summaryCharts.push(new Chart($("#session-goal-chart"), {
       type: "doughnut",
-      data: { datasets: [{ data: [Math.min(duration, 3600), Math.max(0, gap)], backgroundColor: [palette[0], "#e5e7ea"], borderWidth: 0 }] },
+      data: { datasets: [{ data: [Math.min(duration, 3600), Math.max(0, gap)], backgroundColor: [palette[0], chartColor("--subtle")], borderWidth: 0 }] },
       options: { responsive: true, maintainAspectRatio: false, cutout: "72%", plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 350 } },
     }));
     const restStartedAt = Date.now();
@@ -835,6 +942,7 @@
       if (elapsed >= 900) closeFocusSummary();
     };
     setSecondTask("summary", tick);
+    selectInsightView("summary");
   }
 
   function formatScoreDate(value) {
@@ -875,7 +983,7 @@
       }),
       borderColor: palette[index % palette.length],
       backgroundColor: palette[index % palette.length],
-      pointBackgroundColor: "#fff",
+      pointBackgroundColor: chartColor("--surface"),
       pointBorderWidth: 2,
       pointRadius: 3,
       pointHoverRadius: 5,
@@ -907,7 +1015,7 @@
           context.beginPath();
           context.arc(point.x, point.y, 5, 0, Math.PI * 2);
           context.fill();
-          context.fillStyle = "#fff";
+          context.fillStyle = chartColor("--surface");
           context.beginPath();
           context.arc(point.x, point.y, 2, 0, Math.PI * 2);
           context.fill();
@@ -925,11 +1033,11 @@
         animation: false,
         interaction: { mode: "index", intersect: false },
         scales: {
-          x: { grid: { display: false }, ticks: { color: "#758079", font: { size: 11 } } },
-          y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: "#ebefed" }, ticks: { color: "#758079", font: { size: 11 }, callback: (value) => `${value}%` } },
+          x: { grid: { display: false }, ticks: { color: chartColor("--muted"), font: { size: 11 } } },
+          y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: chartColor("--line") }, ticks: { color: chartColor("--muted"), font: { size: 11 }, callback: (value) => `${value}%` } },
         },
         plugins: {
-          legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 7, color: "#5f6b66", font: { size: 11 } } },
+          legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 7, color: chartColor("--muted"), font: { size: 11 } } },
           tooltip: {
             enabled: false,
             external: ({ tooltip }) => {
@@ -953,6 +1061,7 @@
       state.scoreChart.data.datasets.forEach((dataset, index) => {
         dataset.borderColor = palette[index % palette.length];
         dataset.backgroundColor = palette[index % palette.length];
+        dataset.pointBackgroundColor = chartColor("--surface");
       });
       state.scoreChart.update("none");
     }
@@ -967,8 +1076,8 @@
 
   function loadQuickFocus() {
     try {
-      const saved = JSON.parse(window.localStorage.getItem(QUICK_FOCUS_STORAGE) || "{}");
-      state.quickFocus.pinned = Array.isArray(saved.pinned) ? saved.pinned.map(Number).filter(Number.isInteger).slice(0, 4) : [];
+      const saved = JSON.parse(window.localStorage.getItem(quickFocusStorageKey()) || window.localStorage.getItem(QUICK_FOCUS_STORAGE) || "{}");
+      state.quickFocus.pinned = Array.isArray(saved.pinned) ? saved.pinned.map(Number).filter(Number.isInteger).slice(0, 8) : [];
       state.quickFocus.recent = Array.isArray(saved.recent) ? saved.recent.map(Number).filter(Number.isInteger).slice(0, 12) : [];
     } catch (_error) {
       state.quickFocus = { pinned: [], recent: [] };
@@ -976,7 +1085,7 @@
   }
 
   function saveQuickFocus() {
-    try { window.localStorage.setItem(QUICK_FOCUS_STORAGE, JSON.stringify(state.quickFocus)); }
+    try { window.localStorage.setItem(quickFocusStorageKey(), JSON.stringify(state.quickFocus)); }
     catch (_error) {}
   }
 
@@ -987,7 +1096,7 @@
     const remaining = modes.map((item) => Number(item.id)).filter((id) => !pinned.includes(id) && !recent.includes(id));
     state.quickFocus.pinned = pinned;
     state.quickFocus.recent = recent;
-    return [...pinned, ...recent, ...remaining].slice(0, 4);
+    return [...pinned, ...recent, ...remaining].slice(0, quickFocusCount());
   }
 
   function rememberFocusItem(focusItemId) {
@@ -998,10 +1107,11 @@
 
   function toggleQuickPin(focusItemId) {
     const id = Number(focusItemId);
+    if (document.body.dataset.role === "guest" || !(state.dashboard?.focus_items || []).some((item) => Number(item.id) === id)) return;
     if (state.quickFocus.pinned.includes(id)) {
       state.quickFocus.pinned = state.quickFocus.pinned.filter((item) => item !== id);
     } else {
-      state.quickFocus.pinned = [id, ...state.quickFocus.pinned.filter((item) => item !== id)].slice(0, 4);
+      state.quickFocus.pinned = [id, ...state.quickFocus.pinned.filter((item) => item !== id)].slice(0, quickFocusCount());
     }
     saveQuickFocus();
     renderModes(state.dashboard?.focus_items || state.dashboard?.focus_modes || []);
@@ -1013,10 +1123,14 @@
     if (!target) return;
     const byId = new Map(modes.map((item) => [Number(item.id), item]));
     const quickModes = quickModeIds(modes).map((id) => byId.get(id)).filter(Boolean);
+    const signature = JSON.stringify(quickModes.map((item) => [item.id, item.label, state.quickFocus.pinned.includes(Number(item.id))]));
+    if (target.dataset.signature === signature) return;
+    target.dataset.signature = signature;
+    target.querySelectorAll(".drag-thumb").forEach((thumb) => window.Draggable?.get(thumb)?.kill());
     target.innerHTML = quickModes.map((item) => {
       const label = item.label || `${item.subject} · ${item.name}`;
       const pinned = state.quickFocus.pinned.includes(Number(item.id));
-      return `<div class="mode"><div class="drag-launch" data-focus-item-id="${Number(item.id)}" data-focus-item="${escapeHtml(label)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">${escapeHtml(label)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(label)}">→</span></div><button class="quick-pin${pinned ? " is-pinned" : ""}" type="button" data-quick-pin="${Number(item.id)}" title="${pinned ? "取消固定" : "固定到快捷启动"}" aria-label="${pinned ? "取消固定" : "固定"} ${escapeHtml(label)}">${pinned ? "★" : "☆"}</button></div>`;
+      return `<div class="mode" data-detail-kind="focus" data-detail-key="${Number(item.id)}"><div class="drag-launch" data-focus-item-id="${Number(item.id)}" data-focus-item="${escapeHtml(label)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">${escapeHtml(label)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(label)}">→</span></div><button class="quick-pin${pinned ? " is-pinned" : ""}" type="button" data-quick-pin="${Number(item.id)}" title="${pinned ? "取消固定" : "固定到快捷启动"}" aria-label="${pinned ? "取消固定" : "固定"} ${escapeHtml(label)}">${pinned ? "★" : "☆"}</button><button class="quick-detail" type="button" data-detail-open aria-label="查看 ${escapeHtml(label)} 详情" title="事项详情（也可长按）">⋯</button></div>`;
     }).join("");
     target.querySelectorAll("[data-quick-pin]").forEach((button) => button.addEventListener("click", () => toggleQuickPin(button.dataset.quickPin)));
     initDragLaunchers();
@@ -1367,6 +1481,18 @@
   }
 
   function applyFocusState(active, animate = false) {
+    if (!canManageOwnFocus()) {
+      // Public profiles may show their focus theme, but never take ownership of
+      // that account's timer, recovery state, native service or pause overlay.
+      document.body.classList.toggle("is-focusing", Boolean(active));
+      document.body.classList.remove("is-paused");
+      syncScoreChartTheme(active);
+      return;
+    }
+    if (active?.user_id != null && String(active.user_id) !== document.body.dataset.viewerId) {
+      revokeFocusIdentity();
+      return;
+    }
     if (animate) animateLayout();
     const previousActive = state.lastActiveSnapshot;
     if (active) {
@@ -1392,14 +1518,16 @@
     renderFocusStateOverlay(active);
     notifyNativeFocusState(active);
     syncScoreChartTheme(active);
-    $("#idle-mode-view").hidden = Boolean(active);
-    $("#active-mode-view").hidden = !active;
-    $("#focus-investment-view").hidden = Boolean(active);
-    $("#focus-comparison-view").hidden = !active;
+    const idleView = $("#idle-mode-view"), activeView = $("#active-mode-view");
+    if (document.body.dataset.page !== "home" || !idleView || !activeView
+      || ["#home-state-note", "#focus-timer", "#focus-subject", "#focus-start", "#focus-window"].some((selector) => !$(selector))) return;
+    idleView.hidden = Boolean(active);
+    activeView.hidden = !active;
+    selectInsightView(state.insightView);
+    renderFocusComparison(active);
     $("#home-state-note").textContent = active ? "专注中，保持当前上下文" : "准备开始下一段专注";
     if (!active) {
       removeSecondTask("focus");
-      removeSecondTask("focusComparison");
       $("#focus-timer").textContent = "00:00:00";
       updatePauseControl(null);
       const track = $("#end-focus");
@@ -1411,7 +1539,6 @@
       }
       return;
     }
-    renderFocusComparison(active);
     updatePauseControl(active);
     updateFocusLockControl(active);
     $("#focus-subject").textContent = active.subject;
@@ -1443,12 +1570,19 @@
       day: String(data.now || "").slice(0, 10),
       heatmap: data.heatmap,
       heatmapVisibleHours: data.heatmap_visible_hours,
+      preferences: data.preferences,
       friends: (data.friends || []).map((friend) => [friend.id, friend.today_seconds, friend.delta_seconds]),
     });
   }
 
   function applyDashboard(data) {
+    if (focusIdentityRevoked) return;
+    if (canManageOwnFocus() && String(data.preferences?.viewer_id ?? data.viewer?.id) !== document.body.dataset.viewerId) {
+      revokeFocusIdentity();
+      return;
+    }
     state.dashboard = data;
+    window.DashboardUI?.applyPreferences(data.preferences);
     state.dashboardFetchedAt = Date.now();
     state.dashboardSignature = dashboardSignature(data);
     document.body.classList.toggle("is-settled", Boolean(data.daily_settlement));
@@ -1457,22 +1591,44 @@
     selectActivityView(state.activityView);
     $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
+    document.dispatchEvent(new CustomEvent("dashboard:updated", { detail: data }));
   }
 
   async function loadDashboard() {
+    if (focusIdentityRevoked) return;
+    if (document.body.dataset.page !== "home") return refreshCurrentPage();
     applyDashboard(await api("/api/dashboard"));
   }
 
+  async function refreshCurrentPage() {
+    if (document.body.dataset.page === "home") return loadDashboard();
+    if (!canManageOwnFocus()) return;
+    // Service broadcasts must not repopulate settings forms or account lists:
+    // refresh only the owner's focus state and retain the current route/inputs.
+    const data = await api("/api/dashboard");
+    if (!canManageOwnFocus()) return;
+    if (String(data.preferences?.viewer_id ?? data.viewer?.id) !== document.body.dataset.viewerId) {
+      revokeFocusIdentity();
+      return;
+    }
+    const focus = data.focus;
+    state.dashboard = { ...(state.dashboard || {}), focus };
+    state.dashboardFetchedAt = Date.now();
+    applyFocusState(focus.active);
+  }
+
   async function syncDashboard() {
-    if (document.body.dataset.page !== "home" || document.visibilityState !== "visible" || state.syncing) return;
+    if (focusIdentityRevoked || document.body.dataset.page !== "home" || document.visibilityState !== "visible" || state.syncing) return;
     state.syncing = true;
     try {
       const data = await api("/api/dashboard");
+      if (focusIdentityRevoked) return;
       if (dashboardSignature(data) !== state.dashboardSignature) applyDashboard(data);
       else {
         state.dashboard.focus_investment = data.focus_investment;
         state.dashboard.focus_leaderboard = data.focus_leaderboard;
         state.dashboardFetchedAt = Date.now();
+        document.dispatchEvent(new CustomEvent("dashboard:updated", { detail: data }));
       }
     } catch (error) {
       console.warn("dashboard_sync_failed", error);
@@ -1518,6 +1674,7 @@
   }
 
   async function sendForegroundHeartbeat(allowHidden = false) {
+    if (!canManageOwnFocus()) return;
     if ((!allowHidden && document.visibilityState !== "visible") || state.heartbeatInFlight) return;
     state.heartbeatInFlight = true;
     const sessionId = state.focusRecoverySessionId ?? state.dashboard?.focus?.active?.id ?? null;
@@ -1534,18 +1691,23 @@
         keepalive: true,
         signal: controller.signal,
       });
+      if (response.status === 401 || response.status === 403) {
+        revokeFocusIdentity();
+        return;
+      }
       if (!response.ok) throw new Error(`heartbeat_${response.status}`);
       const result = await response.json();
+      if (!canManageOwnFocus()) return;
       markHeartbeatSuccess();
       if (result.recovered) {
-        await loadDashboard();
+        await refreshCurrentPage();
         showToast("连接已恢复，继续以受信模式专注");
       } else if (sessionId && result.status === "completed") {
         state.focusRecoverySessionId = null;
-        syncDashboard();
+        await refreshCurrentPage();
       }
     } catch (_error) {
-      markHeartbeatFailure();
+      if (canManageOwnFocus()) markHeartbeatFailure();
     } finally {
       window.clearTimeout(timeout);
       state.heartbeatInFlight = false;
@@ -1554,7 +1716,7 @@
 
   function startForegroundHeartbeat() {
     window.clearInterval(state.heartbeatTimer);
-    if (document.body.dataset.page === "account") return;
+    if (!canManageOwnFocus()) return;
     sendForegroundHeartbeat();
     state.heartbeatTimer = window.setInterval(sendForegroundHeartbeat, 500);
   }
@@ -1766,6 +1928,7 @@
   async function loadSettings() {
     if (!$("#settings-form")) return;
     const [settings, scores] = await Promise.all([api("/api/settings"), api("/api/scores")]);
+    window.DashboardUI?.applyPreferences(settings.settings);
     Object.entries(settings.settings).forEach(([key, value]) => { const input = document.querySelector(`[name="${key}"]`); if (input) input.value = value; });
     const visibleHours = new Set(String(settings.settings.heatmap_visible_hours || "").split(","));
     document.querySelectorAll("[data-heat-hour]").forEach((input) => { input.checked = visibleHours.has(input.dataset.heatHour); });
@@ -2156,6 +2319,7 @@
       $("#heatmap-visible-hours").value = selectedHours.join(",");
       try {
         const payload = Object.fromEntries(new FormData(event.currentTarget));
+        payload.quick_focus_count = Number(payload.quick_focus_count);
         await api("/api/settings", { method: "PATCH", body: JSON.stringify(payload) });
         await loadSettings();
         showToast("设置已保存");
@@ -2239,10 +2403,28 @@
     }));
   }
 
+  document.addEventListener("dashboard:appearance", () => {
+    if (state.dashboard) {
+      renderFocusInvestment(state.dashboard.focus_investment, state.dashboard.focus?.active);
+      renderModes(state.dashboard.focus_items || state.dashboard.focus_modes || []);
+    }
+    syncScoreChartTheme(state.dashboard?.focus?.active);
+    state.summaryCharts.forEach((chart) => { chart.data.datasets[0].backgroundColor = [getThemePalette()[0], chartColor("--subtle")]; });
+    [state.scoreChart, state.focusTrendChart, ...state.summaryCharts].filter(Boolean).forEach((chart) => {
+      Object.values(chart.options.scales || {}).forEach((scale) => {
+        if (scale.ticks) scale.ticks.color = chartColor("--muted");
+        if (scale.grid && scale.grid.display !== false) scale.grid.color = chartColor("--line");
+      });
+      if (chart.options.plugins?.legend?.labels) chart.options.plugins.legend.labels.color = chartColor("--muted");
+      chart.update("none");
+    });
+  });
+
   document.addEventListener("DOMContentLoaded", async () => {
+    initializeFocusIdentity();
     loadQuickFocus();
     try {
-      const savedRest = Number(window.localStorage.getItem("mutsumiRestStartedAt"));
+      const savedRest = canManageOwnFocus() ? Number(window.localStorage.getItem(restStorageKey())) : 0;
       state.restStartedAt = Number.isFinite(savedRest) && savedRest > 0 ? savedRest : null;
     } catch (_error) {}
     startAlignedSecondClock();
@@ -2266,11 +2448,32 @@
     bindActivitySwitch();
     bindQuickScore();
     bindInvestmentRange();
+    document.querySelectorAll("[data-insight-view]").forEach((button) => button.addEventListener("click", () => selectInsightView(button.dataset.insightView)));
+    window.DashboardController = {
+      getData: () => state.dashboard,
+      isPinned: (id) => state.quickFocus.pinned.includes(Number(id)),
+      togglePin: toggleQuickPin,
+      replaceQuickItem(oldId, newId) {
+        const items = state.dashboard?.focus_items || [];
+        const oldKey = Number(oldId), nextKey = Number(newId);
+        if (document.body.dataset.role === "guest" || !items.some((item) => Number(item.id) === nextKey)) throw new Error("该事项不可用。");
+        const current = quickModeIds(items);
+        if (!current.includes(oldKey)) throw new Error("该快捷位置已更新，请重新打开详情。");
+        state.quickFocus.pinned = state.quickFocus.pinned.map((id) => id === oldKey ? nextKey : id).filter((id, index, values) => values.indexOf(id) === index);
+        state.quickFocus.recent = [...current.map((id) => id === oldKey ? nextKey : id), ...state.quickFocus.recent.filter((id) => id !== oldKey && id !== nextKey)].filter((id, index, values) => values.indexOf(id) === index).slice(0, 12);
+        saveQuickFocus();
+        renderModes(items);
+        updateFocusLaunchPreview();
+      },
+    };
     initDragSettlement();
     bindSettingsForms();
     bindSettingsTabs();
     bindAccountForms();
     bindConfirmations();
+    document.querySelectorAll('form[action="/logout"]').forEach((form) => form.addEventListener("submit", (event) => {
+      if (!event.defaultPrevented) revokeFocusIdentity();
+    }));
     bindButtonMotion();
     window.addEventListener("resize", updateFocusSubjectOverflow);
     try {
@@ -2279,9 +2482,13 @@
         await loadAccount();
       } else if (document.body.dataset.page === "account") await loadAccount();
       else if (document.body.dataset.page === "home") await loadDashboard();
+      if (document.body.dataset.page !== "home" && canManageOwnFocus()) await refreshCurrentPage();
     } catch (error) { showToast(error.message); }
     startDashboardSync();
     startForegroundHeartbeat();
-    window.MutsumiWeb = { refresh: loadDashboard, endRest: exitRest };
+    window.MutsumiWeb = {
+      refresh: () => refreshCurrentPage().catch((error) => console.warn("native_page_refresh_failed", error)),
+      endRest: exitRest,
+    };
   });
 })();

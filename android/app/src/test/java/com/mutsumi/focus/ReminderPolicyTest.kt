@@ -8,6 +8,16 @@ class ReminderPolicyTest {
     private val minute = 60_000L
 
     @Test
+    fun `a repeated earlier notification cannot rewind ended reminders`() {
+        val acknowledged = ReminderPolicy.acknowledgedCount(2, 1)
+        val state = FocusRuntimeState(mode = FocusMode.ENDED, endedAtEpochMs = minute)
+        assertEquals(2, acknowledged)
+        assertNull(ReminderPolicy.due(state, 35 * minute, 0, acknowledged))
+        assertEquals(ReminderKind.ENDED_60, ReminderPolicy.due(state, 61 * minute, 0, acknowledged)?.kind)
+        assertEquals(3, ReminderPolicy.acknowledgedCount(3, 1))
+    }
+
+    @Test
     fun `paused focus becomes due after five minutes`() {
         val state = FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = 10 * minute)
 

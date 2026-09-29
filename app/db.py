@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS user_settings (
     value TEXT NOT NULL,
     PRIMARY KEY (user_id, key)
 );
+CREATE TABLE IF NOT EXISTS dashboard_artwork (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    version TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    image BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS focus_reporter_keys (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     nonce TEXT NOT NULL,
@@ -176,6 +182,9 @@ DEFAULT_SETTINGS = {
     "exam_date": "2026-12-26",
     "timezone": "Asia/Shanghai",
     "heatmap_visible_hours": "0,2,4,6,8,10,12,14,16,18,20,22",
+    "quick_focus_count": "4",
+    "theme_mode": "system",
+    "theme_palette": "clay",
     # Focus K-line parameters are persisted as strings alongside the existing
     # user settings.  K values are percentage points per focused hour.
     "focus_kline_a_low": "4",

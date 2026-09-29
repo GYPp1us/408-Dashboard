@@ -19,10 +19,15 @@ class FocusService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val networkExecutor = Executors.newSingleThreadExecutor()
     private var currentReminder: ReminderKind? = null
+    private var reminderSessionId = 0L
     private var lastServerSyncAt = 0L
     private var serverSyncInFlight = false
     private var liveSessionId = 0L
     private var wakeLock: PowerManager.WakeLock? = null
+    private var destroyed = false
+    private val idleStop = Runnable {
+        if (store.read().mode in setOf(FocusMode.IDLE, FocusMode.REST)) stopRuntime(removeNotification = true)
+    }
 
     private val tick = object : Runnable {
         override fun run() {
@@ -54,6 +59,15 @@ class FocusService : Service() {
             ACTION_RESUME -> executeRemoteAction(state, RemoteAction.RESUME)
             ACTION_END -> executeRemoteAction(state, RemoteAction.END)
             ACTION_OPEN_FROM_REMINDER -> acknowledgeAndOpen(currentReminder ?: dueNow(state)?.kind)
+            ACTION_ACK_REMINDER -> {
+                applyState(state)
+                val kind = ReminderKind.entries.getOrNull(intent.getIntExtra(EXTRA_REMINDER_KIND, -1))
+                val sameSession = intent.getLongExtra(EXTRA_SESSION_ID, -1) == state.sessionId
+                if (sameSession && kind != null &&
+                    ((kind == ReminderKind.PAUSED && state.mode == FocusMode.PAUSED) ||
+                        (kind != ReminderKind.PAUSED && state.mode == FocusMode.ENDED))
+                ) acknowledgeReminder(kind, openApp = false)
+            }
             else -> applyState(state)
         }
         return START_STICKY
@@ -62,6 +76,7 @@ class FocusService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        destroyed = true
         handler.removeCallbacksAndMessages(null)
         dismissReminder()
         releaseWakeLock()
@@ -71,9 +86,13 @@ class FocusService : Service() {
 
     private fun applyState(state: FocusRuntimeState) {
         handler.removeCallbacks(tick)
+        handler.removeCallbacks(idleStop)
+        if (currentReminder != null &&
+            (reminderSessionId != state.sessionId || currentReminder != dueNow(state)?.kind)
+        ) dismissReminder()
         if (state.mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
             publishLive(state, OriginOsAtomicPublisher.AtomicOperation.END)
-            handler.postDelayed({ stopRuntime(removeNotification = true) }, 350)
+            handler.postDelayed(idleStop, 350)
             return
         }
         if (state.mode == FocusMode.ENDED && store.endedAcknowledgedCount() >= 3) {
@@ -87,10 +106,6 @@ class FocusService : Service() {
             OriginOsAtomicPublisher.AtomicOperation.UPDATE
         }
         publishLive(state, if (state.mode == FocusMode.ENDED) OriginOsAtomicPublisher.AtomicOperation.END else operation)
-        if (
-            state.mode == FocusMode.FOCUSING ||
-            (state.mode != FocusMode.PAUSED && currentReminder == ReminderKind.PAUSED)
-        ) dismissReminder()
         checkReminder(state)
         handler.postDelayed(tick, TICK_MS)
     }
@@ -109,6 +124,7 @@ class FocusService : Service() {
         if (serverSyncInFlight || now - lastServerSyncAt < SERVER_SYNC_MS) return
         lastServerSyncAt = now
         serverSyncInFlight = true
+        val requestedRevision = store.transitionRevision()
         networkExecutor.execute {
             val heartbeat = if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED) && state.sessionId > 0) {
                 FocusApi.heartbeat(state)
@@ -116,6 +132,7 @@ class FocusService : Service() {
             val remote = FocusApi.fetchState(state)
             handler.post {
                 serverSyncInFlight = false
+                if (destroyed || !FocusStateReducer.canApplyResponse(state, store.read(), requestedRevision, store.transitionRevision())) return@post
                 if (heartbeat?.status == 401 || heartbeat?.status == 403 || remote.status == 401 || remote.status == 403) {
                     store.write(FocusRuntimeState())
                     stopRuntime(removeNotification = true)
@@ -133,7 +150,8 @@ class FocusService : Service() {
     }
 
     private fun executeRemoteAction(state: FocusRuntimeState, action: RemoteAction) {
-        if (state.sessionId <= 0) return
+        if (state.sessionId <= 0) { applyState(state); return }
+        val requestedRevision = store.transitionRevision()
         publishLive(state, OriginOsAtomicPublisher.AtomicOperation.UPDATE)
         networkExecutor.execute {
             val result = when (action) {
@@ -142,7 +160,11 @@ class FocusService : Service() {
                 RemoteAction.END -> FocusApi.end(state)
             }
             handler.post {
-                if (result.successful) {
+                if (destroyed || !FocusStateReducer.canApplyResponse(state, store.read(), requestedRevision, store.transitionRevision())) return@post
+                if (result.status == 401 || result.status == 403) {
+                    store.write(FocusRuntimeState())
+                    stopRuntime(removeNotification = true)
+                } else if (result.successful) {
                     val now = System.currentTimeMillis()
                     val updated = when (action) {
                         RemoteAction.PAUSE -> state.copy(
@@ -182,8 +204,10 @@ class FocusService : Service() {
 
     private fun checkReminder(state: FocusRuntimeState) {
         val due = dueNow(state) ?: return
-        if (currentReminder == due.kind) return
+        if (currentReminder == due.kind && reminderSessionId == state.sessionId) return
+        if (currentReminder != null) dismissReminder()
         currentReminder = due.kind
+        reminderSessionId = state.sessionId
         val onContinue = { acknowledgeReminder(due.kind, openApp = false) }
         val onOpen = { acknowledgeReminder(due.kind, openApp = true) }
         val shown = applicationOverlay.show(due.kind, onContinue, onOpen) ||
@@ -191,7 +215,7 @@ class FocusService : Service() {
         if (!shown) {
             notificationManager.notify(
                 OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID,
-                publisher.reminderNotification(due.kind),
+                publisher.reminderNotification(due.kind, state.sessionId),
             )
         }
     }
@@ -226,6 +250,7 @@ class FocusService : Service() {
         applicationOverlay.dismiss()
         notificationManager.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
         currentReminder = null
+        reminderSessionId = 0L
     }
 
     private fun refreshWakeLock() {
@@ -258,6 +283,9 @@ class FocusService : Service() {
         const val ACTION_RESUME = "com.mutsumi.focus.RESUME"
         const val ACTION_END = "com.mutsumi.focus.END"
         const val ACTION_OPEN_FROM_REMINDER = "com.mutsumi.focus.OPEN_FROM_REMINDER"
+        private const val ACTION_ACK_REMINDER = "com.mutsumi.focus.ACK_REMINDER"
+        const val EXTRA_REMINDER_KIND = "reminder_kind"
+        const val EXTRA_SESSION_ID = "reminder_session_id"
         private const val ACTION_SYNC = "com.mutsumi.focus.SYNC"
         private const val ACTION_CHECK = "com.mutsumi.focus.CHECK"
         private const val TICK_MS = 15_000L
@@ -269,11 +297,32 @@ class FocusService : Service() {
             start(context, ACTION_SYNC)
         }
 
+        fun clear(context: Context) {
+            // Identity loss is not a completed session and must not schedule
+            // ended reminders or restart an idle foreground service.
+            FocusStateStore(context).write(FocusRuntimeState())
+            context.stopService(Intent(context, FocusService::class.java))
+            val notifications = context.getSystemService(NotificationManager::class.java)
+            notifications.cancel(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
+            notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
+        }
+
         fun requestReminderCheck(context: Context) {
             val state = FocusStateStore(context).read()
             if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) {
                 start(context, ACTION_CHECK)
             }
+        }
+
+        fun acknowledgeFromNotification(context: Context, notificationIntent: Intent) {
+            if (notificationIntent.action != ACTION_OPEN_FROM_REMINDER) return
+            val state = FocusStateStore(context).read()
+            if (state.mode !in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) return
+            context.startForegroundService(Intent(context, FocusService::class.java).apply {
+                action = ACTION_ACK_REMINDER
+                putExtra(EXTRA_REMINDER_KIND, notificationIntent.getIntExtra(EXTRA_REMINDER_KIND, -1))
+                putExtra(EXTRA_SESSION_ID, notificationIntent.getLongExtra(EXTRA_SESSION_ID, -1))
+            })
         }
 
         private fun start(context: Context, action: String) {
