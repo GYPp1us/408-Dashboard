@@ -5,7 +5,7 @@
 ## 能力与降级顺序
 
 1. vivo 本地原子通知：在 vivo/iQOO 设备上写入官方 `notification.superx.*` 扩展字段。
-2. Android 16 Live Update：使用 `Notification.ProgressStyle` 和 `FLAG_PROMOTED_ONGOING`。
+2. Android 16 Live Update：使用 `Notification.ProgressStyle` 并请求 ongoing 通知推广；`FLAG_PROMOTED_ONGOING` 由系统批准后设置，未获推广时使用普通通知。
 3. Android 持续前台通知：所有 Android 8+ 设备均可使用，含继续、暂停、结束操作。
 4. 超时提醒：优先使用应用悬浮层，其次使用不读取窗口内容的可选无障碍覆盖层，最后退化为高优先级通知。
 

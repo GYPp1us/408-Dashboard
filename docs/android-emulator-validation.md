@@ -22,6 +22,7 @@
 | API 36 | `.tmp/api36/android-recovery-results.json`，10 项 | 精确账户路由、横竖屏、进程及 Activity 重建、主题/快捷数量保存、返回关闭详情、离线缓存与重连继续 |
 | API 36 | `.tmp/api36/android-identity-results.json`，9 项 | 本人非主页同步不覆盖路由及草稿，访客只读与无心跳，真实退出及 Cookie 失效清理原生计时/通知 |
 | API 36 | `.tmp/api36/android-reminder-session-results.json`，3 项 | 两个连续暂停会话的同类提醒正确更换 session ID；实际点击新提醒能够延后且撤销通知，旧提醒不阻塞新会话 |
+| API 36 | `.tmp/api36/android-expired-notification-results.json`，2 项 | 原生 Cookie 失效后点击真实通知暂停按钮，服务端实际返回 401，1172 ms 内清除计时状态及两类通知，无需等待下一次心跳；无 JS 错误 |
 | API 36 | `.tmp/api36/android-lockscreen-results.json`，3 项 | 实际锁屏 120569 ms，原生前台服务持续发送心跳；同一会话保持 active 且未结束，数据库心跳时间实际推进约两分钟，无 JS 错误 |
 | API 36 | `.tmp/api36/android-final-smoke-results.json`，4 项 | 新模板固定 native viewport；图表 Ctrl 加滚轮守卫；正式候选请求通知推广并保留 ProgressStyle；无 WebView 异常 |
 | API 36 | `.tmp/api36/chart-zoom-results.json`，3 项 | 真实双指最终缩放范围保留、页面比例不变；双指尾部不会误触日期重建，下一次单指点击仍可回看历史日期 |
@@ -115,4 +116,10 @@ D:\Android\Sdk\platform-tools\adb.exe -s emulator-5556 shell "CLASSPATH=/data/lo
 
 ## 最终包边界检查
 
-最终 APK 还需记录签名、版本、生产站点、SHA 和执行设备，并重新确认：本人 settings/account 页收到通知刷新不改路由或草稿；访客看他人主页不发送本人心跳或他人原生状态；登出/401/403 清除服务及提醒；账户切换不继承另一账号休息；Cookie 失效直达登录；反复离线→重连→离线仍可恢复缓存路由；图片选择取消、导航取消、旋转和新旧回调没有残留。API 35 的文件上传结果已通过，vivo 真机 WebView 与厂商行为仍待验证。
+最终 APK 为 `Mutsumi-Focus-v0.3.0.apk`，版本码 3，SHA-256 为 `158a3364523084c75895c25443f95b1b9a19182b3ada809d9bb5b62fe14d1a64`。发布证书 SHA-256 为 `8fb58fd11708b42567aadfecc2c570f643d0f4fb9634d7a7e8a9059b27a42f52`，与 v0.2.0 一致。生产地址为 `https://platform.arcol.site/`，包内不含 localhost 测试地址或模拟器测试 CA。
+
+API 36 已实际安装官方 v0.2.0 后以 `install -r` 升级最终 APK，未卸载应用；生产只读访客路由 `/guest` 保留，冷启动仍回到该路由。签名、版本、包标志、哈希和页面截图保存在 `.tmp/api36`。状态及写入矩阵仍全部使用上述隔离数据库。
+
+Release APK 的 `DEBUGGABLE` 标志不存在，`BuildConfig.DEBUG=false`，应用显式调用 `setWebContentsDebuggingEnabled(false)`。API 36 镜像为 `userdebug`/`ro.debuggable=1`，其 WebView 仍暴露调试 socket；这不能记为“模拟器已关闭 CDP”。[Chromium 官方源码](https://chromium.googlesource.com/chromium/src/+/71d81bd2623fc6cc6c59198e2f72cf0df6b38b9b/android_webview/glue/java/src/com/android/webview/chromium/SharedStatics.java) 在 Android 系统 debug build 上直接忽略该开关，调试由 provider 强制启用。应用禁用配置已核验，普通 user ROM 的 socket 行为及 vivo 真机仍待实测。
+
+本人非主页刷新、访客身份隔离、真实登出/401 清理、账户休息隔离、重复离线恢复和图片回调边界均见上表及自动回归。Python 158 项、前端边界 14 项、Android 单元测试 14 项，Debug/Release lint 与生产签名构建均通过。
