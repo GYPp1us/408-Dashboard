@@ -5,6 +5,7 @@
   const palettes = new Set(["clay", "sage", "ocean"]);
   const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
   const portrait = window.matchMedia("(orientation: portrait)");
+  const compactBrowser = window.matchMedia("(max-width: 900px)");
   const presets = { balanced: [28, 32, 40], charts: [24, 28, 48], focus: [36, 30, 34] };
   let preferences = {
     theme_mode: root.dataset.themeMode || "system",
@@ -18,7 +19,7 @@
   let layoutFrame = null;
   let appearanceSignature = null;
   const storageKey = () => `mutsumiDashboardLayout:v1:${preferences.viewer_id}:${root.classList.contains("native-app") ? "native" : "browser"}`;
-  const singleColumn = () => root.classList.contains("native-app") && portrait.matches;
+  const singleColumn = () => root.classList.contains("native-app") ? portrait.matches : compactBrowser.matches;
   const effectiveTheme = () => preferences.theme_mode === "system" ? systemTheme.matches ? "dark" : "light" : preferences.theme_mode;
   const announceAppearance = () => document.dispatchEvent(new CustomEvent("dashboard:appearance", { detail: { mode: preferences.theme_mode, palette: preferences.theme_palette, effectiveTheme: effectiveTheme() } }));
 

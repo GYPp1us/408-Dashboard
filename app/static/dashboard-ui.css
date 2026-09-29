@@ -188,6 +188,48 @@ body.page-focus-kline { background: var(--canvas); }
   html.native-app .settings-grid .appearance-panel .settings-field-grid { grid-template-columns: 1fr; }
   html.native-app .insight-switch { margin-top: 3px; }
 }
+@media (max-width: 1279px) {
+  html:not(.native-app) body { min-width: 0; }
+  html:not(.native-app) .app-shell { width: calc(100vw - 16px); min-width: 0; margin: 8px auto; }
+}
+@media (max-width: 900px) {
+  html:not(.native-app) .app-main { padding: 12px; }
+  html:not(.native-app) .status-bar { grid-template-columns: minmax(0, 1fr) auto; gap: 7px 10px; padding: 10px 12px; }
+  html:not(.native-app) .status-title { grid-column: 1 / -1; grid-row: 1; }
+  html:not(.native-app) .current-state { grid-column: 1 / -1; grid-row: 2; display: flex; flex-wrap: wrap; justify-content: flex-start; max-width: none; min-width: 0; padding: 0; border: 0; }
+  html:not(.native-app) .exam-countdown { grid-column: 1; grid-row: 3; padding: 0; border: 0; }
+  html:not(.native-app) .today-study { grid-column: 2; grid-row: 3; padding: 0; border: 0; }
+  html:not(.native-app) .score-board { grid-column: 1 / -1; grid-row: 4; padding: 0; border: 0; }
+  html:not(.native-app) .time-grid { grid-template-columns: minmax(0, 1fr); }
+  html:not(.native-app) .dashboard-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  html:not(.native-app) .dashboard-grid .mode-panel,
+  html:not(.native-app) .dashboard-grid .investment-panel,
+  html:not(.native-app) .dashboard-grid .activity-panel { grid-column: 1; grid-row: auto; width: 100%; }
+  html:not(.native-app) .dashboard-grid .mode-panel { grid-row: 1; height: auto; min-height: 0; max-height: none; }
+  html:not(.native-app) .dashboard-grid .investment-panel { grid-row: 2; }
+  html:not(.native-app) .dashboard-grid .activity-panel { grid-row: 3; }
+  html:not(.native-app) .dashboard-divider,
+  html:not(.native-app) .layout-tools { display: none; }
+  html:not(.native-app) .dashboard-toolbar { flex-wrap: wrap; }
+  html:not(.native-app) .settings-grid,
+  html:not(.native-app) .settings-content-grid,
+  html:not(.native-app) .account-settings-grid,
+  html:not(.native-app) .account-grid,
+  html:not(.native-app) .focus-layout { grid-template-columns: minmax(0, 1fr); }
+  html:not(.native-app) .settings-grid .appearance-panel .settings-field-grid { grid-template-columns: minmax(0, 1fr); }
+  html:not(.native-app) .site-home-hero { flex-wrap: wrap; gap: 18px; padding: 24px; }
+  html:not(.native-app) .site-user-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 500px) {
+  html:not(.native-app) .app-shell { width: 100%; margin: 0; border: 0; border-radius: 0; }
+  html:not(.native-app) .app-main { padding: 8px; }
+  html:not(.native-app) .panel { padding: 12px; }
+  html:not(.native-app) .settings-field-grid,
+  html:not(.native-app) .settings-field-grid-single { grid-template-columns: minmax(0, 1fr); }
+  html:not(.native-app) .settings-grid .heat-hour-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html:not(.native-app) .site-home-hero h1 { font-size: 28px; }
+  html:not(.native-app) .site-user-grid { grid-template-columns: minmax(0, 1fr); }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
