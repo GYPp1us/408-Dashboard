@@ -330,16 +330,18 @@
     state.charts = [];
   }
 
+  const chartTheme = (key) => getComputedStyle(document.documentElement).getPropertyValue(key).trim();
+
   function lightweightOptions(host, overrides = {}) {
     const library = window.LightweightCharts;
     const solid = library.ColorType?.Solid ?? 0;
     const base = {
       width: Math.max(300, host.clientWidth),
       height: Math.max(220, host.clientHeight),
-      layout: { background: { type: solid, color: "#ffffff" }, textColor: "#758079", fontFamily: '"Source Han Serif SC", "Noto Serif SC", serif', fontSize: 11 },
-      grid: { vertLines: { color: "#edf0ef" }, horzLines: { color: "#edf0ef" } },
-      rightPriceScale: { borderColor: "#dfe5e2", scaleMargins: { top: .08, bottom: .08 } },
-      timeScale: { borderColor: "#dfe5e2", rightOffset: 3, barSpacing: 12, fixLeftEdge: true, lockVisibleTimeRangeOnResize: true, tickMarkFormatter: (time) => chartTimeLabel(time) },
+      layout: { background: { type: solid, color: chartTheme("--surface") }, textColor: chartTheme("--muted"), fontFamily: '"Source Han Serif SC", "Noto Serif SC", serif', fontSize: 11 },
+      grid: { vertLines: { color: chartTheme("--line") }, horzLines: { color: chartTheme("--line") } },
+      rightPriceScale: { borderColor: chartTheme("--line"), scaleMargins: { top: .08, bottom: .08 } },
+      timeScale: { borderColor: chartTheme("--line"), rightOffset: 3, barSpacing: 12, fixLeftEdge: true, lockVisibleTimeRangeOnResize: true, tickMarkFormatter: (time) => chartTimeLabel(time) },
       crosshair: { vertLine: { color: "#a997c8", width: 1, style: 3, labelBackgroundColor: "#8067b3" }, horzLine: { color: "#a997c8", width: 1, style: 3, labelBackgroundColor: "#8067b3" } },
       localization: { priceFormatter: (value) => point(value), timeFormatter: (time) => chartTimeLabel(time) },
     };
@@ -408,7 +410,7 @@
     host.hidden = !days.length;
     if (!days.length) return;
     const library = window.LightweightCharts;
-    const chart = library.createChart(host, lightweightOptions(host, { timeScale: { borderColor: "#dfe5e2", rightOffset: 4, barSpacing: Math.max(7, Math.min(15, host.clientWidth / days.length)), fixLeftEdge: true, lockVisibleTimeRangeOnResize: true } }));
+    const chart = library.createChart(host, lightweightOptions(host, { timeScale: { borderColor: chartTheme("--line"), rightOffset: 4, barSpacing: Math.max(7, Math.min(15, host.clientWidth / days.length)), fixLeftEdge: true, lockVisibleTimeRangeOnResize: true } }));
     const series = chart.addSeries(library.CandlestickSeries, { upColor: "#d66c58", downColor: "#4d8a73", borderVisible: false, wickUpColor: "#d66c58", wickDownColor: "#4d8a73", priceFormat: { type: "price", precision: 3, minMove: data.priceTick } });
     series.setData(days.map((item) => ({ time: item.date, open: item.open, high: item.high, low: item.low, close: item.close })));
     const liveDay = days.find((item) => item.date === data.today.date);
@@ -435,6 +437,7 @@
     });
     if (markers.length) library.createSeriesMarkers(series, markers);
     chart.subscribeClick((param) => {
+      if (window.ChartGestures?.shouldIgnoreClick(host)) return;
       const value = param?.time;
       const date = typeof value === "string" ? value : value && typeof value === "object" ? `${value.year}-${String(value.month).padStart(2, "0")}-${String(value.day).padStart(2, "0")}` : "";
       if (date && data.days.some((item) => item.date === date)) {
@@ -477,7 +480,7 @@
     host.hidden = !points.length;
     if (!points.length) return;
     const library = window.LightweightCharts;
-    const chart = library.createChart(host, lightweightOptions(host, { timeScale: { borderColor: "#dfe5e2", timeVisible: true, secondsVisible: false, rightOffset: 3, barSpacing: Math.max(5, Math.min(12, host.clientWidth / points.length)), fixLeftEdge: true, lockVisibleTimeRangeOnResize: true } }));
+    const chart = library.createChart(host, lightweightOptions(host, { timeScale: { borderColor: chartTheme("--line"), timeVisible: true, secondsVisible: false, rightOffset: 3, barSpacing: Math.max(5, Math.min(12, host.clientWidth / points.length)), fixLeftEdge: true, lockVisibleTimeRangeOnResize: true } }));
     const seriesOptions = { color: "#8067b3", lineWidth: 2, lineType: library.LineType?.Simple ?? 0, pointMarkersVisible: false, crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "price", precision: 3, minMove: data.priceTick } };
     const morning = points.filter((item) => shanghaiMinutes(item.time) <= 12 * 60);
     const afternoon = points.filter((item) => shanghaiMinutes(item.time) >= 13 * 60 + 30);
@@ -675,6 +678,11 @@
       }, 120);
     });
   }
+
+  document.addEventListener("dashboard:appearance", () => {
+    const appearance = { layout: { background: { type: "solid", color: chartTheme("--surface") }, textColor: chartTheme("--muted") }, grid: { vertLines: { color: chartTheme("--line") }, horzLines: { color: chartTheme("--line") } }, rightPriceScale: { borderColor: chartTheme("--line") }, timeScale: { borderColor: chartTheme("--line") } };
+    state.charts.forEach((chart) => chart.applyOptions(appearance));
+  });
 
   document.addEventListener("DOMContentLoaded", () => {
     if (document.body.dataset.page !== "focus-kline" && document.body.dataset.page !== "focus_kline") return;

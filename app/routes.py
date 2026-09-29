@@ -343,7 +343,49 @@ def _friend_diff_payload(connection, now: datetime, user_id: int | None) -> list
     return result
 
 
+def _ui_preferences(settings: dict, viewer_id: int | None) -> dict:
+    try:
+        count = int(settings.get("quick_focus_count", "4"))
+    except (TypeError, ValueError):
+        count = 4
+    mode = settings.get("theme_mode", "system")
+    palette = settings.get("theme_palette", "clay")
+    return {
+        "quick_focus_count": count if 2 <= count <= 8 else 4,
+        "theme_mode": mode if mode in ("system", "light", "dark") else "system",
+        "theme_palette": palette if palette in ("clay", "sage", "ocean") else "clay",
+        "viewer_id": viewer_id,
+    }
+
+
+def _detail_session(row: dict, pauses: list[dict], now: datetime,
+                    start: datetime | None = None, end: datetime | None = None) -> dict:
+    payload = _session_payload(row, pauses, now)
+    fields = ("id", "subject", "subject_id", "focus_item_id", "started_at", "ended_at",
+              "effective_seconds", "trusted", "focus_locked")
+    detail = {key: payload.get(key) for key in fields}
+    if start is not None and end is not None:
+        detail["effective_seconds"] = sum(
+            max(0, int((min(segment_end, end) - max(segment_start, start)).total_seconds()))
+            for segment_start, segment_end in _session_segments(row, pauses, now)
+        )
+        original_start = datetime.fromisoformat(row["started_at"]).astimezone(now.tzinfo)
+        original_end = datetime.fromisoformat(row["ended_at"]).astimezone(now.tzinfo) if row.get("ended_at") else now
+        detail["started_at"] = max(start, original_start).isoformat()
+        detail["ended_at"] = min(end, original_end).isoformat()
+    return detail
+
+
 def register_routes(app):
+    @app.context_processor
+    def inject_ui_preferences():
+        connection = connect(app.config["DATABASE"])
+        try:
+            viewer_id = _viewer_user_id(connection)
+            return {"ui_preferences": _ui_preferences(get_settings(connection, viewer_id), viewer_id)}
+        finally:
+            connection.close()
+
     @app.get("/")
     def dashboard():
         connection = connect(app.config["DATABASE"])
@@ -566,6 +608,7 @@ def register_routes(app):
                 heatmap_visible_hours = list(HEATMAP_HOURS)
             return jsonify({
                 "now": now.isoformat(),
+                "preferences": _ui_preferences(settings, viewer_id),
                 "exam": {"date": settings["exam_date"], "remaining_seconds": seconds_until_exam(now, settings["exam_date"])},
                 "today_focus": today_focus,
                 "focus_investment": aggregate_focus_investment(focus_sessions, now),
@@ -614,6 +657,75 @@ def register_routes(app):
         finally:
             connection.close()
 
+    @app.get("/api/focus/interval")
+    @login_required
+    def focus_interval_api():
+        requested_date = request.args.get("date", "")
+        requested_hour = request.args.get("hour", "")
+        try:
+            parsed_date = datetime.strptime(requested_date, "%Y-%m-%d").date()
+            if parsed_date.isoformat() != requested_date or parsed_date.year == 9999 and parsed_date.month == 12 and parsed_date.day == 31:
+                raise ValueError
+        except ValueError:
+            return jsonify(error="invalid_date"), 400
+        if requested_hour not in {str(hour) for hour in HEATMAP_HOURS}:
+            return jsonify(error="invalid_hour"), 400
+        hour = int(requested_hour)
+        connection = connect(app.config["DATABASE"])
+        try:
+            viewer_id = _viewer_user_id(connection)
+            settings = get_settings(connection, viewer_id)
+            now = _now(settings.get("timezone", "Asia/Shanghai"))
+            start = datetime.combine(parsed_date, datetime.min.time(), tzinfo=now.tzinfo).replace(hour=hour)
+            end = start + timedelta(hours=2)
+            pauses = _pause_map(connection)
+            sessions = []
+            totals = {}
+            rows = connection.execute("SELECT * FROM focus_sessions WHERE user_id = ? ORDER BY started_at DESC, id DESC", (viewer_id,))
+            for row in rows:
+                detail = _detail_session(dict(row), pauses.get(row["id"], []), now, start, end)
+                if detail["effective_seconds"] <= 0:
+                    continue
+                sessions.append(detail)
+                totals[detail["subject"]] = totals.get(detail["subject"], 0) + detail["effective_seconds"]
+            return jsonify(date=requested_date, hour=hour, total_seconds=sum(totals.values()),
+                           subjects=[{"subject": name, "seconds": seconds} for name, seconds in sorted(totals.items(), key=lambda item: (-item[1], item[0]))],
+                           sessions=sessions)
+        finally:
+            connection.close()
+
+    @app.get("/api/focus/items/<int:focus_item_id>/summary")
+    @login_required
+    def focus_item_summary_api(focus_item_id):
+        connection = connect(app.config["DATABASE"])
+        try:
+            viewer_id = _viewer_user_id(connection)
+            item = get_focus_item(connection, viewer_id, focus_item_id) if viewer_id is not None else None
+            if item is None:
+                return jsonify(error="focus_item_not_found"), 404
+            settings = get_settings(connection, viewer_id)
+            now = _now(settings.get("timezone", "Asia/Shanghai"))
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            pauses = _pause_map(connection)
+            rows = connection.execute("SELECT * FROM focus_sessions WHERE user_id = ? AND focus_item_id = ? ORDER BY started_at DESC, id DESC", (viewer_id, focus_item_id))
+            today_seconds = all_time_seconds = today_count = 0
+            recent = []
+            for row in rows:
+                row_data = dict(row)
+                row_pauses = pauses.get(row["id"], [])
+                detail = _detail_session(row_data, row_pauses, now)
+                today = _detail_session(row_data, row_pauses, now, start, end)["effective_seconds"]
+                all_time_seconds += detail["effective_seconds"]
+                today_seconds += today
+                today_count += int(today > 0)
+                if len(recent) < 10:
+                    recent.append(detail)
+            return jsonify(item=item, today_seconds=today_seconds, all_time_seconds=all_time_seconds,
+                           today_count=today_count, recent_sessions=recent)
+        finally:
+            connection.close()
+
     @app.post("/api/focus/start")
     @user_required
     def start_focus():
@@ -646,10 +758,15 @@ def register_routes(app):
                 connection.rollback()
                 return jsonify(error="daily_focus_already_settled"), 409
             if client_token:
-                existing = connection.execute("SELECT * FROM focus_sessions WHERE client_token = ?", (client_token,)).fetchone()
+                existing = connection.execute("SELECT * FROM focus_sessions WHERE client_token = ? AND user_id = ?", (client_token, current_user_id())).fetchone()
                 if existing:
                     connection.commit()
                     return jsonify(session=_row(connection, existing["id"]), idempotent=True), 200
+                # Tokens are globally unique in SQLite; a different account's
+                # token must never return that account's session payload.
+                if connection.execute("SELECT 1 FROM focus_sessions WHERE client_token = ?", (client_token,)).fetchone():
+                    connection.rollback()
+                    return jsonify(error="client_token_conflict"), 409
             selected_item = (
                 get_focus_item(connection, current_user_id(), focus_item_id)
                 if focus_item_id is not None
@@ -997,24 +1114,35 @@ def register_routes(app):
         connection = connect(app.config["DATABASE"])
         try:
             if request.method == "PATCH":
-                payload = request.get_json(silent=True) or {}
+                payload = request.get_json(silent=True)
+                if not isinstance(payload, dict):
+                    return jsonify(error="invalid_settings"), 400
                 if "focus_subjects" in payload:
                     return jsonify(error="subject_crud_required"), 400
                 try:
-                    if "focus_messages" in payload:
-                        save_focus_messages(connection, _focus_messages(payload["focus_messages"]), current_user_id())
+                    messages = _focus_messages(payload["focus_messages"]) if "focus_messages" in payload else None
+                    if "quick_focus_count" in payload:
+                        value = payload["quick_focus_count"]
+                        if type(value) is not int or not 2 <= value <= 8:
+                            raise ValueError("invalid_quick_focus_count")
+                    if "theme_mode" in payload and payload["theme_mode"] not in ("system", "light", "dark"):
+                        raise ValueError("invalid_theme_mode")
+                    if "theme_palette" in payload and payload["theme_palette"] not in ("clay", "sage", "ocean"):
+                        raise ValueError("invalid_theme_palette")
                 except ValueError as error:
                     return jsonify(error=str(error)), 400
                 except sqlite3.IntegrityError:
                     return jsonify(error="duplicate_subject"), 409
                 kline_keys = set(SETTING_KEYS.values())
-                allowed = {"morning_start", "lunch_start", "library_open", "library_close", "exam_date", "timezone", "heatmap_visible_hours"} | kline_keys
+                current_settings = get_settings(connection, current_user_id())
+                allowed = {"morning_start", "lunch_start", "library_open", "library_close", "exam_date", "timezone", "heatmap_visible_hours", "quick_focus_count", "theme_mode", "theme_palette"} | kline_keys
                 kline_values = {}
                 if any(key in payload for key in kline_keys):
                     try:
-                        kline_values = validate_setting_payload(payload, get_settings(connection, current_user_id()))
+                        kline_values = validate_setting_payload(payload, current_settings)
                     except ValueError as error:
                         return jsonify(error=str(error)), 400
+                updates = {}
                 for key, value in payload.items():
                     if key not in allowed:
                         continue
@@ -1033,17 +1161,21 @@ def register_routes(app):
                             value = ",".join(str(hour) for hour in _heatmap_hours(value))
                         except (TypeError, ValueError):
                             return jsonify(error="invalid_heatmap_visible_hours"), 400
+                    updates[key] = str(value)
+                if messages is not None:
+                    save_focus_messages(connection, messages, current_user_id())
+                for key, value in updates.items():
                     connection.execute(
                         "INSERT INTO user_settings(user_id, key, value) VALUES (?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value",
-                        (current_user_id(), key, str(value)),
+                        (current_user_id(), key, value),
                     )
                 connection.commit()
-                # The K-line is a derived view of both sessions and settings.
-                # Rebuild it after any account-setting write (not only through
-                # the dedicated K-line endpoint), so timezone/parameter edits
-                # cannot leave a persisted cache behind.  The API itself is
-                # still served from the pure source-row adapter above.
-                _refresh_focus_kline(connection, current_user_id())
+                # Display preferences do not affect the derived index. Only
+                # refresh when a schedule, timezone or model parameter changed.
+                index_source_keys = kline_keys | {"timezone", "morning_start", "lunch_start", "library_open", "library_close"}
+                changed_keys = {key for key, value in updates.items() if current_settings.get(key) != value}
+                if index_source_keys.intersection(changed_keys):
+                    _refresh_focus_kline(connection, current_user_id())
             user_id = current_user_id()
             return jsonify(
                 settings=get_settings(connection, user_id),

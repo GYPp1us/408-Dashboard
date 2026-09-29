@@ -198,8 +198,9 @@ def test_android_user_agent_marks_only_the_native_shell(authenticated_client):
         headers={"User-Agent": "Mozilla/5.0 MutsumiFocus/0.2.0"},
     ).get_data(as_text=True)
 
-    assert '<html lang="zh-CN">' in browser
-    assert '<html lang="zh-CN" class="native-app">' in native
+    assert '<html lang="zh-CN" data-theme-mode=' in browser
+    assert '<html lang="zh-CN" class="native-app" data-theme-mode=' in native
+    assert 'class="native-app"' not in browser
     assert "initial-scale=0.5, minimum-scale=0.5" in native
 
 

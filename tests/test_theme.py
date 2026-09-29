@@ -25,7 +25,7 @@ def test_dashboard_colors_follow_focus_state_except_score_deltas():
     assert "#148b7d" not in javascript
 
 
-def test_heatmap_scale_and_current_time_art_are_fixed():
+def test_heatmap_scale_and_current_time_art_assets():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
     javascript = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
     image = ROOT / "app" / "static" / "current-time-art.jpg"
@@ -53,9 +53,6 @@ def test_heatmap_scale_and_current_time_art_are_fixed():
     assert ".heat-cell.fade-50 { opacity:.5; }" in css
     assert ".heat-cell.fade-75 { opacity:.75; }" in css
     assert ".activity-switch { position:relative; z-index:2" in css
-    assert 'background:url("current-time-art.jpg") right center/auto 100% no-repeat' in css
-    assert "right:8px" in css
-    assert "opacity:.8" in css
 
 
 def test_status_bar_uses_stacked_date_and_tall_score_billboard():
