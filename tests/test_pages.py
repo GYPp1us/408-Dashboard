@@ -24,7 +24,7 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "<small>近期模拟考</small>" not in html
     assert "score-board" in html
     assert 'id="today-date" class="console-date"' in html
-    assert "2 小时级" in html
+    assert 'data-tooltip="25 天视窗，每格对应 2 小时时段；长按查看记录"' in html
     assert "focus-modes" in html
     assert "drag-action" in html
     assert "score-chart" in html
@@ -39,12 +39,13 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'id="settle-today"' in html
     assert 'id="daily-achievement"' in html
     assert 'id="settlement-fireworks"' in html
-    assert "7h 标准" in html
-    assert html.index("今日截至当前") < html.index("投入最多的三个科目") < html.index("近七个记录日日均专注")
+    assert 'data-tooltip="与每日 7 小时目标对比"' in html
+    assert html.index("今日投入") < html.index("累计投入") < html.index("日均投入")
     assert 'id="focus-comparison-view"' in html
     assert 'id="focus-diff-track"' not in html
     assert 'id="focus-diff-fill"' not in html
-    assert 'id="focus-compare-time" class="focus-compare-time">和昨天相比</small>' in html
+    assert 'id="focus-compare-time" class="sr-only">和昨天相比</span>' in html
+    assert 'data-tooltip-target="#focus-compare-time"' in html
     assert "截至 --:--:--" not in html
     assert 'id="focus-compare-baseline"' not in html
     assert "−30m" not in html and "+30m" not in html
@@ -59,7 +60,7 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert 'data-activity-view="heat"' in html
     assert 'data-activity-view="focus"' in html
     assert 'data-activity-view="score"' in html
-    assert "专注热度 · 25 天视窗" in html
+    assert '>专注热度</h2>' in html
     assert html.index('class="activity-switch"') < html.index('id="activity-heat-view"')
     assert 'id="focus-state-overlay"' in html
     assert 'id="focus-state-overlay-title"' in html
@@ -77,7 +78,11 @@ def test_dashboard_has_status_bar_and_no_sidebar_or_switch_bar(authenticated_cli
     assert "library-history" in html
     assert "home-window-label" in html
     assert "home-window-countdown" in html
-    assert html.index('class="current-window"') < html.index('id="current-time"')
+    assert html.index('id="time-context" class="current-window sr-only"') < html.index('id="current-time"')
+    assert 'data-tooltip-target="#time-context"' in html
+    assert 'dashboard-toolbar' not in html
+    assert 'reset-dashboard-layout' not in html
+    assert 'artwork-edit' not in html
     assert "上午学习窗口 · 距离午休" not in html
     assert "focus-summary" in html
     assert "session-goal-chart" in html
@@ -201,7 +206,7 @@ def test_android_user_agent_marks_only_the_native_shell(authenticated_client):
     assert '<html lang="zh-CN" data-theme-mode=' in browser
     assert '<html lang="zh-CN" class="native-app" data-theme-mode=' in native
     assert 'class="native-app"' not in browser
-    assert "initial-scale=0.5, minimum-scale=0.5" in native
+    assert "initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no" in native
 
 
 def test_focus_client_token_has_legacy_browser_fallbacks(authenticated_client):

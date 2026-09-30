@@ -20,6 +20,7 @@ class FocusService : Service() {
     private val networkExecutor = Executors.newSingleThreadExecutor()
     private var currentReminder: ReminderKind? = null
     private var reminderSessionId = 0L
+    private var reminderUsesNotification = false
     private var lastServerSyncAt = 0L
     private var serverSyncInFlight = false
     private var liveSessionId = 0L
@@ -204,7 +205,15 @@ class FocusService : Service() {
 
     private fun checkReminder(state: FocusRuntimeState) {
         val due = dueNow(state) ?: return
-        if (currentReminder == due.kind && reminderSessionId == state.sessionId) return
+        if (currentReminder == due.kind && reminderSessionId == state.sessionId) {
+            // SystemUI can remove a notification while an acknowledgement or
+            // lifecycle check posts the next reminder using the same ID.
+            // Reconcile the fallback with the actual notification, rather than
+            // keeping a due reminder hidden behind stale in-memory state.
+            if (!reminderUsesNotification || notificationManager.activeNotifications.any {
+                    it.id == OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID
+                }) return
+        }
         if (currentReminder != null) dismissReminder()
         currentReminder = due.kind
         reminderSessionId = state.sessionId
@@ -212,6 +221,7 @@ class FocusService : Service() {
         val onOpen = { acknowledgeReminder(due.kind, openApp = true) }
         val shown = applicationOverlay.show(due.kind, onContinue, onOpen) ||
             FocusAccessibilityService.show(due.kind, onContinue, onOpen)
+        reminderUsesNotification = !shown
         if (!shown) {
             notificationManager.notify(
                 OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID,
@@ -251,6 +261,7 @@ class FocusService : Service() {
         notificationManager.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
         currentReminder = null
         reminderSessionId = 0L
+        reminderUsesNotification = false
     }
 
     private fun refreshWakeLock() {

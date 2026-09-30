@@ -5,7 +5,6 @@
   const content = document.getElementById("detail-drawer-content");
   if (!dialog || !content) return;
   const title = document.getElementById("detail-drawer-title");
-  const kicker = document.getElementById("detail-drawer-kicker");
   const escape = (text) => String(text ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
   const duration = (seconds) => {
     const value = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -82,7 +81,6 @@
     current = data;
     detailMounted = true;
     title.textContent = "正在读取";
-    kicker.textContent = "详情";
     content.innerHTML = '<p class="detail-status" role="status">正在读取详情…</p>';
     if (!dialog.open) dialog.showModal();
     requestAnimationFrame(() => { if (dialog.open && !closing) dialog.classList.add("is-visible"); });
@@ -92,7 +90,6 @@
       const result = await provider({ ...data, signal });
       if (signal.aborted || request !== generation || !dialog.open || closing) return;
       title.textContent = result.title || "详情";
-      kicker.textContent = result.kicker || "详情";
       content.innerHTML = result.html || '<p class="detail-empty">暂无详情。</p>';
       result.onReady?.(content, data);
     } catch (error) {
@@ -114,7 +111,7 @@
     const alternatives = items.filter((item) => String(item.id) !== String(data.key));
     const actions = document.body.dataset.role === "guest" ? "" : `<h3>快捷专注</h3><div class="detail-actions"><button type="button" class="ui-button ui-button--secondary" data-detail-pin>${bridge?.isPinned(data.key) ? "取消固定" : "固定到快捷专注"}</button></div>${alternatives.length ? `<div class="detail-replace"><label for="detail-replacement">将此快捷位置替换为</label><select id="detail-replacement">${alternatives.map((item) => `<option value="${escape(item.id)}">${escape(itemLabel(item))}</option>`).join("")}</select><button type="button" class="ui-button ui-button--secondary" data-detail-replace>替换</button></div>` : ""}<p class="detail-action-message" role="status"></p>`;
     return {
-      title: itemLabel(payload.item || {}), kicker: "事项详情",
+      title: itemLabel(payload.item || {}),
       html: `<div class="detail-metrics">${metric("今日有效专注", duration(payload.today_seconds))}${metric("累计有效专注", duration(payload.all_time_seconds))}${metric("今日次数", payload.today_count || 0)}</div>${actions}<h3>最近专注记录</h3>${records(payload.recent_sessions)}`,
       onReady(root) {
         const message = root.querySelector(".detail-action-message");
@@ -142,7 +139,7 @@
     const payload = await fetchJson(`/api/focus/interval?${params}`, data.signal);
     const subjects = payload.subjects || [];
     return {
-      title: `${data.date} · ${String(data.hour).padStart(2, "0")}:00 — ${String(Number(data.hour) + 2).padStart(2, "0")}:00`, kicker: "时段详情 · 有效专注",
+      title: `${data.date} · ${String(data.hour).padStart(2, "0")}:00 — ${String(Number(data.hour) + 2).padStart(2, "0")}:00`,
       html: `<div class="detail-metrics">${metric("区间总时长", duration(payload.total_seconds))}${metric("专注记录", (payload.sessions || []).length)}</div><h3>完整科目构成</h3>${subjects.length ? `<ul class="detail-records">${subjects.map((subject) => `<li class="detail-record"><strong>${escape(subject.subject || subject.name || "未分类")}</strong><b>${duration(subject.seconds ?? subject.total_seconds)}</b></li>`).join("")}</ul>` : '<p class="detail-empty">这个时段尚无有效专注。</p>'}<h3>区间记录</h3>${records(payload.sessions)}`,
     };
   });

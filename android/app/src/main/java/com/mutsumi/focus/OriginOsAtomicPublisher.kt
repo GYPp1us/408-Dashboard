@@ -105,7 +105,10 @@ class OriginOsAtomicPublisher(private val context: Context) {
             .setContentTitle(title)
             .setContentText("点此回到计时器；开启覆盖层权限可获得全屏滑动提醒")
             .setCategory(Notification.CATEGORY_REMINDER)
-            .setAutoCancel(true)
+            // The service acknowledges and dismisses the tapped reminder. An
+            // automatic SystemUI cancellation can otherwise remove the next
+            // overdue stage, which reuses REMINDER_NOTIFICATION_ID.
+            .setAutoCancel(false)
             .setContentIntent(PendingIntent.getActivity(
                 context,
                 10 + kind.ordinal,

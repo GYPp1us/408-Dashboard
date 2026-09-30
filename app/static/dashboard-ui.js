@@ -81,8 +81,6 @@
     const dividers = [...grid.querySelectorAll("[data-dashboard-divider]")];
     const compact = singleColumn();
     dividers.forEach((divider) => { divider.hidden = compact; divider.tabIndex = compact ? -1 : 0; });
-    const tools = document.querySelector(".layout-tools");
-    if (tools) tools.hidden = compact;
     if (compact) return;
     const widths = allocatedWidths();
     ["--control-column", "--insight-column", "--activity-column"].forEach((key, index) => grid.style.setProperty(key, `${widths[index]}px`));
@@ -96,8 +94,6 @@
       divider.setAttribute("aria-valuemax", String(Math.floor((before + pair - minima[index + 1]) / total * 100)));
       divider.setAttribute("aria-valuetext", `${Math.round(widths[index])} 像素 / ${Math.round(widths[index + 1])} 像素`);
     });
-    const selector = document.querySelector("#dashboard-layout-preset");
-    if (selector) selector.value = Object.keys(presets).find((name) => columns.every((value, index) => Math.abs(value - presets[name][index]) < .5)) || "custom";
     document.dispatchEvent(new CustomEvent("dashboard:layout"));
   }
 
@@ -168,13 +164,6 @@
       });
       divider.addEventListener("dblclick", resetLayout);
     });
-    document.querySelector("#reset-dashboard-layout")?.addEventListener("click", resetLayout);
-    document.querySelector("#dashboard-layout-preset")?.addEventListener("change", (event) => {
-      if (!presets[event.target.value]) return;
-      columns = [...presets[event.target.value]];
-      saveColumns();
-      renderColumns();
-    });
     if (window.ResizeObserver) new ResizeObserver(reflow).observe(grid);
     portrait.addEventListener?.("change", () => { cancelDrag(); reflow(); });
     window.addEventListener("resize", reflow);
@@ -192,8 +181,93 @@
     }));
   }
 
-  window.DashboardUI = { applyPreferences, resetLayout, reflow, effectiveTheme, get preferences() { return { ...preferences }; } };
+  function bindTooltips() {
+    const popup = document.createElement("div");
+    popup.id = "dashboard-hover-tooltip";
+    popup.className = "hover-popover";
+    popup.setAttribute("role", "tooltip");
+    popup.setAttribute("popover", "manual");
+    popup.hidden = true;
+    document.body.append(popup);
+    let anchor = null, source = null, previousDescription = null;
+    let usingPopover = false;
+    const observer = new MutationObserver(() => update());
+    function hide() {
+      observer.disconnect();
+      if (anchor) {
+        if (previousDescription === null) anchor.removeAttribute("aria-describedby");
+        else anchor.setAttribute("aria-describedby", previousDescription);
+      }
+      anchor = null; source = null;
+      if (usingPopover) {
+        try { popup.hidePopover(); } catch (_error) { /* It may have closed while a dialog changed. */ }
+        usingPopover = false;
+      }
+      popup.hidden = true;
+    }
+    function update() {
+      if (!anchor?.isConnected) { hide(); return; }
+      const text = source ? source.textContent : anchor.dataset.tooltip;
+      if (!text?.trim()) { hide(); return; }
+      popup.textContent = text.trim();
+      popup.hidden = false;
+      if (!usingPopover && typeof popup.showPopover === "function") {
+        try { popup.showPopover(); usingPopover = true; } catch (_error) { /* Fixed-position fallback. */ }
+      }
+      const target = anchor.getBoundingClientRect(), box = popup.getBoundingClientRect();
+      popup.style.left = `${Math.max(12, Math.min(innerWidth - box.width - 12, target.left))}px`;
+      popup.style.top = `${target.bottom + box.height + 12 <= innerHeight ? target.bottom + 8 : Math.max(12, target.top - box.height - 8)}px`;
+    }
+    function show(target) {
+      if (anchor === target) return;
+      hide(); anchor = target;
+      previousDescription = target.getAttribute("aria-describedby");
+      target.setAttribute("aria-describedby", [previousDescription, popup.id].filter(Boolean).join(" "));
+      try { source = target.dataset.tooltipTarget ? document.querySelector(target.dataset.tooltipTarget) : null; } catch (_error) { source = null; }
+      if (source) observer.observe(source, { childList: true, subtree: true, characterData: true });
+      update();
+    }
+    const targetOf = (event) => event.target instanceof Element ? event.target.closest("[data-tooltip], [data-tooltip-target]") : null;
+    document.addEventListener("pointerover", (event) => { if (event.pointerType !== "touch") { const target = targetOf(event); if (target) show(target); } });
+    document.addEventListener("pointerout", (event) => { if (anchor && !anchor.contains(event.relatedTarget)) hide(); });
+    document.addEventListener("focusin", (event) => { const target = targetOf(event); if (target?.matches(":focus-visible")) show(target); });
+    document.addEventListener("focusout", (event) => { if (anchor && !anchor.contains(event.relatedTarget)) hide(); });
+    document.addEventListener("pointerdown", hide, true);
+    document.addEventListener("scroll", hide, true);
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") hide(); });
+    window.addEventListener("resize", hide);
+    window.addEventListener("blur", hide);
+  }
+
+  function bindArtworkKeyboard() {
+    const card = document.querySelector(".current-time-card[data-detail-kind='artwork']");
+    card?.addEventListener("keydown", (event) => {
+      if (event.target !== card || !["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      window.DashboardDetails?.open(card);
+    });
+  }
+
+  function attachDayAxis(host, chart, start) {
+    host.querySelectorAll(".day-axis-edge").forEach((label) => label.remove());
+    const left = document.createElement("span"), right = document.createElement("span");
+    left.className = "day-axis-edge day-axis-start";
+    right.className = "day-axis-edge day-axis-end";
+    left.textContent = "00:00"; right.textContent = "24:00";
+    left.setAttribute("aria-hidden", "true"); right.setAttribute("aria-hidden", "true");
+    host.append(left, right);
+    const align = () => {
+      const x = chart.timeScale().timeToCoordinate(start + 86400);
+      right.hidden = x === null;
+      if (x !== null) right.style.left = `${Math.min(host.clientWidth, x)}px`;
+    };
+    chart.timeScale().subscribeSizeChange(align);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(align);
+    requestAnimationFrame(() => requestAnimationFrame(align));
+  }
+
+  window.DashboardUI = { applyPreferences, resetLayout, reflow, effectiveTheme, attachDayAxis, get preferences() { return { ...preferences }; } };
   applyPreferences();
   systemTheme.addEventListener?.("change", () => { if (preferences.theme_mode === "system") applyPreferences(); });
-  document.addEventListener("DOMContentLoaded", () => { bindLayout(); bindPreview(); });
+  document.addEventListener("DOMContentLoaded", () => { bindLayout(); bindPreview(); bindTooltips(); bindArtworkKeyboard(); });
 })();

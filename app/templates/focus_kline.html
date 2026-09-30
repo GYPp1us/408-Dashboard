@@ -5,19 +5,17 @@
   <header class="kline-page-head">
     <div>
       <a class="kline-back-link" href="{% if auth_user %}{{ url_for('user_dashboard', username=auth_user.username) }}{% else %}{{ url_for('guest_dashboard') }}{% endif %}">← 返回统计图</a>
-      <p class="kline-eyebrow">FOCUS MARKET · DAILY INDEX</p>
-      <h1 id="focus-kline-title">专注指数</h1>
-      <p class="kline-page-note">把每日有效专注量化成一根行情线：行为决定趋势；收盘低于 10 点时，次日从 10 点重新开盘。</p>
+      <h1 id="focus-kline-title" data-tooltip="每天的有效专注形成一根日 K；若收盘计算值低于 10 点，当日收盘时重置至 10 点" tabindex="0">专注指数</h1>
     </div>
     <div class="kline-market-state" aria-live="polite"><span class="kline-state-dot" data-kline-state-dot></span><span>当前状态</span><strong id="kline-state">读取中</strong></div>
   </header>
 
   <section class="kline-quote-card" aria-label="专注指数行情摘要">
-    <div class="kline-quote-main">
+    <div class="kline-quote-main" data-tooltip-target="#kline-last-updated" tabindex="0">
       <span class="kline-symbol">408 FOCUS INDEX <small id="kline-market-date">—</small></span>
       <strong id="kline-current" data-focus-kline-points>100.000</strong>
       <div class="kline-change-line"><b id="kline-change">±0.000</b><span id="kline-change-pct" data-focus-kline-change>0.00%</span></div>
-      <small id="kline-last-updated" class="kline-updated">等待历史数据</small>
+      <small id="kline-last-updated" class="sr-only">等待历史数据</small>
       <span id="focus-kline-points" hidden aria-hidden="true">100.000</span><span id="focus-kline-change" hidden aria-hidden="true">0.00%</span><span id="focus-kline-hours" hidden aria-hidden="true">00:00:00</span>
     </div>
     <div class="kline-quote-metrics">
@@ -29,14 +27,14 @@
 
   <section class="kline-chart-grid" aria-label="专注指数图表">
     <article class="kline-market-card kline-daily-card">
-      <div class="kline-card-head"><div><h2>日线 K 线</h2><span>历史有效专注 · 每日 OHLC · 点击蜡烛回看分时</span></div><div class="kline-card-tools"><div class="kline-range-switch" role="group" aria-label="日线区间"><button type="button" data-kline-range="30">1M</button><button type="button" data-kline-range="90">3M</button><button type="button" class="is-active" data-kline-range="0">全部</button></div><b class="kline-unit-badge">单位：点</b></div></div>
+      <div class="kline-card-head"><div><h2 title="每根蜡烛显示一天的开盘、最高、最低和收盘；点击蜡烛回看当天分时">日线 K 线</h2></div><div class="kline-card-tools"><div class="kline-range-switch" role="group" aria-label="日线区间"><button type="button" data-kline-range="30">1M</button><button type="button" data-kline-range="90">3M</button><button type="button" class="is-active" data-kline-range="0">全部</button></div><b class="kline-unit-badge">点</b></div></div>
       <div class="kline-chart-wrap"><div id="kline-daily-chart" class="kline-chart-host" role="img" aria-label="每日专注指数 K 线图"></div><div id="kline-daily-empty" class="kline-chart-empty" hidden>暂无历史专注数据</div></div>
-      <div class="kline-chart-foot"><span>红涨</span><span>绿跌</span><span>虚线：±10% 涨跌停</span></div>
+      <div class="kline-chart-foot" title="红色上涨，绿色下跌；虚线标记每日 ±10% 涨跌停"><span>红涨</span><span>绿跌</span></div>
     </article>
     <article class="kline-market-card kline-intraday-card">
-      <div class="kline-card-head"><div><h2 id="kline-intraday-title">分时走势</h2><span id="kline-intraday-caption">默认回看最近一个有盘中记录的交易日</span></div><div class="kline-intraday-badges"><b id="kline-tick-tape" class="kline-tick-tape" hidden aria-live="off">逐笔</b><b id="kline-selected-day" class="kline-live-badge">回看中</b></div></div>
-      <div class="kline-chart-wrap"><div id="kline-intraday-chart" class="kline-chart-host" role="img" aria-label="今日专注指数分时走势"></div><div id="kline-intraday-empty" class="kline-chart-empty" hidden>暂无今日分时数据</div></div>
-      <div id="kline-events" class="kline-event-legend">1 分钟正式采样 · 当前分钟秒级逐笔 · 午休时段断线</div>
+      <div class="kline-card-head"><div><h2 id="kline-intraday-title" data-tooltip="横轴固定展示 00:00–24:00；圆点是专注状态切换，复位箭头是当日收盘重置" tabindex="0">分时走势</h2><span id="kline-intraday-caption" hidden>回看最近一个有盘中记录的交易日</span></div><div class="kline-intraday-badges"><b id="kline-tick-tape" class="kline-tick-tape" hidden aria-live="off">逐笔</b><b id="kline-selected-day" class="kline-live-badge">回看中</b></div></div>
+      <div class="kline-chart-wrap"><div id="kline-intraday-chart" class="kline-chart-host" role="img" aria-label="专注指数全天分时走势" title="横轴 00:00–24:00；虚线标记当前时间；午休时段断线"></div><div id="kline-intraday-empty" class="kline-chart-empty" hidden>暂无分时数据</div></div>
+      <div id="kline-events" class="kline-event-legend" hidden>1 分钟正式采样 · 当前分钟秒级逐笔 · 午休时段断线</div>
     </article>
   </section>
 
@@ -53,7 +51,7 @@
       <div class="kline-focus-meter"><div><span>当日累计专注</span><strong id="kline-focus-meter-value">00:00:00</strong></div><div class="kline-meter-track"><i id="kline-focus-meter-fill"></i></div></div>
     </article>
     <article class="kline-market-card kline-params-card">
-      <div class="kline-card-head"><div><h2>指数参数</h2><span>只调整五个收盘锚点与线性倍率</span></div><button id="kline-reset-defaults" class="kline-quiet-button" type="button" data-focus-kline-reset>恢复默认值</button></div>
+      <div class="kline-card-head"><div><h2 title="五个参数控制专注时长对应的收盘收益">指数参数</h2></div><button id="kline-reset-defaults" class="kline-quiet-button" type="button" data-focus-kline-reset>恢复默认值</button></div>
       <form id="kline-params-form" class="kline-params-form">
         <label>低位锚点 A_low <span>小时</span><input id="kline-param-a-low" name="a_low_hours" data-focus-kline-setting="a_low" type="number" min="0" max="24" step="0.25" inputmode="decimal"></label>
         <label>目标锚点 A_mid <span>小时</span><input id="kline-param-a-mid" name="a_mid_hours" data-focus-kline-setting="a_mid" type="number" min="0" max="24" step="0.25" inputmode="decimal"></label>

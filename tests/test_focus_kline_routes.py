@@ -47,6 +47,84 @@ def test_focus_kline_api_recomputes_and_returns_market_contract(authenticated_cl
     assert payload["parameters"]["a_high_hours"] == 9.0
 
 
+def test_live_api_returns_only_today_minute_path_and_market_clock(authenticated_client, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from app import routes
+
+    now = datetime(2026, 7, 15, 9, 30, 42, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(routes, "_now", lambda timezone_name="UTC": now)
+    payload = authenticated_client.get("/api/focus-kline/live").get_json()
+
+    assert payload["intraday_date"] == "2026-07-15"
+    assert payload["generated_at"] == now.isoformat()
+    assert payload["market_active"] is True
+    assert payload["live_tick"]["active"] is True
+    assert payload["focus_state"] == "rest"
+    assert payload["live_tick"]["per_second"] != 0.0
+    assert payload["live_tick"]["timestamp"].endswith("09:30:00+08:00")
+    assert payload["live_tick"]["value_at"] == payload["index"]["current"] == payload["intraday"][-1]["price"]
+    assert "daily" not in payload and "candles" not in payload
+
+    monkeypatch.setattr(routes, "_now", lambda timezone_name="UTC": now.replace(hour=22, minute=0))
+    closed = authenticated_client.get("/api/focus-kline/live").get_json()
+    assert closed["market_active"] is False
+    assert closed["live_tick"]["per_second"] == 0.0
+
+
+def test_live_api_refreshes_old_model_cache_once_then_reuses_settled_close(authenticated_client, monkeypatch):
+    from datetime import date, datetime, timedelta
+    from zoneinfo import ZoneInfo
+    from app import focus_kline, routes
+    from app.db import connect
+
+    now = datetime(2026, 8, 1, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(routes, "_now", lambda timezone_name="UTC": now)
+    connection = connect(authenticated_client.application.config["DATABASE"])
+    owner_id = connection.execute("SELECT id FROM users WHERE role = 'site_owner' ORDER BY id LIMIT 1").fetchone()["id"]
+    start = date(2026, 7, 1)
+    connection.executemany(
+        "INSERT INTO focus_sessions(user_id, subject, mode, planned_minutes, started_at, ended_at, status) "
+        "VALUES (?, 'cache test', 'focus', 1, ?, ?, 'completed')",
+        [
+            (owner_id, f"{(start + timedelta(days=offset)).isoformat()}T00:00:00+08:00",
+             f"{(start + timedelta(days=offset)).isoformat()}T00:01:00+08:00")
+            for offset in range(30)
+        ],
+    )
+    connection.commit()
+    first = authenticated_client.get("/api/focus-kline/live").get_json()
+    full = authenticated_client.get("/api/focus-kline").get_json()
+    assert first["previous_close"] >= 10.0
+    assert first["previous_close"] == full["today"]["previous_close"]
+    assert first["intraday"] == full["intraday"]
+    cached = connection.execute(
+        "SELECT model_version, close FROM focus_klines WHERE user_id = ? AND trading_date = '2026-07-31'",
+        (owner_id,),
+    ).fetchone()
+    assert cached["model_version"] == focus_kline.MODEL_VERSION
+    assert cached["close"] == first["previous_close"]
+    connection.execute("UPDATE focus_klines SET model_version = 'focus-kline-v6' WHERE user_id = ?", (owner_id,))
+    connection.commit()
+    second = authenticated_client.get("/api/focus-kline/live").get_json()
+    assert second["previous_close"] == first["previous_close"]
+    assert connection.execute("SELECT model_version FROM focus_klines WHERE user_id = ? LIMIT 1", (owner_id,)).fetchone()["model_version"] == focus_kline.MODEL_VERSION
+
+    connection.execute("UPDATE focus_klines SET trading_sessions_json = '[]' WHERE user_id = ?", (owner_id,))
+    connection.commit()
+    third = authenticated_client.get("/api/focus-kline/live").get_json()
+    assert third["previous_close"] == first["previous_close"]
+    assert connection.execute("SELECT trading_sessions_json FROM focus_klines WHERE user_id = ? LIMIT 1", (owner_id,)).fetchone()["trading_sessions_json"] != '[]'
+
+    def no_rebuild(*args, **kwargs):
+        raise AssertionError("live polling rebuilt complete history")
+
+    monkeypatch.setattr(focus_kline, "recompute_focus_klines", no_rebuild)
+    fourth = authenticated_client.get("/api/focus-kline/live").get_json()
+    assert fourth["intraday"] == third["intraday"]
+    connection.close()
+
+
 def test_focus_kline_api_reopens_after_sub_ten_close_and_keeps_live_status(authenticated_client, monkeypatch):
     from datetime import date, datetime, timedelta, timezone
     from zoneinfo import ZoneInfo

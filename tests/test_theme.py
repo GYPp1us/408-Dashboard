@@ -84,7 +84,9 @@ def test_time_cards_use_window_duration_widths_and_compact_titles():
     assert ".progress { position:relative; height:14px; margin-top:5px; overflow:hidden; border-radius:4px" in css
     assert ".mode .drag-launch { margin-top:0" in css
     assert ".drag-launch .drag-label { font-size:13px" in css
-    assert "<h2>当前时间</h2>" not in template
+    assert "<h2>当前时间</h2>" in template
+    assert 'id="time-context" class="current-window sr-only"' in template
+    assert 'data-tooltip-target="#time-context"' in template
     assert 'style.setProperty("--morning-window"' in javascript
     assert 'style.setProperty("--library-window"' in javascript
     assert "data.windows.morning.total_seconds" in javascript
