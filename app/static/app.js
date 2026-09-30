@@ -968,7 +968,8 @@
     if (!dates.length) {
       canvas.hidden = true;
       empty.hidden = false;
-      detail.textContent = "暂无模拟考数据。";
+      detail.textContent = "";
+      detail.hidden = true;
       return;
     }
     canvas.hidden = false;
@@ -1042,12 +1043,13 @@
             enabled: false,
             external: ({ tooltip }) => {
               if (!tooltip || tooltip.opacity === 0 || !tooltip.dataPoints?.length) {
-                detail.textContent = "将鼠标移到图表上查看当天各科成绩。";
+                detail.hidden = true;
                 return;
               }
               const date = dates[tooltip.dataPoints[0].dataIndex];
               const items = [...grouped.get(date).values()];
               detail.innerHTML = `<strong>${formatScoreDate(date)}</strong>${items.map((item) => `<span>${escapeHtml(item.subject)} ${Math.round((Number(item.score) / Number(item.target)) * 1000) / 10}% · ${item.score} / ${item.target}</span>`).join("")}`;
+              detail.hidden = false;
             },
           },
         },

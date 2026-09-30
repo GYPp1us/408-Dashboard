@@ -39,7 +39,7 @@ PRICE_FLOOR = 10.0
 LIMIT_RETURN = 0.10
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_BAR_MINUTES = 1
-MODEL_VERSION = "focus-kline-v6"
+MODEL_VERSION = "focus-kline-v7"
 
 # The app's existing study windows define the market clock.  Focus outside
 # these windows can move an opening quote, but is never rendered as a
@@ -55,8 +55,10 @@ DEFAULT_TRADING_SESSIONS = (
 GAP_FOCUS_PER_HOUR = 0.012
 GAP_LIMIT = 0.08
 MOMENTUM_DECAY = 0.82
-MOMENTUM_IMPULSE = 0.0045
-MOMENTUM_SWITCH_IMPULSE = 0.0075
+# A 20% reduction tempers nonlinear focus/idle overshoots without changing
+# the user-configurable K slopes that determine each day's fundamental close.
+MOMENTUM_IMPULSE = 0.0036
+MOMENTUM_SWITCH_IMPULSE = 0.0060
 NOISE_MEAN_REVERSION = 0.42
 NOISE_VOLATILITY = 0.009
 NOISE_SWITCH_VOLATILITY = 0.022
@@ -765,16 +767,15 @@ def build_focus_klines(
         focus_hours = focus_seconds / 3600.0
         pre_open_window_seconds = max(0, int((market_open - day_start).total_seconds()))
         lunch_window_seconds = max(0, int((windows[1]["start"] - windows[0]["end"]).total_seconds())) if len(windows) > 1 else 0
-        reset_open = previous_close < PRICE_FLOOR
-        pre_open_gap = _gap_return(pre_open_seconds, pre_open_window_seconds) if has_segment_detail and not reset_open else 0.0
+        pre_open_gap = _gap_return(pre_open_seconds, pre_open_window_seconds) if has_segment_detail else 0.0
         lunch_gap = _gap_return(lunch_seconds, lunch_window_seconds) if has_segment_detail else 0.0
         complete_day = day < current.date() or current >= market_close
-        # A completed close below 10 is a reset trigger, not an absorbing
-        # delisting state. The next day opens at exactly 10 and can rally.
-        reference_price = _price(PRICE_FLOOR if reset_open else previous_close)
+        # The previous candle has already settled any floor reset at market
+        # close. Today's reference price must be its actual stored close.
+        reference_price = _price(previous_close)
         lower_bound = _price(reference_price * (1.0 - LIMIT_RETURN))
         upper_bound = _price(reference_price * (1.0 + LIMIT_RETURN))
-        open_price = _price(PRICE_FLOOR if reset_open else reference_price * (1.0 + pre_open_gap))
+        open_price = _price(reference_price * (1.0 + pre_open_gap))
         open_price = min(max(open_price, lower_bound), upper_bound)
         fundamental_return = close_return(focus_hours, config)
         target_close = min(max(_price(reference_price * (1.0 + fundamental_return)), lower_bound), upper_bound)
@@ -799,6 +800,13 @@ def build_focus_klines(
             if path:
                 path[-1]["price"] = close
         below_reset_threshold = complete_day and close < PRICE_FLOOR
+        if below_reset_threshold:
+            # Settle the reset in this day's closing auction, so the next
+            # candle's previous_close equals the visible preceding close.
+            close = _price(PRICE_FLOOR)
+            if path:
+                path[-1]["price"] = close
+                path[-1]["floor_reset"] = True
         if below_reset_threshold:
             status = "below_floor"
         elif day != current.date():
@@ -1083,6 +1091,123 @@ def build_focus_kline(
     }
 
 
+def build_live_focus_kline(
+    connection: sqlite3.Connection,
+    user_id: int | None,
+    *,
+    now: datetime,
+    timezone_name: str = DEFAULT_TIMEZONE,
+    parameters: FocusKlineParameters | Mapping[str, Any] | None = None,
+    trading_sessions: Sequence[Sequence[str | time] | Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Return today's minute path and a bounded, client-interpolated quote.
+
+    Historical settlement comes from the derived cache. A version/parameter
+    mismatch refreshes it once; normal polls only generate missing days and
+    today's path from the cached close. No historical bars are built per tick.
+    """
+
+    current = _coerce_now(now, _zone(timezone_name))
+    config = _as_parameters(parameters)
+    sessions = normalize_trading_sessions(trading_sessions)
+    today = current.date()
+    if user_id is None:
+        return {
+            "generated_at": current.isoformat(), "updated_at": current.isoformat(),
+            "intraday_date": today.isoformat(), "intraday": [],
+            "index": {"current": INITIAL_INDEX}, "previous_close": INITIAL_INDEX,
+            "limit_down": INITIAL_INDEX * (1.0 - LIMIT_RETURN),
+            "limit_up": INITIAL_INDEX * (1.0 + LIMIT_RETURN),
+            "today_focus_seconds": 0, "market_active": False,
+            "market_status": "pre_open", "status": "rest", "focus_state": "rest",
+            "is_focusing": False, "is_paused": False,
+            "live_tick": {"value_at": INITIAL_INDEX, "timestamp": current.isoformat(),
+                          "per_second": 0.0, "active": False},
+            "model_version": MODEL_VERSION,
+        }
+    ensure_focus_kline_schema(connection)
+    segments = _load_effective_segments(connection, int(user_id), current, current.tzinfo)
+    seconds_by_day, segments_by_day = group_focus_segments_by_day(segments)
+    first_source_day = min(seconds_by_day) if seconds_by_day else today.isoformat()
+    cached = connection.execute(
+        "SELECT trading_date, close, model_version, parameters_json, trading_sessions_json FROM focus_klines "
+        "WHERE user_id = ? AND trading_date < ? ORDER BY trading_date DESC LIMIT 1",
+        (int(user_id), today.isoformat()),
+    ).fetchone()
+    expected_parameters = config.to_mapping()
+    try:
+        cached_windows = json.loads(cached["trading_sessions_json"]) if cached else []
+        expected_windows = [
+            {"name": window["name"], "start": window["start"].isoformat(), "end": window["end"].isoformat()}
+            for window in trading_session_windows(date.fromisoformat(cached["trading_date"]), sessions, target_zone=current.tzinfo)
+        ] if cached else []
+        cache_matches = (
+            cached is not None
+            and cached["model_version"] == MODEL_VERSION
+            and json.loads(cached["parameters_json"]) == expected_parameters
+            and cached_windows == expected_windows
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        cache_matches = False
+    if (cached is not None and not cache_matches) or (cached is None and first_source_day < today.isoformat()):
+        recompute_focus_klines(
+            connection, int(user_id), now=current, timezone_name=timezone_name,
+            parameters=config, trading_sessions=sessions,
+        )
+        cached = connection.execute(
+            "SELECT trading_date, close FROM focus_klines WHERE user_id = ? AND trading_date < ? "
+            "ORDER BY trading_date DESC LIMIT 1",
+            (int(user_id), today.isoformat()),
+        ).fetchone()
+
+    first_day = date.fromisoformat(cached["trading_date"]) + timedelta(days=1) if cached else today
+    relevant_seconds = {day: count for day, count in seconds_by_day.items() if day >= first_day.isoformat()}
+    relevant_seconds.setdefault(first_day.isoformat(), 0)
+    relevant_segments = {day: value for day, value in segments_by_day.items() if day >= first_day.isoformat()}
+    rows = build_focus_klines(
+        relevant_seconds, daily_segments=relevant_segments, now=current,
+        user_key=int(user_id),
+        parameters=config, initial_price=float(cached["close"]) if cached else INITIAL_INDEX,
+        trading_sessions=sessions,
+    )
+    latest = rows[-1]
+    path = latest["intraday"]
+    market_active = any(window["start"] <= current < window["end"] for window in trading_session_windows(today, sessions, target_zone=current.tzinfo))
+    focus = current_focus_state(connection, int(user_id))
+    quote = path[-1] if path else {"timestamp": current.isoformat(), "price": latest["open"]}
+    per_second = 0.0
+    if market_active and len(path) >= 2 and not quote.get("changed") and not quote.get("floor_reset"):
+        previous = path[-2]
+        elapsed = (datetime.fromisoformat(quote["timestamp"]) - datetime.fromisoformat(previous["timestamp"])).total_seconds()
+        move = quote["price"] - previous["price"]
+        # Extrapolate only ordinary minute motion. A state-switch shock or
+        # closing reset is a discrete event and must never repeat each second.
+        if quote["session"] == previous["session"] and elapsed > 0 and abs(move) <= latest["previous_close"] * 0.005:
+            per_second = round(move / elapsed * 0.35, 9)
+    return {
+        "generated_at": current.isoformat(),
+        "updated_at": current.isoformat(),
+        "intraday_date": today.isoformat(),
+        "intraday": path,
+        "index": {"current": quote["price"]},
+        "previous_close": latest["previous_close"],
+        "limit_down": latest["limit_down"],
+        "limit_up": latest["limit_up"],
+        "today_focus_seconds": latest["focus_seconds"],
+        "market_active": market_active,
+        "market_status": latest["status"],
+        "status": focus["state"],
+        "focus_state": focus["state"],
+        "is_focusing": focus["is_focusing"],
+        "is_paused": focus["is_paused"],
+        "live_tick": {
+            "value_at": quote["price"], "timestamp": quote["timestamp"],
+            "per_second": per_second, "active": market_active,
+        },
+        "model_version": MODEL_VERSION,
+    }
+
+
 def list_focus_klines(
     connection: sqlite3.Connection,
     user_id: int,
@@ -1149,6 +1274,7 @@ __all__ = [
     "SETTING_KEYS",
     "build_focus_kline",
     "build_focus_klines",
+    "build_live_focus_kline",
     "close_return",
     "current_focus_state",
     "ensure_focus_kline_schema",

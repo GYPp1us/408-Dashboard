@@ -20,6 +20,7 @@ from .focus_kline import (
     FocusKlineParameters,
     build_focus_klines,
     build_focus_kline,
+    build_live_focus_kline,
     current_focus_state,
     group_focus_segments_by_day,
     trading_sessions_from_settings,
@@ -465,6 +466,25 @@ def register_routes(app):
             viewer_id = _viewer_user_id(connection)
             settings = get_settings(connection, viewer_id)
             return jsonify(_focus_kline_payload(connection, viewer_id, settings, intraday_date=requested_date))
+        finally:
+            connection.close()
+
+    @app.get("/api/focus-kline/live")
+    @login_required
+    def focus_kline_live_api():
+        """Serve today's official minute path and a lightweight live quote."""
+
+        connection = connect(app.config["DATABASE"])
+        try:
+            viewer_id = _viewer_user_id(connection)
+            settings = get_settings(connection, viewer_id)
+            timezone_name = settings.get("timezone", "Asia/Shanghai")
+            return jsonify(build_live_focus_kline(
+                connection, viewer_id,
+                now=_now(timezone_name), timezone_name=timezone_name,
+                parameters=_focus_kline_parameters(settings),
+                trading_sessions=trading_sessions_from_settings(settings),
+            ))
         finally:
             connection.close()
 
@@ -945,13 +965,16 @@ def register_routes(app):
             return jsonify(error="invalid_session_id"), 400
         connection = connect(app.config["DATABASE"])
         try:
-            return jsonify(record_foreground_heartbeat(
+            result = record_foreground_heartbeat(
                 connection,
                 _now("UTC"),
                 user_id=None if is_guest() else current_user_id(),
                 session_id=session_id,
                 allow_recovery=payload.get("allow_recovery") is True,
-            ))
+            )
+            if result["recovered"]:
+                _refresh_focus_kline(connection, current_user_id())
+            return jsonify(result)
         finally:
             connection.close()
 

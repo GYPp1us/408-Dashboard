@@ -8,7 +8,7 @@
     k_low_percent_per_hour: 3.33,
     k_high_percent_per_hour: 5,
   };
-  const state = { payload: null, charts: [], resizeObservers: [], resizeTimer: null, rangeDays: 0, selectedDate: null, liveTickTimer: null, liveTickClearTimer: null, liveTickGeneration: 0, liveDailySeries: null, liveDailyCandle: null };
+  const state = { payload: null, charts: [], resizeObservers: [], resizeTimer: null, rangeDays: 0, selectedDate: null, liveTickTimer: null, liveTickClearTimer: null, nowMarkerTimer: null, liveTickGeneration: 0, liveDailySeries: null, liveDailyCandle: null };
   const $ = (selector) => document.querySelector(selector);
   const finite = (value, fallback = 0) => {
     const number = Number(value);
@@ -33,6 +33,10 @@
     const text = String(value || "");
     return text.length >= 10 ? text.slice(5, 10).replace("-", "/") : text;
   };
+  const DAY_MINUTES = 24 * 60;
+  const dayStart = (date) => Math.floor(Date.parse(`${date}T00:00:00+08:00`) / 1000);
+  const dayScaffold = (date) => Array.from({ length: DAY_MINUTES + 1 }, (_, minute) => ({ time: dayStart(date) + minute * 60 }));
+  const fullDayRange = { from: -.5, to: DAY_MINUTES + .5 };
 
   function setText(selector, value) {
     const target = $(selector);
@@ -92,6 +96,7 @@
       value: finite(source.value ?? source.price ?? source.index ?? source.market ?? source.close, fallbackValue),
       status: normalizeStatus(source.status ?? source.state ?? source.mode),
       event: Boolean(source.event || source.transition || source.marker || source.changed),
+      floorReset: Boolean(source.floor_reset),
       label: source.label || source.note || "",
     };
   }
@@ -177,9 +182,10 @@
     return new Date(NaN);
   }
 
-  function chartTimeLabel(time) {
+  function chartTimeLabel(time, day = "") {
     const date = chartDate(time);
     if (Number.isNaN(date.getTime())) return "";
+    if (day && typeof time === "number" && time === dayStart(day) + DAY_MINUTES * 60) return "24:00";
     if (typeof time === "number") return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
     return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit" }).format(date).replace("月", "/").replace("日", "");
   }
@@ -322,6 +328,8 @@
 
   function destroyCharts() {
     stopLiveTicks();
+    window.clearInterval(state.nowMarkerTimer);
+    state.nowMarkerTimer = null;
     state.liveDailySeries = null;
     state.liveDailyCandle = null;
     state.resizeObservers.forEach((observer) => observer.disconnect());
@@ -432,7 +440,7 @@
         position: isReset ? "belowBar" : "aboveBar",
         color: isReset ? "#758079" : isSelected ? "#8067b3" : "#b47a59",
         shape: isReset ? "arrowUp" : isSelected ? "circle" : "square",
-        text: isReset ? "次日 10 点开盘" : isSelected && !isToday ? "回看" : isToday ? "今日" : "",
+        text: isReset ? "收盘复位" : isSelected && !isToday ? "回看" : isToday ? "今日" : "",
       };
     });
     if (markers.length) library.createSeriesMarkers(series, markers);
@@ -469,6 +477,7 @@
     const empty = $("#kline-intraday-empty");
     if (!host || !window.LightweightCharts) return;
     host.querySelector(".kline-noon-marker")?.remove();
+    host.querySelector(".kline-now-marker")?.remove();
     const selected = selectedDay(data);
     const points = selected.intraday.map((item) => ({ ...item, unix: toUnixSeconds(item.time) })).filter((item) => item.unix > 0).sort((left, right) => left.unix - right.unix).filter((item, index, array) => index === 0 || item.unix > array[index - 1].unix);
     const card = host.closest(".kline-intraday-card");
@@ -480,7 +489,32 @@
     host.hidden = !points.length;
     if (!points.length) return;
     const library = window.LightweightCharts;
-    const chart = library.createChart(host, lightweightOptions(host, { timeScale: { borderColor: chartTheme("--line"), timeVisible: true, secondsVisible: false, rightOffset: 3, barSpacing: Math.max(5, Math.min(12, host.clientWidth / points.length)), fixLeftEdge: true, lockVisibleTimeRangeOnResize: true } }));
+    const chart = library.createChart(host, lightweightOptions(host, { timeScale: { borderColor: chartTheme("--line"), timeVisible: true, secondsVisible: false, minBarSpacing: 0.01, rightOffset: 0, fixLeftEdge: true, fixRightEdge: true, lockVisibleTimeRangeOnResize: true, tickMarkFormatter: (time) => chartTimeLabel(time, selected.date) }, localization: { timeFormatter: (time) => chartTimeLabel(time, selected.date) } }));
+    const scaffold = chart.addSeries(library.LineSeries, { visible: true, color: "transparent", priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    scaffold.setData(dayScaffold(selected.date));
+    chart.applyOptions({ timeScale: { tickMarkFormatter: (time) => {
+      const hour = (time - dayStart(selected.date)) / 3600;
+      return hour <= 2 || hour >= 22 ? "" : chartTimeLabel(time, selected.date);
+    } } });
+    window.DashboardUI?.attachDayAxis(host, chart, dayStart(selected.date));
+    if (selected.date === new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)) {
+      const marker = document.createElement("div");
+      marker.className = "kline-now-marker";
+      marker.innerHTML = "<span>现在</span>";
+      marker.title = "当前市场时间；横轴固定展示 00:00–24:00";
+      host.append(marker);
+      const alignNow = () => {
+        const now = Date.now() / 1000;
+        const minute = Math.floor(now / 60) * 60;
+        const left = chart.timeScale().timeToCoordinate(minute);
+        const right = chart.timeScale().timeToCoordinate(minute + 60);
+        marker.hidden = left === null || right === null || minute < dayStart(selected.date) || minute >= dayStart(selected.date) + DAY_MINUTES * 60;
+        if (!marker.hidden) marker.style.left = `${left + (right - left) * ((now - minute) / 60)}px`;
+      };
+      state.nowMarkerTimer = window.setInterval(alignNow, 1000);
+      chart.timeScale().subscribeSizeChange(alignNow);
+      window.requestAnimationFrame?.(() => window.requestAnimationFrame?.(alignNow));
+    }
     const seriesOptions = { color: "#8067b3", lineWidth: 2, lineType: library.LineType?.Simple ?? 0, pointMarkersVisible: false, crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "price", precision: 3, minMove: data.priceTick } };
     const morning = points.filter((item) => shanghaiMinutes(item.time) <= 12 * 60);
     const afternoon = points.filter((item) => shanghaiMinutes(item.time) >= 13 * 60 + 30);
@@ -493,6 +527,13 @@
     const afternoonSeries = afternoon.length ? chart.addSeries(library.LineSeries, seriesOptions) : null;
     morningSeries?.setData(asLineData(morning));
     afternoonSeries?.setData(asLineData(afternoon));
+    const eventMarkers = (items) => items.filter((item) => item.event || item.floorReset).map((item) => ({
+      time: item.unix, position: item.floorReset ? "belowBar" : "aboveBar", shape: item.floorReset ? "arrowUp" : "circle", color: item.floorReset ? "#8067b3" : "#b47a59", text: item.floorReset ? "复位" : "",
+    }));
+    if (library.createSeriesMarkers) {
+      if (morningSeries) library.createSeriesMarkers(morningSeries, eventMarkers(morning));
+      if (afternoonSeries) library.createSeriesMarkers(afternoonSeries, eventMarkers(afternoon));
+    }
     const priceSeries = morningSeries || afternoonSeries;
     if (priceSeries) addLimitLines(priceSeries, data);
     const noonClose = morning.find((item) => shanghaiMinutes(item.time) === 12 * 60);
@@ -513,16 +554,9 @@
       chart.timeScale().subscribeSizeChange(alignNoonMarker);
       window.requestAnimationFrame?.(() => window.requestAnimationFrame?.(alignNoonMarker));
     }
-    chart.timeScale().fitContent();
-    const intradayCount = morning.length + afternoon.length;
-    const intradayRange = intradayCount > 1 ? { from: -0.5, to: intradayCount - 0.5 } : null;
-    if (intradayRange) {
-      // Include both 08:00 and the final afternoon point explicitly; this
-      // also resets a stale logical range when switching historical dates.
-      pinVisibleLogicalRange(chart, intradayRange);
-    }
+    pinVisibleLogicalRange(chart, fullDayRange);
     state.charts.push(chart);
-    observeChart(host, chart, intradayRange ? () => pinVisibleLogicalRange(chart, intradayRange) : null);
+    observeChart(host, chart, () => pinVisibleLogicalRange(chart, fullDayRange));
     const latestPoint = points.at(-1);
     const liveSeries = afternoon.length ? afternoonSeries : morningSeries;
     startLiveTicks(data, selected, liveSeries, latestPoint);

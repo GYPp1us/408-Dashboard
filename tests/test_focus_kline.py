@@ -314,7 +314,7 @@ def test_custom_anchor_parameters_rebuild_the_intraday_anchor_path():
     assert defaults["intraday"] != custom["intraday"]
 
 
-def test_close_below_ten_reopens_at_ten_and_can_recover():
+def test_close_floor_reset_settles_at_market_close_and_next_day_can_recover():
     from app.focus_kline import build_focus_klines
 
     now = datetime(2026, 8, 1, 23, 0, tzinfo=timezone.utc)
@@ -323,10 +323,13 @@ def test_close_below_ten_reopens_at_ten_and_can_recover():
     rows = build_focus_klines(daily, now=now)
 
     first_below = next(index for index, row in enumerate(rows) if row["delisted"])
-    assert rows[first_below]["close"] < 10.0
+    assert rows[first_below]["close"] == 10.0
+    assert rows[first_below]["intraday"][-1]["price"] == 10.0
+    assert rows[first_below]["intraday"][-1]["floor_reset"] is True
     assert rows[first_below]["intraday"]
     assert rows[first_below + 1]["open"] == 10.0
     assert rows[first_below + 1]["previous_close"] == 10.0
+    assert rows[first_below + 1]["previous_close"] == rows[first_below]["close"]
     assert rows[first_below + 1]["intraday"]
     daily[start + timedelta(days=first_below + 1)] = 9 * 3600
     recovered = build_focus_klines(daily, now=now)
@@ -334,6 +337,23 @@ def test_close_below_ten_reopens_at_ten_and_can_recover():
     assert recovered[first_below + 1]["close"] == 11.0
     assert recovered[first_below + 1]["delisted"] is False
     assert all(row["high"] >= row["open"] >= row["low"] for row in rows)
+
+
+def test_floor_reset_waits_for_market_close_and_keeps_the_earlier_intraday_price():
+    from app.focus_kline import build_focus_klines
+
+    day = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    daily = {day.date(): 0}
+    before = build_focus_klines(daily, now=day.replace(hour=21, minute=59), initial_price=10.5)[0]
+    settled = build_focus_klines(daily, now=day.replace(hour=22), initial_price=10.5)[0]
+
+    assert before["close"] < 10.0
+    assert before["delisted"] is False
+    assert settled["previous_close"] == 10.5
+    assert settled["close"] == 10.0
+    assert settled["change"] == -0.5
+    assert settled["intraday"][-2]["price"] < 10.0
+    assert settled["intraday"][-1]["floor_reset"] is True
 
 
 def test_group_segments_splits_midnight_crossing_focus():
