@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -28,11 +29,11 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private lateinit var permissionChip: Button
+    private lateinit var contentRoot: FrameLayout
     private var receiverRegistered = false
     private var backInFlight = false
     private var cacheFallbackUrl: String? = null
@@ -53,7 +54,14 @@ class MainActivity : ComponentActivity() {
 
     private val refreshReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            webView.evaluateJavascript("window.MutsumiWeb?.refresh?.()", null)
+            refreshTrustedDocument()
+        }
+    }
+
+    private fun refreshTrustedDocument() {
+        if (!hasTrustedDocument()) return
+        webView.post {
+            if (hasTrustedDocument()) webView.evaluateJavascript("window.MutsumiWeb?.refresh?.()", null)
         }
     }
 
@@ -65,6 +73,7 @@ class MainActivity : ComponentActivity() {
         CookieManager.getInstance().setAcceptCookie(true)
         setContentView(buildContent())
         configureWebView()
+        updateWindowLayout()
         FocusService.acknowledgeFromNotification(this, intent)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -105,14 +114,7 @@ class MainActivity : ComponentActivity() {
 
     private fun buildContent(): View {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.rgb(34, 28, 26)) }
-        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
-            val safe = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or
-                    WindowInsetsCompat.Type.ime(),
-            )
-            view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
-            insets
-        }
+        contentRoot = root
         webView = WebView(this)
         root.addView(webView, FrameLayout.LayoutParams(-1, -1))
         permissionChip = Button(this).apply {
@@ -139,6 +141,9 @@ class MainActivity : ComponentActivity() {
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
+            textZoom = 100
+            useWideViewPort = true
+            loadWithOverviewMode = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             allowFileAccess = false
             allowContentAccess = false
@@ -251,7 +256,29 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        permissionChip.visibility = if (PermissionStatus.allRecommended(this)) View.GONE else View.VISIBLE
+        updateWindowLayout()
+        FocusService.requestReminderCheck(this)
+        // A notification can change focus while this Activity's receiver is
+        // stopped. Reconcile the retained document as soon as it returns.
+        refreshTrustedDocument()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        updateWindowLayout()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && ::contentRoot.isInitialized) {
+            updateWindowLayout()
+            refreshTrustedDocument()
+        }
+    }
+
+    private fun updateWindowLayout() {
+        val landscape = AppWindowLayout.apply(this, contentRoot)
+        permissionChip.visibility = if (landscape || PermissionStatus.allRecommended(this)) View.GONE else View.VISIBLE
         // Reserve a native strip while setup is incomplete. A floating chip
         // over the WebView would intercept its top-right Settings link.
         (webView.layoutParams as FrameLayout.LayoutParams).let { params ->
@@ -261,7 +288,7 @@ class MainActivity : ComponentActivity() {
                 webView.layoutParams = params
             }
         }
-        FocusService.requestReminderCheck(this)
+        ViewCompat.requestApplyInsets(contentRoot)
     }
 
     override fun onStart() {

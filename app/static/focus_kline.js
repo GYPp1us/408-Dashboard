@@ -8,7 +8,11 @@
     k_low_percent_per_hour: 3.33,
     k_high_percent_per_hour: 5,
   };
-  const state = { payload: null, charts: [], resizeObservers: [], resizeTimer: null, rangeDays: 0, selectedDate: null, liveTickTimer: null, liveTickClearTimer: null, nowMarkerTimer: null, liveTickGeneration: 0, liveDailySeries: null, liveDailyCandle: null };
+  const state = { payload: null, charts: [], resizeObservers: [], resizeTimer: null, rangeDays: 0, selectedDate: null, liveTickTimer: null, livePollTimer: null, liveTickClearTimer: null, nowMarkerTimer: null, liveTickGeneration: 0, liveResumeDispose: null, liveDailySeries: null, liveDailyCandle: null, liveIntraday: null, liveSnapshot: null };
+  const Market = window.IndexMarket;
+  const acceptPolicy = (data) => !data.challenge || !window.IndexChallenge || window.IndexChallenge.accept(data.challenge);
+  let summaryPending = null, summaryRefreshDue = false, summaryRequestVersion = 0;
+  let loadRequestVersion = 0, challengeLoadDue = false;
   const $ = (selector) => document.querySelector(selector);
   const finite = (value, fallback = 0) => {
     const number = Number(value);
@@ -25,18 +29,13 @@
     return [Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60].map((part) => String(part).padStart(2, "0")).join(":");
   };
   const formatTime = (value) => {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return String(value || "").slice(11, 16) || "—";
-    return date.toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false });
+    const timestamp = Market.parse(value);
+    return Number.isFinite(timestamp) ? Market.clock(timestamp, Market.offsetOf(value)) : String(value || "").slice(11, 16) || "—";
   };
   const dateLabel = (value) => {
     const text = String(value || "");
     return text.length >= 10 ? text.slice(5, 10).replace("-", "/") : text;
   };
-  const DAY_MINUTES = 24 * 60;
-  const dayStart = (date) => Math.floor(Date.parse(`${date}T00:00:00+08:00`) / 1000);
-  const dayScaffold = (date) => Array.from({ length: DAY_MINUTES + 1 }, (_, minute) => ({ time: dayStart(date) + minute * 60 }));
-  const fullDayRange = { from: -.5, to: DAY_MINUTES + .5 };
 
   function setText(selector, value) {
     const target = $(selector);
@@ -84,7 +83,7 @@
       previousClose: finite(source.previous_close ?? source.previousClose, previousClose),
       limitUp: finite(source.limit_up, open * 1.1),
       limitDown: finite(source.limit_down, open * .9),
-      tradingSessions: Array.isArray(source.trading_sessions) ? source.trading_sessions : [],
+      tradingSessions: source.trading_sessions || source.tradingSessions || [],
       intraday,
     };
   }
@@ -96,7 +95,7 @@
       value: finite(source.value ?? source.price ?? source.index ?? source.market ?? source.close, fallbackValue),
       status: normalizeStatus(source.status ?? source.state ?? source.mode),
       event: Boolean(source.event || source.transition || source.marker || source.changed),
-      floorReset: Boolean(source.floor_reset),
+      floorReset: Boolean(source.floor_reset || source.floorReset),
       label: source.label || source.note || "",
     };
   }
@@ -109,10 +108,11 @@
       result.push(normalizeDay(item, index, previous));
       return result;
     }, []) : [];
-    const latestSource = source.latest ?? source.current ?? days.at(-1) ?? {};
+    const latestSource = source.today ?? source.latest ?? source.current ?? days.at(-1) ?? {};
     const latest = normalizeDay(latestSource, days.length, days.at(-2)?.close ?? 100);
+    latest.intraday = latest.intraday.map((item, index) => normalizePoint(item, index, latest.open));
     days.forEach((day) => { day.intraday = day.intraday.map((item, index) => normalizePoint(item, index, day.open)); });
-    const current = finite(source.current_index ?? source.index_value ?? latest.close, latest.close);
+    const current = finite(source.index?.current ?? source.current_index ?? source.index_value ?? latest.close, latest.close);
     latest.close = current;
     latest.high = Math.max(latest.high, current);
     latest.low = Math.min(latest.low, current);
@@ -126,7 +126,10 @@
       low: finite(source.limit_down ?? latest.limitDown, 90),
       high: finite(source.limit_up ?? latest.limitUp, 110),
     };
-    const today = { ...latest, intraday };
+    const intradayDate = String(source.intraday_date ?? source.selected_date ?? latest.date);
+    const selected = days.find((day) => day.date === intradayDate);
+    if (selected) selected.intraday = intraday;
+    const today = { ...latest, intraday:intradayDate === latest.date ? intraday : latest.intraday };
     const parameters = readParameters(source.parameters ?? source.params ?? {});
     return {
       days: days.length ? days : [today],
@@ -136,13 +139,15 @@
       status: normalizeStatus(latestStatus),
       focusState,
       isFocusing,
+      isPaused: Boolean(source.is_paused),
       focusSeconds: finite(source.today_focus_seconds ?? source.focus_seconds ?? latest.focusSeconds, latest.focusSeconds),
       updatedAt: source.updated_at ?? source.generated_at ?? source.now ?? new Date().toISOString(),
-      intradayDate: String(source.intraday_date ?? source.selected_date ?? ""),
+      intradayDate,
       limits: latestLimits,
       parameters,
       initialIndex: finite(source.initial_index, 100),
       priceTick: finite(source.price_tick, .001),
+      challenge: source.challenge,
     };
   }
 
@@ -169,12 +174,6 @@
     return normalizePayload({ candles: days, latest: days.at(-1), parameters: DEFAULT_PARAMETERS, initial_index: 100, price_tick: .001, updated_at: now.toISOString() });
   }
 
-  function toUnixSeconds(value) {
-    if (typeof value === "number" && Number.isFinite(value)) return Math.floor(value > 10_000_000_000 ? value / 1000 : value);
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
-  }
-
   function chartDate(time) {
     if (typeof time === "number") return new Date(time * 1000);
     if (typeof time === "string") return new Date(`${time.slice(0, 10)}T00:00:00+08:00`);
@@ -182,26 +181,25 @@
     return new Date(NaN);
   }
 
-  function chartTimeLabel(time, day = "") {
+  function chartTimeLabel(time, market = null) {
     const date = chartDate(time);
     if (Number.isNaN(date.getTime())) return "";
-    if (day && typeof time === "number" && time === dayStart(day) + DAY_MINUTES * 60) return "24:00";
-    if (typeof time === "number") return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
-    return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit" }).format(date).replace("月", "/").replace("日", "");
-  }
-
-  function shanghaiMinutes(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return 0;
-    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
-    return finite(parts.find((part) => part.type === "hour")?.value, 0) * 60 + finite(parts.find((part) => part.type === "minute")?.value, 0);
+    if (typeof time === "number") return Market.clock(time, market?.offset || "+08:00");
+    const businessDate = typeof time === "string" ? time.slice(0, 10) : time?.year ? `${time.year}-${String(time.month).padStart(2, "0")}-${String(time.day).padStart(2, "0")}` : "";
+    return businessDate ? businessDate.slice(5).replace("-", "/") : "";
   }
 
   function stopLiveTicks() {
-    window.clearTimeout(state.liveTickTimer);
+    state.liveResumeDispose?.();
+    state.liveResumeDispose = null;
+    window.clearInterval(state.liveTickTimer);
+    window.clearInterval(state.livePollTimer);
     window.clearTimeout(state.liveTickClearTimer);
     state.liveTickTimer = null;
+    state.livePollTimer = null;
     state.liveTickClearTimer = null;
+    state.liveIntraday = null;
+    state.liveSnapshot = null;
     state.liveTickGeneration += 1;
     const quote = $("#kline-current");
     quote?.classList.remove("is-tick-up", "is-tick-down");
@@ -214,21 +212,8 @@
     }
   }
 
-  function isLiveMarketMinute(data, selected, latestPoint) {
-    if (!selected || selected.date !== data.today.date || !latestPoint) return false;
-    const now = Date.now();
-    if (selected.tradingSessions.length) {
-      return selected.tradingSessions.some((session) => {
-        const start = Date.parse(session.start);
-        const end = Date.parse(session.end);
-        return Number.isFinite(start) && Number.isFinite(end) && start <= now && now < end;
-      });
-    }
-    return Math.abs(now - latestPoint.unix * 1000) < 90_000;
-  }
-
-  function applyLiveTrade(data, selected, series, latestPoint, price, direction, tickCount, liveHigh, liveLow) {
-    series.update({ time: latestPoint.unix, value: price });
+  function applyLiveTrade(data, selected, series, tickTime, price, direction, tickCount, liveHigh, liveLow) {
+    if (series) series.update({ time: tickTime, value: price });
     const previousClose = finite(selected.previousClose, selected.open);
     const change = price - previousClose;
     const changePct = previousClose ? change / previousClose * 100 : 0;
@@ -237,7 +222,6 @@
     setText("#kline-change-pct", signedPercent(changePct));
     setText("#focus-kline-points", point(price));
     setText("#focus-kline-change", signedPercent(changePct));
-    setText("#kline-last-updated", `逐笔 ${new Date().toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })}`);
     const changeLine = $(".kline-change-line");
     changeLine?.classList.toggle("is-up", change > .0005);
     changeLine?.classList.toggle("is-down", change < -.0005);
@@ -255,21 +239,12 @@
     }
 
     const quote = $("#kline-current");
-    quote?.classList.remove("is-tick-up", "is-tick-down");
-    if (quote) void quote.offsetWidth;
-    quote?.classList.add(direction > 0 ? "is-tick-up" : "is-tick-down");
-    window.clearTimeout(state.liveTickClearTimer);
-    state.liveTickClearTimer = window.setTimeout(() => quote?.classList.remove("is-tick-up", "is-tick-down"), 480);
-
-    const tape = $("#kline-tick-tape");
-    if (tape) {
-      tape.hidden = false;
-      tape.textContent = `${direction > 0 ? "▲" : "▼"} ${point(price)}`;
-      tape.classList.toggle("is-up", direction > 0);
-      tape.classList.toggle("is-down", direction < 0);
-      tape.dataset.tickDirection = direction > 0 ? "up" : "down";
-      tape.dataset.tickPrice = point(price);
-      tape.dataset.tickCount = String(tickCount);
+    if (direction) {
+      quote?.classList.remove("is-tick-up", "is-tick-down");
+      if (quote) void quote.offsetWidth;
+      quote?.classList.add(direction > 0 ? "is-tick-up" : "is-tick-down");
+      window.clearTimeout(state.liveTickClearTimer);
+      state.liveTickClearTimer = window.setTimeout(() => quote?.classList.remove("is-tick-up", "is-tick-down"), 480);
     }
 
     setText("#kline-high", point(liveHigh));
@@ -279,51 +254,96 @@
   }
 
   function startLiveTicks(data, selected, series, latestPoint) {
-    stopLiveTicks();
-    if (!series || !isLiveMarketMinute(data, selected, latestPoint)) return;
+    if (!selected || selected.date !== data.today.date || selected.date !== Market.dateAt(Date.now() / 1000, state.liveIntraday?.market.offset)) return;
     const generation = state.liveTickGeneration;
-    const minuteStarted = Math.floor(Date.now() / 60_000);
-    const tickSize = Math.max(.001, finite(data.priceTick, .001));
-    const basePrice = latestPoint.value;
-    const maxOffset = Math.max(tickSize * 36, basePrice * .00045);
-    let livePrice = basePrice;
-    let liveHigh = selected.high;
-    let liveLow = selected.low;
+    let lastPrice = latestPoint?.value ?? selected.close;
     let tickCount = 0;
-
-    const schedule = () => {
-      state.liveTickTimer = window.setTimeout(run, 720 + Math.random() * 1280);
-    };
+    let liveHigh = selected.high, liveLow = selected.low, polling = false, refreshDue = false, requestVersion = 0, pollPending = null;
     const run = () => {
-      if (generation !== state.liveTickGeneration) return;
-      if (Math.floor(Date.now() / 60_000) !== minuteStarted) {
-        loadKline();
-        return;
+      const snapshot = state.liveSnapshot;
+      if (document.hidden || generation !== state.liveTickGeneration || !snapshot || snapshot.requestVersion !== requestVersion) return;
+      const view = state.liveIntraday;
+      const projection = Market.project(snapshot, view?.market);
+      if (!projection) return;
+      const price = projection.value;
+      const group = projection.active ? view.timeline.append(projection.time, price) : -1;
+      if (group >= 0) {
+        view.series[group].setData(view.timeline.groups[group]);
+        view.series.forEach((line, index) => line.applyOptions({ lastValueVisible:index === group }));
+        $("#kline-intraday-empty").hidden = true;
+        $("#kline-intraday-chart").closest(".kline-intraday-card")?.classList.toggle("is-empty", false);
       }
-      const focusBias = data.isFocusing === true || data.focusState === "focus" ? .56 : .46;
-      let direction = Math.random() < focusBias ? 1 : -1;
-      if (livePrice - basePrice > maxOffset * .62) direction = -1;
-      if (basePrice - livePrice > maxOffset * .62) direction = 1;
-      if (Math.random() < .22 && Math.abs(livePrice - basePrice) > tickSize * 4) direction = livePrice > basePrice ? -1 : 1;
-      const steps = 1 + Math.floor(Math.random() * 7);
-      const previousTrade = livePrice;
-      let candidate = livePrice + direction * steps * tickSize;
-      const lower = Math.max(data.limits.low, basePrice - maxOffset);
-      const upper = Math.min(data.limits.high, basePrice + maxOffset);
-      livePrice = Math.round(Math.max(lower, Math.min(upper, candidate)) / tickSize) * tickSize;
-      if (Math.abs(livePrice - previousTrade) < tickSize * .5) {
-        direction *= -1;
-        candidate = previousTrade + direction * steps * tickSize;
-        livePrice = Math.round(Math.max(lower, Math.min(upper, candidate)) / tickSize) * tickSize;
-      }
-      direction = livePrice >= previousTrade ? 1 : -1;
-      liveHigh = Math.max(liveHigh, livePrice);
-      liveLow = Math.min(liveLow, livePrice);
-      tickCount += 1;
-      applyLiveTrade(data, selected, series, latestPoint, livePrice, direction, tickCount, liveHigh, liveLow);
-      schedule();
+      const direction = point(price) === point(lastPrice) ? 0 : price > lastPrice ? 1 : -1;
+      if (direction) tickCount += 1;
+      lastPrice = price;
+      liveHigh = Math.max(liveHigh, price); liveLow = Math.min(liveLow, price);
+      applyLiveTrade(data, selected, null, projection.time, price, direction, tickCount, liveHigh, liveLow);
+      setText("#kline-last-updated", projection.stale ? "实时更新暂不可用 · 显示最近数据" : projection.active ? `逐秒 ${Market.clockSeconds(projection.now, view.market.offset)}` : `更新 ${Market.clockSeconds(Market.parse(snapshot.generated_at || snapshot.updated_at), view.market.offset)}`);
     };
-    schedule();
+    const poll = async (force = false) => {
+      if (generation !== state.liveTickGeneration) return;
+      if (force) { refreshDue = true; requestVersion += 1; }
+      if (document.hidden) return;
+      if (polling) return pollPending;
+      const version = requestVersion;
+      refreshDue = false;
+      polling = true;
+      pollPending = (async () => {
+      try {
+        const response = await fetch("/api/focus-kline/live", { credentials:"same-origin", cache:"no-store" });
+        if (!response.ok) throw new Error("live unavailable");
+        const body = await response.json();
+        if (generation !== state.liveTickGeneration || version !== requestVersion) return;
+        const snapshot = body.data || body;
+        if (!acceptPolicy(snapshot) || generation !== state.liveTickGeneration || version !== requestVersion) return;
+        snapshot.receivedAt = Date.now();
+        snapshot.requestVersion = version;
+        if (snapshot.intraday_date !== selected.date) { loadKline(); return; }
+        state.liveSnapshot = snapshot;
+        data.challenge = snapshot.challenge || data.challenge;
+        data.limits = { low:finite(snapshot.limit_down, data.limits.low), high:finite(snapshot.limit_up, data.limits.high) };
+        setText("#kline-limit-low", point(data.limits.low)); setText("#kline-limit-high", point(data.limits.high));
+        selected.previousClose = finite(snapshot.previous_close, selected.previousClose);
+        setText("#kline-focus-total", formatSeconds(snapshot.today_focus_seconds));
+        setText("#focus-kline-hours", formatSeconds(snapshot.today_focus_seconds));
+        setText("#kline-focus-status", snapshot.is_paused ? "已暂停" : snapshot.is_focusing ? "专注中" : "休息 / 未专注");
+        renderStatus({ ...data, status:normalizeStatus(snapshot.status) });
+        if (Array.isArray(snapshot.intraday) && state.liveIntraday) {
+          const view = state.liveIntraday;
+          const samples = view.timeline.reconcile(snapshot.intraday, (item) => item.time ?? item.at ?? item.timestamp, (item) => item.value ?? item.price ?? item.close);
+          const hasPoints = samples.groups.some((group) => group.length);
+          $("#kline-intraday-empty").hidden = hasPoints;
+          $("#kline-intraday-chart").closest(".kline-intraday-card")?.classList.toggle("is-empty", !hasPoints);
+          samples.groups.forEach((group, index) => {
+            view.series[index].setData(group);
+            view.markers[index]?.setMarkers(samples.events[index].map((event) => ({ time:event.time, value:event.value, position:event.floorReset ? "belowBar" : "aboveBar", shape:event.floorReset ? "arrowUp" : "circle", color:event.floorReset ? "#8067b3" : "#b47a59", text:event.floorReset ? "复位" : "" })));
+          });
+          Market.pin(view.chart, view.market);
+        }
+        run();
+      } catch (_error) {
+        if (generation === state.liveTickGeneration && version === requestVersion) setText("#kline-last-updated", "实时更新暂不可用 · 显示最近数据");
+      } finally {
+        polling = false; pollPending = null;
+        if (refreshDue && !document.hidden && generation === state.liveTickGeneration) return poll();
+      }
+      })();
+      return pollPending;
+    };
+    // Returning from suspension always reconciles before projecting again.
+    const resume = () => !document.hidden ? poll(true) : undefined;
+    const refreshFocus = () => poll(true);
+    document.addEventListener("visibilitychange", resume);
+    document.addEventListener("dashboard:focus-refreshed", refreshFocus);
+    window.addEventListener("pageshow", resume);
+    state.liveResumeDispose = () => {
+      document.removeEventListener("visibilitychange", resume);
+      document.removeEventListener("dashboard:focus-refreshed", refreshFocus);
+      window.removeEventListener("pageshow", resume);
+    };
+    state.liveTickTimer = window.setInterval(run, 1000);
+    state.livePollTimer = window.setInterval(poll, 15000);
+    return poll();
   }
 
   function destroyCharts() {
@@ -346,7 +366,7 @@
     const base = {
       width: Math.max(300, host.clientWidth),
       height: Math.max(220, host.clientHeight),
-      layout: { background: { type: solid, color: chartTheme("--surface") }, textColor: chartTheme("--muted"), fontFamily: '"Source Han Serif SC", "Noto Serif SC", serif', fontSize: 11 },
+      layout: { background: { type: solid, color: chartTheme("--surface") }, textColor: chartTheme("--muted"), fontFamily: chartTheme("--font-index") || 'Arial, sans-serif', fontSize: 11 },
       grid: { vertLines: { color: chartTheme("--line") }, horzLines: { color: chartTheme("--line") } },
       rightPriceScale: { borderColor: chartTheme("--line"), scaleMargins: { top: .08, bottom: .08 } },
       timeScale: { borderColor: chartTheme("--line"), rightOffset: 3, barSpacing: 12, fixLeftEdge: true, lockVisibleTimeRangeOnResize: true, tickMarkFormatter: (time) => chartTimeLabel(time) },
@@ -479,74 +499,60 @@
     host.querySelector(".kline-noon-marker")?.remove();
     host.querySelector(".kline-now-marker")?.remove();
     const selected = selectedDay(data);
-    const points = selected.intraday.map((item) => ({ ...item, unix: toUnixSeconds(item.time) })).filter((item) => item.unix > 0).sort((left, right) => left.unix - right.unix).filter((item, index, array) => index === 0 || item.unix > array[index - 1].unix);
+    const market = Market.market(selected.date, selected.tradingSessions, data.updatedAt);
+    if (!market) return;
+    const samples = Market.timeline(market).reconcile(selected.intraday, (item) => item.time, (item) => item.value);
+    const points = samples.groups.flat().sort((a, b) => a.time - b.time);
     const card = host.closest(".kline-intraday-card");
     card?.classList.toggle("is-empty", !points.length);
     setText("#kline-intraday-caption", dayCaption(data, selected));
     setText("#kline-selected-day", dayBadge(data, selected));
     setText("#kline-intraday-empty", `${selected.date} 暂无盘中记录`);
     if (empty) empty.hidden = Boolean(points.length);
-    host.hidden = !points.length;
-    if (!points.length) return;
+    host.hidden = false;
     const library = window.LightweightCharts;
-    const chart = library.createChart(host, lightweightOptions(host, { timeScale: { borderColor: chartTheme("--line"), timeVisible: true, secondsVisible: false, minBarSpacing: 0.01, rightOffset: 0, fixLeftEdge: true, fixRightEdge: true, lockVisibleTimeRangeOnResize: true, tickMarkFormatter: (time) => chartTimeLabel(time, selected.date) }, localization: { timeFormatter: (time) => chartTimeLabel(time, selected.date) } }));
-    const scaffold = chart.addSeries(library.LineSeries, { visible: true, color: "transparent", priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-    scaffold.setData(dayScaffold(selected.date));
-    chart.applyOptions({ timeScale: { tickMarkFormatter: (time) => {
-      const hour = (time - dayStart(selected.date)) / 3600;
-      return hour <= 2 || hour >= 22 ? "" : chartTimeLabel(time, selected.date);
-    } } });
-    window.DashboardUI?.attachDayAxis(host, chart, dayStart(selected.date));
-    if (selected.date === new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)) {
+    const chart = Market.createChart(host, lightweightOptions(host));
+    chart.setMarket(market);
+    if (selected.date === Market.dateAt(Date.now() / 1000, market.offset)) {
       const marker = document.createElement("div");
       marker.className = "kline-now-marker";
       marker.innerHTML = "<span>现在</span>";
-      marker.title = "当前市场时间；横轴固定展示 00:00–24:00";
+      marker.title = `当前市场时间；横轴 ${Market.clock(market.open, market.offset)}–${Market.clock(market.close, market.offset)}`;
       host.append(marker);
       const alignNow = () => {
-        const now = Date.now() / 1000;
-        const minute = Math.floor(now / 60) * 60;
-        const left = chart.timeScale().timeToCoordinate(minute);
-        const right = chart.timeScale().timeToCoordinate(minute + 60);
-        marker.hidden = left === null || right === null || minute < dayStart(selected.date) || minute >= dayStart(selected.date) + DAY_MINUTES * 60;
-        if (!marker.hidden) marker.style.left = `${left + (right - left) * ((now - minute) / 60)}px`;
+        const now = Market.project(state.liveSnapshot, market)?.now ?? Date.now() / 1000;
+        const x = Market.coordinate(chart, now);
+        marker.hidden = x === null || now < market.open || now > market.close;
+        if (!marker.hidden) marker.style.left = `${x}px`;
       };
       state.nowMarkerTimer = window.setInterval(alignNow, 1000);
       chart.timeScale().subscribeSizeChange(alignNow);
       window.requestAnimationFrame?.(() => window.requestAnimationFrame?.(alignNow));
     }
     const seriesOptions = { color: "#8067b3", lineWidth: 2, lineType: library.LineType?.Simple ?? 0, pointMarkersVisible: false, crosshairMarkerVisible: false, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "price", precision: 3, minMove: data.priceTick } };
-    const morning = points.filter((item) => shanghaiMinutes(item.time) <= 12 * 60);
-    const afternoon = points.filter((item) => shanghaiMinutes(item.time) >= 13 * 60 + 30);
-    const asLineData = (items) => items.map((item) => ({ time: item.unix, value: item.value }));
-    // Lightweight Charts whitespace points do not consistently break a line
-    // across a long intraday pause.  Separate morning and afternoon series so
-    // the interior of the 12:00–13:30 lunch interval contains neither a
-    // segment nor a point; the 12:00 morning close remains visible.
-    const morningSeries = morning.length ? chart.addSeries(library.LineSeries, { ...seriesOptions, lastValueVisible: !afternoon.length }) : null;
-    const afternoonSeries = afternoon.length ? chart.addSeries(library.LineSeries, seriesOptions) : null;
-    morningSeries?.setData(asLineData(morning));
-    afternoonSeries?.setData(asLineData(afternoon));
-    const eventMarkers = (items) => items.filter((item) => item.event || item.floorReset).map((item) => ({
-      time: item.unix, position: item.floorReset ? "belowBar" : "aboveBar", shape: item.floorReset ? "arrowUp" : "circle", color: item.floorReset ? "#8067b3" : "#b47a59", text: item.floorReset ? "复位" : "",
-    }));
-    if (library.createSeriesMarkers) {
-      if (morningSeries) library.createSeriesMarkers(morningSeries, eventMarkers(morning));
-      if (afternoonSeries) library.createSeriesMarkers(afternoonSeries, eventMarkers(afternoon));
-    }
-    const priceSeries = morningSeries || afternoonSeries;
+    // One series per configured session leaves genuine gaps at every break.
+    const lastGroup = [...samples.groups].findLastIndex((group) => group.length);
+    const lineSeries = samples.groups.map((group, index) => {
+      const series = chart.addSeries(library.LineSeries, { ...seriesOptions, lastValueVisible:index === lastGroup });
+      series.setData(group);
+      return series;
+    });
+    const markerGroups = lineSeries.map((series, index) => Market.createSeriesMarkers(series, samples.events[index].map((event) => ({
+      time:event.time, value:event.value, position:event.floorReset ? "belowBar" : "aboveBar", shape:event.floorReset ? "arrowUp" : "circle", color:event.floorReset ? "#8067b3" : "#b47a59", text:event.floorReset ? "复位" : "",
+    }))) || null);
+    const priceSeries = lineSeries[Math.max(0, lastGroup)];
     if (priceSeries) addLimitLines(priceSeries, data);
-    const noonClose = morning.find((item) => shanghaiMinutes(item.time) === 12 * 60);
-    if (noonClose) {
+    const breakClose = market.windows.length > 1 ? market.windows[0].end : null;
+    if (breakClose && samples.groups[0].length) {
       const marker = document.createElement("div");
       const label = document.createElement("span");
       marker.className = "kline-noon-marker";
-      marker.setAttribute("aria-label", "12:00 午间收盘");
-      label.textContent = "12:00 午间收盘";
+      marker.setAttribute("aria-label", `${Market.clock(breakClose, market.offset)} 休市`);
+      label.textContent = `${Market.clock(breakClose, market.offset)} 休市`;
       marker.append(label);
       host.append(marker);
       const alignNoonMarker = () => {
-        const x = chart.timeScale().timeToCoordinate(noonClose.unix);
+        const x = chart.timeScale().timeToCoordinate(breakClose);
         marker.hidden = x === null || x < 0 || x > host.clientWidth;
         if (!marker.hidden) marker.style.left = `${Math.round(x)}px`;
       };
@@ -554,12 +560,12 @@
       chart.timeScale().subscribeSizeChange(alignNoonMarker);
       window.requestAnimationFrame?.(() => window.requestAnimationFrame?.(alignNoonMarker));
     }
-    pinVisibleLogicalRange(chart, fullDayRange);
+    Market.pin(chart, market);
     state.charts.push(chart);
-    observeChart(host, chart, () => pinVisibleLogicalRange(chart, fullDayRange));
+    observeChart(host, chart, () => Market.pin(chart, market));
+    state.liveIntraday = { chart, market, series:lineSeries, markers:markerGroups, timeline:samples };
     const latestPoint = points.at(-1);
-    const liveSeries = afternoon.length ? afternoonSeries : morningSeries;
-    startLiveTicks(data, selected, liveSeries, latestPoint);
+    startLiveTicks(data, selected, lineSeries[Math.max(0, lastGroup)], latestPoint);
   }
 
   function renderStatus(data) {
@@ -586,10 +592,53 @@
     setText("#kline-market-date", data.today.date);
     setText("#kline-last-updated", `更新于 ${formatTime(data.updatedAt)}`);
     setText("#kline-focus-total", formatSeconds(data.focusSeconds));
-    const focusStatus = data.isFocusing === true || data.focusState === "focus" ? "专注中" : data.isFocusing === false || data.focusState === "rest" ? "休息 / 未专注" : "暂无状态";
+    const focusStatus = data.isPaused ? "已暂停" : data.isFocusing === true || data.focusState === "focus" ? "专注中" : data.isFocusing === false || data.focusState === "rest" ? "休息 / 未专注" : "暂无状态";
     setText("#kline-focus-status", focusStatus);
     setText("#kline-limit-low", point(data.limits.low));
     setText("#kline-limit-high", point(data.limits.high));
+  }
+
+  async function refreshSummary(force = false) {
+    if (force) { summaryRefreshDue = true; summaryRequestVersion += 1; }
+    // Historical charts keep their selected date. The quote and today's focus
+    // state still reconcile immediately, including before the market opens.
+    if (document.hidden || state.liveResumeDispose || !state.payload) return summaryPending;
+    if (summaryPending) return summaryPending;
+    const version = summaryRequestVersion;
+    summaryRefreshDue = false;
+    summaryPending = (async () => {
+      try {
+        const response = await fetch("/api/focus-kline/live", { credentials:"same-origin", cache:"no-store" });
+        if (!response.ok) throw new Error("summary unavailable");
+        const body = await response.json(), snapshot = body.data || body;
+        if (version !== summaryRequestVersion || state.liveResumeDispose || !state.payload) return;
+        if (!acceptPolicy(snapshot) || version !== summaryRequestVersion || state.liveResumeDispose || !state.payload) return;
+        if (document.hidden) { summaryRefreshDue = true; return; }
+        const data = state.payload;
+        const current = finite(snapshot.index?.current, data.current);
+        const previous = finite(snapshot.previous_close, data.today.previousClose);
+        const next = {
+          ...data, current, status:normalizeStatus(snapshot.status),
+          challenge:snapshot.challenge || data.challenge,
+          isFocusing:Boolean(snapshot.is_focusing), isPaused:Boolean(snapshot.is_paused),
+          focusState:snapshot.is_focusing && !snapshot.is_paused ? "focus" : "rest",
+          focusSeconds:finite(snapshot.today_focus_seconds, data.focusSeconds),
+          updatedAt:snapshot.generated_at || snapshot.updated_at || data.updatedAt,
+          limits:{ low:finite(snapshot.limit_down, data.limits.low), high:finite(snapshot.limit_up, data.limits.high) },
+          today:{ ...data.today, date:snapshot.intraday_date || data.today.date,
+            previousClose:previous, close:current, change:current - previous,
+            changePct:previous ? (current - previous) / previous * 100 : 0 },
+        };
+        state.payload = next;
+        renderStatus(next); renderQuote(next);
+      } catch (_error) {
+        if (version === summaryRequestVersion) setText("#kline-last-updated", "实时更新暂不可用 · 显示最近数据");
+      } finally {
+        summaryPending = null;
+        if (summaryRefreshDue && !document.hidden && !state.liveResumeDispose && state.payload) return refreshSummary();
+      }
+    })();
+    return summaryPending;
   }
 
   function renderOhlc(data, selected = selectedDay(data)) {
@@ -660,6 +709,8 @@
   async function loadKline() {
     const page = $(".focus-kline-page");
     if (!page) return;
+    const version = ++loadRequestVersion;
+    challengeLoadDue = false;
     let data;
     const query = new URL(window.location.href).searchParams;
     const requestedDate = query.get("date") || state.selectedDate;
@@ -674,12 +725,15 @@
         const response = await fetch(apiUrl, { credentials: "same-origin" });
         if (!response.ok) throw new Error(`load_${response.status}`);
         data = normalizePayload(await response.json());
-        showFeedback("#kline-data-feedback", `已载入 ${data.days.length} 个交易日；指数分度 ${data.priceTick.toFixed(3)}。`, "ok");
+        if (version !== loadRequestVersion || !acceptPolicy(data) || version !== loadRequestVersion) return;
+        showFeedback("#kline-data-feedback", "");
       } catch (error) {
+        if (version !== loadRequestVersion) return;
         showFeedback("#kline-data-feedback", error.message === "load_404" ? "K 线接口尚未启用，请先完成服务端数据计算。" : "历史数据读取失败，请稍后重试。", "error");
         data = normalizePayload({});
       }
     }
+    if (version !== loadRequestVersion) return;
     state.selectedDate = requestedDate && data.days.some((day) => day.date === requestedDate)
       ? requestedDate
       : data.days.some((day) => day.date === data.intradayDate) ? data.intradayDate : null;
@@ -691,9 +745,29 @@
     renderParameters(data.parameters);
     drawDailyChart(data);
     drawIntradayChart(data);
+    if (!state.liveResumeDispose) refreshSummary();
   }
 
   function bind() {
+    document.addEventListener("dashboard:challenge-updated", () => {
+      stopLiveTicks();
+      summaryRequestVersion += 1;
+      loadRequestVersion += 1;
+      challengeLoadDue = true;
+      if (!document.hidden) loadKline();
+    });
+    document.addEventListener("dashboard:focus-refreshed", () => {
+      if (!state.liveResumeDispose) return refreshSummary(true);
+    });
+    const resumeSummary = () => {
+      if (!document.hidden && challengeLoadDue) return loadKline();
+      if (!document.hidden && !state.liveResumeDispose) return refreshSummary(true);
+    };
+    document.addEventListener("visibilitychange", resumeSummary);
+    window.addEventListener("pageshow", resumeSummary);
+    window.setInterval(() => {
+      if (!state.liveResumeDispose) refreshSummary();
+    }, 15000);
     $("#kline-params-form")?.addEventListener("submit", saveParameters);
     $("#kline-reset-defaults")?.addEventListener("click", () => {
       renderParameters(DEFAULT_PARAMETERS);
@@ -708,7 +782,7 @@
     window.addEventListener("resize", () => {
       window.clearTimeout(state.resizeTimer);
       state.resizeTimer = window.setTimeout(() => {
-        if (state.payload) loadKline();
+        if (state.payload) refreshCharts(state.payload);
       }, 120);
     });
   }

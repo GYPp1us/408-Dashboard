@@ -36,7 +36,12 @@ class OriginOsAtomicPublisher(private val context: Context) {
         val openIntent = PendingIntent.getActivity(
             context,
             1,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            // UPDATE_CURRENT refreshes extras, but retains an existing token's
+            // launch flags. A distinct action avoids reusing pre-upgrade tokens.
+            Intent(context, MainActivity::class.java).apply {
+                action = ACTION_OPEN_LIVE
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val title = when (state.mode) {
@@ -170,6 +175,7 @@ class OriginOsAtomicPublisher(private val context: Context) {
     enum class AtomicOperation(val value: Int) { CREATE(0), UPDATE(1), END(2) }
 
     companion object {
+        private const val ACTION_OPEN_LIVE = "com.mutsumi.focus.OPEN_LIVE"
         const val CHANNEL_LIVE = "focus_live_v1"
         const val CHANNEL_REMINDER = "focus_reminder_v1"
         const val LIVE_NOTIFICATION_ID = 4080

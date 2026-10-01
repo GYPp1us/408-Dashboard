@@ -27,6 +27,7 @@ from .focus_kline import (
     validate_setting_payload,
 )
 from .focus_reporter import ReporterError, apply_frame, authenticate_reporter, connection_details
+from .focus_challenge import account_now, challenge_decisions, challenge_payload, limit_policy, set_challenge
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 
 
@@ -238,12 +239,16 @@ def _focus_kline_payload(
     timezone_name = settings.get("timezone", "Asia/Shanghai")
     current = now or _now(timezone_name)
     parameters = _focus_kline_parameters(settings)
+    decisions = challenge_decisions(connection, user_id)
     if user_id is None:
         candles = []
     else:
         sessions = _focus_sessions(connection, current, _pause_map(connection), user_id)
         segments = [(start, end) for _, start, end in sessions]
         seconds_by_day, segments_by_day = group_focus_segments_by_day(segments)
+        if decisions:
+            first_policy_day = account_now(datetime.fromisoformat(decisions[0]["changed_at"]), timezone_name).date().isoformat()
+            seconds_by_day.setdefault(first_policy_day, 0)
         candles = build_focus_klines(
             seconds_by_day,
             daily_segments=segments_by_day,
@@ -251,6 +256,7 @@ def _focus_kline_payload(
             user_key=int(user_id),
             parameters=parameters,
             trading_sessions=trading_sessions_from_settings(settings),
+            policy=limit_policy(decisions),
         )
     latest = candles[-1] if candles else None
     selected_intraday = next((row for row in candles if row["date"] == intraday_date), None) if intraday_date else None
@@ -281,6 +287,7 @@ def _focus_kline_payload(
         "k_high_percent_per_hour": round(float(parameters.k_high) * 100, 6),
     }
     return {
+        "challenge": challenge_payload(decisions, current, timezone_name),
         "parameters": public_parameters,
         "candles": compact_candles,
         "daily": compact_daily,
@@ -485,6 +492,30 @@ def register_routes(app):
                 parameters=_focus_kline_parameters(settings),
                 trading_sessions=trading_sessions_from_settings(settings),
             ))
+        finally:
+            connection.close()
+
+    @app.route("/api/focus-kline/challenge", methods=["GET", "PATCH"])
+    @login_required
+    def focus_kline_challenge_api():
+        if request.method == "PATCH" and (is_guest() or current_user_id() is None):
+            return jsonify(error="guest_read_only"), 403
+        connection = connect(app.config["DATABASE"])
+        try:
+            user_id = current_user_id() if request.method == "PATCH" else _viewer_user_id(connection)
+            settings = get_settings(connection, user_id)
+            timezone_name = settings.get("timezone", "Asia/Shanghai")
+            current = _now(timezone_name)
+            if request.method == "PATCH":
+                payload = request.get_json(silent=True)
+                if not isinstance(payload, dict) or set(payload) != {"enabled"} or type(payload["enabled"]) is not bool:
+                    return jsonify(error="invalid_challenge_enabled"), 400
+                challenge = set_challenge(connection, user_id, payload["enabled"], current, timezone_name)
+            else:
+                challenge = challenge_payload(challenge_decisions(connection, user_id), current, timezone_name)
+            response = jsonify(challenge=challenge)
+            response.headers["Cache-Control"] = "no-store"
+            return response
         finally:
             connection.close()
 

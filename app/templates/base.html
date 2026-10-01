@@ -8,6 +8,7 @@
   {% if page_name in ['focus-kline', 'focus_kline'] %}<link rel="stylesheet" href="{{ static_asset('focus_kline.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ static_asset('dashboard-ui.css') }}">
   {% if page_name == 'home' %}<link rel="stylesheet" href="{{ static_asset('dashboard-details.css') }}"><link rel="stylesheet" href="{{ static_asset('dashboard-index.css') }}">{% endif %}
+  {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<link rel="stylesheet" href="{{ static_asset('index-challenge.css') }}">{% endif %}
 </head>
 <body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}" data-role="{{ 'guest' if is_guest else 'admin' }}" data-settings-tab="{{ settings_tab|default('system') }}" data-viewer-id="{{ ui_preferences.viewer_id if ui_preferences.viewer_id is not none else 'public' }}" data-quick-focus-count="{{ ui_preferences.quick_focus_count }}">
   <div class="app-shell">
@@ -66,6 +67,8 @@
   {% if page_name not in ['focus-kline', 'focus_kline'] %}<script src="{{ static_asset('vendor/chart.umd.js') }}"></script>{% endif %}
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('vendor/lightweight-charts.standalone.production.js') }}"></script>{% endif %}
   <script src="{{ static_asset('dashboard-ui.js') }}" defer></script>
+  {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('index-market.js') }}" defer></script>{% endif %}
+  {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('index-challenge.js') }}" defer></script>{% endif %}
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('chart-gestures.js') }}" defer></script>{% endif %}
   {% if page_name == 'home' %}<script src="{{ static_asset('dashboard-details.js') }}" defer></script><script src="{{ static_asset('dashboard-index.js') }}" defer></script><script src="{{ static_asset('dashboard-artwork.js') }}" defer></script>{% endif %}
   <script src="{{ static_asset('app.js') }}" defer></script>

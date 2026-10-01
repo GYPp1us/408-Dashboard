@@ -4,7 +4,7 @@
   const chartColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const quickFocusCount = () => Number(window.DashboardUI?.preferences.quick_focus_count || 4);
   const quickFocusStorageKey = () => `${QUICK_FOCUS_STORAGE}:${document.body.dataset.viewerId || 'public'}`;
-  const appFontFamily = '"Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+  const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
   const themePalettes = {
     idle: ["#d66c58", "#b25647", "#dd9073", "#97483e", "#c27758", "#e4a994", "#835144", "#d28a72"],
     focus: ["#8067b3", "#685295", "#9a86c3", "#59447f", "#8b77aa", "#b4a5d1", "#706186", "#9f8db8"],
@@ -38,6 +38,50 @@
     && OWN_FOCUS_PAGES.has(document.body.dataset.page)
     && /^[1-9]\d*$/.test(document.body.dataset.viewerId || "");
   const restStorageKey = () => `mutsumiRestStartedAt:${document.body.dataset.viewerId}`;
+
+  function syncServerClock(reference, receivedAt = Date.now()) {
+    const epoch = Date.parse(reference);
+    if (Number.isFinite(epoch)) state.serverClock = { epoch, receivedAt, reference:String(reference) };
+  }
+
+  function serverNow(now = Date.now()) {
+    const clock = state.serverClock;
+    if (clock) return clock.epoch + Math.max(0, now - clock.receivedAt);
+    const epoch = Date.parse(state.dashboard?.now);
+    return Number.isFinite(epoch) ? epoch + Math.max(0, now - (state.dashboardFetchedAt ?? now)) : now;
+  }
+
+  function accountOffset(reference = state.serverClock?.reference || state.dashboard?.now) {
+    if (/Z$/i.test(String(reference || ""))) return 0;
+    const match = String(reference || "").match(/([+-])(\d{2}):(\d{2})$/);
+    return match ? (Number(match[2]) * 60 + Number(match[3])) * (match[1] === "-" ? -1 : 1) : -new Date().getTimezoneOffset();
+  }
+
+  function accountDate(epoch, reference) {
+    // The API has already applied the account's configured timezone. Read its
+    // offset with UTC getters so the device timezone cannot reinterpret it.
+    return new Date(Number(epoch) + accountOffset(reference) * 60000);
+  }
+
+  function accountDateKey(epoch = serverNow(), reference) {
+    return accountDate(epoch, reference).toISOString().slice(0, 10);
+  }
+
+  function accountSeconds(epoch, reference) {
+    const date = accountDate(epoch, reference);
+    return date.getUTCHours() * 3600 + date.getUTCMinutes() * 60 + date.getUTCSeconds();
+  }
+
+  function accountClock(epoch, seconds = true, reference) {
+    return accountDate(epoch, reference).toISOString().slice(11, seconds ? 19 : 16);
+  }
+
+  function windowBounds(value, epoch = serverNow(), reference) {
+    const offset = accountOffset(reference), sign = offset < 0 ? "-" : "+", absolute = Math.abs(offset);
+    const zone = `${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
+    const day = accountDateKey(epoch, reference);
+    return { start:Date.parse(`${day}T${value.start}:00${zone}`), end:Date.parse(`${day}T${value.end}:00${zone}`) };
+  }
 
   function clearNativeFocus() {
     // Idle is a real ended transition in the native reducer, so identity reset
@@ -356,7 +400,11 @@
   }
 
   function renderClock() {
-    setSecondTask("clock", (now) => $("#current-time")?.replaceChildren(document.createTextNode(new Date(now).toLocaleTimeString("zh-CN", { hour12: false }))));
+    setSecondTask("clock", (now) => {
+      const current = serverNow(now);
+      $("#current-time")?.replaceChildren(document.createTextNode(accountClock(current)));
+      $("#today-date")?.replaceChildren(document.createTextNode(accountDate(current).toLocaleDateString("zh-CN", { timeZone:"UTC", weekday:"long", year:"numeric", month:"2-digit", day:"2-digit" })));
+    });
   }
 
   function clockMinutes(value) {
@@ -365,7 +413,7 @@
   }
 
   function workWindowProgress(now, windows) {
-    const current = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    const current = accountSeconds(now.getTime());
     const periods = [windows?.morning, windows?.library].filter(Boolean).map((windowValue) => [clockMinutes(windowValue.start) * 60, clockMinutes(windowValue.end) * 60]);
     const total = periods.reduce((sum, [start, end]) => sum + Math.max(0, end - start), 0);
     const elapsed = periods.reduce((sum, [start, end]) => sum + Math.max(0, Math.min(current, end) - start), 0);
@@ -374,11 +422,9 @@
 
   function dateMinutes(value) {
     const date = new Date(value);
-    const reference = new Date(state.dashboard?.now || Date.now());
-    const dayStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
-    if (date < dayStart) return 0;
-    if (date >= new Date(dayStart.getTime() + 86400000)) return 1440;
-    return date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
+    const reference = accountDate(serverNow());
+    const dayStart = Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), reference.getUTCDate()) - accountOffset() * 60000;
+    return Math.max(0, Math.min(1440, (date.getTime() - dayStart) / 60000));
   }
 
   function renderWindowHistory(prefix, value, sessions) {
@@ -390,7 +436,7 @@
     const segments = (sessions || []).flatMap((session) => (session.segments?.length ? session.segments : [session]).map((segment) => ({ ...segment, subject: session.subject })));
     target.innerHTML = segments.map((segment) => {
       const sessionStart = Math.max(start, dateMinutes(segment.started_at));
-      const sessionEnd = Math.min(end, segment.ended_at ? dateMinutes(segment.ended_at) : dateMinutes(Date.now()));
+      const sessionEnd = Math.min(end, segment.ended_at ? dateMinutes(segment.ended_at) : dateMinutes(serverNow()));
       if (sessionEnd <= sessionStart) return "";
       const left = ((sessionStart - start) / total) * 100;
       const width = ((sessionEnd - sessionStart) / total) * 100;
@@ -400,7 +446,7 @@
   }
 
   function renderHomeWindow(data, currentTime) {
-    const now = currentTime.getHours() * 3600 + currentTime.getMinutes() * 60 + currentTime.getSeconds();
+    const now = accountSeconds(currentTime.getTime(), data.now);
     const morningStart = clockMinutes(data.windows.morning.start) * 60;
     const lunchStart = clockMinutes(data.windows.morning.end) * 60;
     const libraryStart = clockMinutes(data.windows.library.start) * 60;
@@ -442,10 +488,9 @@
     const timeGrid = $(".time-grid");
     timeGrid?.style.setProperty("--morning-window", `${Math.max(1, Number(data.windows.morning.total_seconds) || 1)}fr`);
     timeGrid?.style.setProperty("--library-window", `${Math.max(1, Number(data.windows.library.total_seconds) || 1)}fr`);
-    const fetchedAt = Date.now();
-    const serverNowAt = Date.parse(data.now);
-    const setWindow = (prefix, value, endAt, now) => {
-      const startAt = endAt - Number(value.total_seconds || 0) * 1000;
+    window.DashboardUI?.reflow?.();
+    const setWindow = (prefix, value, now) => {
+      const { start:startAt, end:endAt } = windowBounds(value, now, data.now);
       const progress = Math.min(1, Math.max(0, (now - startAt) / Math.max(1, endAt - startAt)));
       const remaining = Math.max(0, Math.ceil((endAt - now) / 1000));
       $(`#${prefix}-clock`).textContent = formatSeconds(remaining);
@@ -457,8 +502,9 @@
       renderWindowHistory(prefix, value, state.dashboard?.focus?.today || []);
     };
     setSecondTask("windows", (now) => {
-      windows.forEach(([prefix, value]) => setWindow(prefix, value, fetchedAt + Number(value.remaining_seconds || 0) * 1000, now));
-      renderHomeWindow(data, new Date(serverNowAt + now - fetchedAt));
+      const current = serverNow(now);
+      windows.forEach(([prefix, value]) => setWindow(prefix, value, current));
+      renderHomeWindow(data, new Date(current));
     });
   }
 
@@ -751,7 +797,7 @@
       const extraSeconds = activeExtraSeconds(active, fetchedAt, now);
       const todaySeconds = Number(investment.today_seconds || 0) + extraSeconds;
       const yesterdayTotal = Number(investment.yesterday_seconds || 0);
-      const yesterdayBaseline = Math.round(yesterdayTotal * workWindowProgress(new Date(now), state.dashboard?.windows));
+      const yesterdayBaseline = Math.round(yesterdayTotal * workWindowProgress(new Date(serverNow(now)), state.dashboard?.windows));
       const delta = todaySeconds - yesterdayBaseline;
       view.classList.toggle("ahead", delta > 0);
       view.classList.toggle("behind", delta < 0);
@@ -816,7 +862,7 @@
     const rowsTarget = $("#focus-leaderboard-rows");
     if (!rowsTarget) return;
     const sourceEntries = leaderboard?.entries || [];
-    const todayKey = leaderboard?.today?.date || new Date().toLocaleDateString("en-CA");
+    const todayKey = leaderboard?.today?.date || accountDateKey();
     const entries = sourceEntries.map((entry) => ({ ...entry, seconds: Number(entry.seconds || 0) }));
     let today = entries.find((entry) => entry.date === todayKey);
     if (today) today.seconds += activeExtra;
@@ -1545,7 +1591,7 @@
     updateFocusLockControl(active);
     $("#focus-subject").textContent = active.subject;
     requestAnimationFrame(updateFocusSubjectOverflow);
-    $("#focus-start").textContent = new Date(active.started_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    $("#focus-start").textContent = accountClock(Date.parse(active.started_at), false);
     const tick = (now) => {
       const elapsed = focusElapsedSeconds(active, now);
       $("#focus-timer").textContent = formatSeconds(elapsed);
@@ -1570,6 +1616,7 @@
       windows: [windowSignature(data.windows?.morning), windowSignature(data.windows?.library)],
       exam: data.exam?.date,
       day: String(data.now || "").slice(0, 10),
+      timezoneOffset: accountOffset(data.now),
       heatmap: data.heatmap,
       heatmapVisibleHours: data.heatmap_visible_hours,
       preferences: data.preferences,
@@ -1586,12 +1633,12 @@
     state.dashboard = data;
     window.DashboardUI?.applyPreferences(data.preferences);
     state.dashboardFetchedAt = Date.now();
+    syncServerClock(data.now, state.dashboardFetchedAt);
     state.dashboardSignature = dashboardSignature(data);
     document.body.classList.toggle("is-settled", Boolean(data.daily_settlement));
     renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_items || data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderFocusTrendChart(data.focus_leaderboard); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderFriendDiffBoard(data.friends); renderGuestSummary(data);
     renderDailySettlement(data);
     selectActivityView(state.activityView);
-    $("#today-date")?.replaceChildren(document.createTextNode(new Date().toLocaleDateString("zh-CN", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" })));
     applyFocusState(data.focus.active, false);
     document.dispatchEvent(new CustomEvent("dashboard:updated", { detail: data }));
   }
@@ -1605,18 +1652,34 @@
   async function refreshCurrentPage() {
     if (document.body.dataset.page === "home") return loadDashboard();
     if (!canManageOwnFocus()) return;
+    const version = (state.focusRefreshVersion || 0) + 1;
+    state.focusRefreshVersion = version;
     // Service broadcasts must not repopulate settings forms or account lists:
     // refresh only the owner's focus state and retain the current route/inputs.
     const data = await api("/api/dashboard");
-    if (!canManageOwnFocus()) return;
+    if (!canManageOwnFocus() || version !== state.focusRefreshVersion) return;
     if (String(data.preferences?.viewer_id ?? data.viewer?.id) !== document.body.dataset.viewerId) {
       revokeFocusIdentity();
       return;
     }
     const focus = data.focus;
-    state.dashboard = { ...(state.dashboard || {}), focus };
+    state.dashboard = { ...(state.dashboard || {}), now:data.now, focus };
     state.dashboardFetchedAt = Date.now();
+    syncServerClock(data.now, state.dashboardFetchedAt);
     applyFocusState(focus.active);
+    if (canManageOwnFocus()) document.dispatchEvent(new CustomEvent("dashboard:focus-refreshed", { detail:focus }));
+  }
+
+  function bindNativePageBridge() {
+    window.MutsumiWeb = {
+      refresh: () => refreshCurrentPage().catch((error) => console.warn("native_page_refresh_failed", error)),
+      endRest: exitRest,
+    };
+  }
+
+  function refreshVisiblePage() {
+    if (document.body.dataset.page === "home") return syncDashboard();
+    return refreshCurrentPage().catch((error) => console.warn("visible_page_refresh_failed", error));
   }
 
   async function syncDashboard() {
@@ -1627,9 +1690,11 @@
       if (focusIdentityRevoked) return;
       if (dashboardSignature(data) !== state.dashboardSignature) applyDashboard(data);
       else {
+        state.dashboard.now = data.now;
         state.dashboard.focus_investment = data.focus_investment;
         state.dashboard.focus_leaderboard = data.focus_leaderboard;
         state.dashboardFetchedAt = Date.now();
+        syncServerClock(data.now, state.dashboardFetchedAt);
         document.dispatchEvent(new CustomEvent("dashboard:updated", { detail: data }));
       }
     } catch (error) {
@@ -2440,7 +2505,10 @@
       ensureWakeLock();
       sendForegroundHeartbeat();
       runSecondTasks(Date.now());
-      syncDashboard();
+      refreshVisiblePage();
+    });
+    window.addEventListener("pageshow", (event) => {
+      if (event.persisted && document.visibilityState === "visible") refreshVisiblePage();
     });
     window.addEventListener("pagehide", () => sendForegroundHeartbeat(true));
     $("#close-focus-summary")?.addEventListener("click", closeFocusSummary);
@@ -2488,9 +2556,6 @@
     } catch (error) { showToast(error.message); }
     startDashboardSync();
     startForegroundHeartbeat();
-    window.MutsumiWeb = {
-      refresh: () => refreshCurrentPage().catch((error) => console.warn("native_page_refresh_failed", error)),
-      endRest: exitRest,
-    };
+    bindNativePageBridge();
   });
 })();
