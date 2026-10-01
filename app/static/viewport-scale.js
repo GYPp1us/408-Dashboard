@@ -13,10 +13,15 @@
     viewportHeight = window.innerHeight || root.clientHeight || 720;
     const coarse = window.matchMedia("(pointer: coarse)").matches;
     const screenOrientation = window.screen?.orientation?.type;
-    const landscape = coarse && screenOrientation
+    let nativeOrientation;
+    try { nativeOrientation = window.MutsumiAndroid?.getDisplayOrientation?.(); } catch (_error) { /* Older APK. */ }
+    const native = root.classList.contains("native-app");
+    const authoritative = native && ["landscape", "portrait"].includes(nativeOrientation);
+    const landscape = native && coarse && screenOrientation
       ? screenOrientation.startsWith("landscape")
       : layoutWidth > viewportHeight;
-    wide = layoutWidth >= 1170 || landscape;
+    wide = authoritative ? nativeOrientation === "landscape" : native ? landscape : layoutWidth >= 1170 || landscape;
+    root.dataset.viewportOrientationSource = authoritative ? "android" : "viewport";
     root.dataset.viewportMode = wide ? "wide" : "portrait";
     // Measure outside the zoomed body; never feed its scaled width back in.
     // Root clientWidth can include Chrome's gutter, whereas its border box does not.

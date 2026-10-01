@@ -4,6 +4,9 @@ import android.webkit.JavascriptInterface
 
 class FocusBridge(private val activity: MainActivity) {
     @JavascriptInterface
+    fun getDisplayOrientation(): String = activity.getDisplayOrientation()
+
+    @JavascriptInterface
     fun imagePickerOwnsBack(): Boolean = activity.imagePickerOwnsBack()
 
     @JavascriptInterface
