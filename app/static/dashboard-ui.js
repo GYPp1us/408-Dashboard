@@ -22,7 +22,7 @@
   let layoutFrame = null;
   let appearanceSignature = null;
   const storageKey = () => `mutsumiDashboardLayout:v1:${preferences.viewer_id}:${root.classList.contains("native-app") ? "native" : "browser"}`;
-  const singleColumn = () => (root.classList.contains("native-app") ? portrait.matches : compactBrowser.matches)
+  const singleColumn = () => (!window.MutsumiViewport?.wide && (root.classList.contains("native-app") ? portrait.matches : compactBrowser.matches))
     || (grid && grid.clientWidth < columnMinima.reduce((sum, value) => sum + value, 0) + dividerWidth * 2);
   const effectiveTheme = () => preferences.theme_mode === "system" ? systemTheme.matches ? "dark" : "light" : preferences.theme_mode;
   const announceAppearance = () => document.dispatchEvent(new CustomEvent("dashboard:appearance", { detail: { mode: preferences.theme_mode, palette: preferences.theme_palette, effectiveTheme: effectiveTheme() } }));
@@ -90,7 +90,7 @@
     // Wrap the current-time card before squeezing a countdown below its text.
     const minimumPair = Math.max(208 * total / morning, 208 * total / library);
     const width = timeGrid.clientWidth;
-    const compact = root.classList.contains("native-app") ? portrait.matches : compactBrowser.matches;
+    const compact = !window.MutsumiViewport?.wide && (root.classList.contains("native-app") ? portrait.matches : compactBrowser.matches);
     const layout = compact ? "stacked" : width >= minimumPair + 240 ? "columns" : width >= minimumPair + 10 ? "windows" : "stacked";
     timeGrid.dataset.layout = layout;
     if (layout === "columns") timeGrid.style.setProperty("--current-time-width", `${Math.min(468, width - minimumPair - 20)}px`);
@@ -172,7 +172,7 @@
         document.body.classList.add("is-resizing-dashboard");
       });
       divider.addEventListener("pointermove", (event) => {
-        if (drag?.pointerId === event.pointerId) resizePair(drag.index, event.clientX - drag.startX, drag.widths);
+        if (drag?.pointerId === event.pointerId) resizePair(drag.index, (event.clientX - drag.startX) / (window.MutsumiViewport?.elementScale(grid) || 1), drag.widths);
       });
       divider.addEventListener("pointerup", (event) => {
         if (drag?.pointerId !== event.pointerId) return;
@@ -195,6 +195,7 @@
     portrait.addEventListener?.("change", () => { cancelDrag(); reflow(); });
     compactBrowser.addEventListener?.("change", () => { cancelDrag(); reflow(); });
     window.addEventListener("resize", reflow);
+    window.addEventListener("dashboard:viewport", () => { cancelDrag(); reflow(); });
     window.addEventListener("pageshow", () => { cancelDrag(); reflow(); });
     document.addEventListener("visibilitychange", () => { if (!document.hidden) reflow(); });
     document.fonts?.ready.then(reflow);
@@ -246,8 +247,11 @@
         try { popup.showPopover(); usingPopover = true; } catch (_error) { /* Fixed-position fallback. */ }
       }
       const target = anchor.getBoundingClientRect(), box = popup.getBoundingClientRect();
-      popup.style.left = `${Math.max(12, Math.min(innerWidth - box.width - 12, target.left))}px`;
-      popup.style.top = `${target.bottom + box.height + 12 <= innerHeight ? target.bottom + 8 : Math.max(12, target.top - box.height - 8)}px`;
+      const zoom = window.MutsumiViewport?.elementScale(popup) || 1;
+      const width = window.MutsumiViewport?.logicalWidth || innerWidth;
+      const height = window.MutsumiViewport?.logicalHeight || innerHeight;
+      popup.style.left = `${Math.max(12, Math.min(width - box.width / zoom - 12, target.left / zoom))}px`;
+      popup.style.top = `${(target.bottom + box.height) / zoom + 12 <= height ? target.bottom / zoom + 8 : Math.max(12, (target.top - box.height) / zoom - 8)}px`;
     }
     function show(target) {
       if (anchor === target) return;

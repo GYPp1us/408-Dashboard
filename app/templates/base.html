@@ -3,12 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1{% if 'MutsumiFocus/' in request.headers.get('User-Agent', '') %}, minimum-scale=1, maximum-scale=1, user-scalable=no{% endif %}">
+  <script src="{{ static_asset('viewport-scale.js') }}"></script>
   <title>{% block title %}408 Focus Console{% endblock %}</title>
   <link rel="stylesheet" href="{{ static_asset('app.css') }}">
   {% if page_name in ['focus-kline', 'focus_kline'] %}<link rel="stylesheet" href="{{ static_asset('focus_kline.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ static_asset('dashboard-ui.css') }}">
   {% if page_name == 'home' %}<link rel="stylesheet" href="{{ static_asset('dashboard-details.css') }}"><link rel="stylesheet" href="{{ static_asset('dashboard-index.css') }}">{% endif %}
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<link rel="stylesheet" href="{{ static_asset('index-challenge.css') }}">{% endif %}
+  <link rel="stylesheet" href="{{ static_asset('viewport-scale.css') }}">
 </head>
 <body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}" data-role="{{ 'guest' if is_guest else 'admin' }}" data-settings-tab="{{ settings_tab|default('system') }}" data-viewer-id="{{ ui_preferences.viewer_id if ui_preferences.viewer_id is not none else 'public' }}" data-quick-focus-count="{{ ui_preferences.quick_focus_count }}">
   <div class="app-shell">

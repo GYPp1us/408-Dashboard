@@ -79,5 +79,5 @@ body.page-focus-kline .app-main { padding-top:18px; }
 .kline-data-feedback:empty { display:none; }
 .kline-attribution { margin:9px 2px 0; color:#95a09a; font-size:9px; }.kline-attribution a { color:#65776d; text-decoration:underline; text-underline-offset:2px; }
 @media (max-width:1080px) {
-  .kline-quote-card { grid-template-columns:1fr; }.kline-quote-main { border-right:0; border-bottom:1px solid var(--line); }.kline-chart-grid,.kline-bottom-grid { grid-template-columns:1fr; }.kline-params-form { grid-template-columns:repeat(3,minmax(0,1fr)); }.kline-save-button { grid-column:span 3; }
+  html:not([data-viewport-mode="wide"]) .kline-quote-card { grid-template-columns:1fr; }html:not([data-viewport-mode="wide"]) .kline-quote-main { border-right:0; border-bottom:1px solid var(--line); }html:not([data-viewport-mode="wide"]) .kline-chart-grid,html:not([data-viewport-mode="wide"]) .kline-bottom-grid { grid-template-columns:1fr; }html:not([data-viewport-mode="wide"]) .kline-params-form { grid-template-columns:repeat(3,minmax(0,1fr)); }html:not([data-viewport-mode="wide"]) .kline-save-button { grid-column:span 3; }
 }

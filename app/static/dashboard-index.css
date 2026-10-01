@@ -43,4 +43,4 @@
 .index-params { display:grid; grid-template-columns:1fr; gap:12px; margin:0; }
 .index-params dt { font-weight:600; }.index-params dd { margin:5px 0 0; color:var(--muted, #738078); font-size:13px; line-height:1.6; }
 .index-detail-link { align-self:flex-start; padding:10px 14px; border:1px solid var(--line, #d9e1db); border-radius:10px; color:var(--ink, #28342f); }
-@media (max-width:600px) { .index-detail-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); } .index-detail-quote strong { font-size:38px; } }
+@media (max-width:600px) { html:not([data-viewport-mode="wide"]) .index-detail-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); } html:not([data-viewport-mode="wide"]) .index-detail-quote strong { font-size:38px; } }

@@ -11,6 +11,7 @@
     settled: ["#6f8f78", "#557763", "#8aa891", "#486653", "#789c81", "#abc0ad", "#5d8068", "#94ae99"],
   };
   const $ = (selector) => document.querySelector(selector);
+  const elementScale = (element) => window.MutsumiViewport?.elementScale(element) || 1;
   const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => {
     if (active) return themePalettes.focus;
     if (state.dashboard?.daily_settlement) return themePalettes.settled;
@@ -608,7 +609,7 @@
     };
     grid.onpointermove = (event) => {
       if (!drag || event.pointerId !== drag.pointerId) return;
-      const delta = event.clientX - drag.startX;
+      const delta = (event.clientX - drag.startX) / elementScale(grid);
       if (!drag.moved && Math.abs(delta) > 4) {
         drag.moved = true;
         grid.setPointerCapture(event.pointerId);
@@ -1242,7 +1243,8 @@
   function syncFocusStripSelection(strip, snap = false) {
     const options = [...strip.querySelectorAll("[data-focus-option]")];
     if (!options.length) return;
-    const center = strip.getBoundingClientRect().left + strip.clientWidth / 2;
+    const stripBounds = strip.getBoundingClientRect();
+    const center = stripBounds.left + stripBounds.width / 2;
     const closest = options.reduce((best, option) => {
       const bounds = option.getBoundingClientRect();
       const distance = Math.abs(bounds.left + bounds.width / 2 - center);
@@ -1267,7 +1269,7 @@
     });
     strip.addEventListener("pointermove", (event) => {
       if (!dragging || dragging.pointerId !== event.pointerId) return;
-      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX);
+      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX) / elementScale(strip);
     });
     const finish = (event) => {
       if (!dragging || dragging.pointerId !== event.pointerId) return;
@@ -1894,20 +1896,25 @@
     const context = canvas.getContext("2d");
     if (!context) return;
     const ratio = Math.min(2, window.devicePixelRatio || 1);
+    let width;
+    let height;
     const resize = () => {
-      canvas.width = Math.floor(window.innerWidth * ratio);
-      canvas.height = Math.floor(window.innerHeight * ratio);
-      canvas.style.width = `${window.innerWidth}px`;
-      canvas.style.height = `${window.innerHeight}px`;
-      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      width = window.MutsumiViewport?.logicalWidth || window.innerWidth;
+      height = window.MutsumiViewport?.logicalHeight || window.innerHeight;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      const renderRatio = ratio * elementScale(canvas);
+      canvas.width = Math.floor(width * renderRatio);
+      canvas.height = Math.floor(height * renderRatio);
+      context.setTransform(renderRatio, 0, 0, renderRatio, 0, 0);
     };
     resize();
     const colors = ["#6f8f78", "#b88b63", "#9a86c3", "#d7a45c"];
     const particles = [];
     const bursts = [
-      { x: window.innerWidth * .28, y: window.innerHeight * .28, color: colors[0], at: 120 },
-      { x: window.innerWidth * .58, y: window.innerHeight * .2, color: colors[1], at: 280 },
-      { x: window.innerWidth * .78, y: window.innerHeight * .38, color: colors[2], at: 430 },
+      { x: width * .28, y: height * .28, color: colors[0], at: 120 },
+      { x: width * .58, y: height * .2, color: colors[1], at: 280 },
+      { x: width * .78, y: height * .38, color: colors[2], at: 430 },
     ];
     let startedAt = performance.now();
     let frame;
@@ -1920,7 +1927,7 @@
     };
     const draw = (now) => {
       const elapsed = now - startedAt;
-      context.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      context.clearRect(0, 0, width, height);
       bursts.filter((burst) => !burst.launched && elapsed >= burst.at).forEach((burst) => { burst.launched = true; launch(burst); });
       particles.forEach((particle) => {
         particle.x += particle.vx;
@@ -1935,7 +1942,7 @@
       });
       context.globalAlpha = 1;
       if (elapsed < 1800) frame = requestAnimationFrame(draw);
-      else { context.clearRect(0, 0, window.innerWidth, window.innerHeight); window.removeEventListener("resize", resize); }
+      else { context.clearRect(0, 0, width, height); window.removeEventListener("resize", resize); }
     };
     frame = requestAnimationFrame(draw);
     window.setTimeout(() => { if (frame) cancelAnimationFrame(frame); }, 2200);
@@ -2147,7 +2154,8 @@
   function syncScoreStripSelection(strip, snapToSelection = false) {
     const options = [...strip.querySelectorAll("[data-score-option]")];
     if (!options.length) return;
-    const center = strip.getBoundingClientRect().left + strip.clientWidth / 2;
+    const stripBounds = strip.getBoundingClientRect();
+    const center = stripBounds.left + stripBounds.width / 2;
     const closest = options.reduce((best, option) => {
       const bounds = option.getBoundingClientRect();
       const distance = Math.abs(bounds.left + bounds.width / 2 - center);
@@ -2174,7 +2182,7 @@
     });
     strip.addEventListener("pointermove", (event) => {
       if (!dragging || dragging.pointerId !== event.pointerId) return;
-      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX);
+      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX) / elementScale(strip);
     });
     const finishDrag = (event) => {
       if (!dragging || dragging.pointerId !== event.pointerId) return;

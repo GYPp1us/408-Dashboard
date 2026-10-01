@@ -526,30 +526,30 @@ html.native-app .panel { padding:9px; }
 html.native-app .quick-score-drawer { width:min(440px,100vw); }
 
 @media (orientation:portrait) {
-  html.native-app .app-shell { padding-top:env(safe-area-inset-top); }
-  html.native-app .status-bar { grid-template-columns:minmax(0,1fr) max-content; padding:0 8px; }
-  html.native-app .score-board,html.native-app .exam-countdown,html.native-app .today-study,html.native-app .console-date { display:none; }
-  html.native-app .status-title { grid-template-rows:1fr; }
-  html.native-app .status-title i { grid-row:1; }
-  html.native-app .status-title strong { grid-column:2; font-size:12px; }
-  html.native-app .current-state { min-width:0; padding-left:6px; }
-  html.native-app .current-state #current-state,html.native-app .current-state .state-dot { display:none; }
-  html.native-app .app-main { padding-bottom:calc(12px + env(safe-area-inset-bottom)); }
-  html.native-app .time-grid,html.native-app .dashboard-grid { display:grid; grid-template-columns:1fr; gap:7px; }
-  html.native-app .time-card { min-height:104px; }
-  html.native-app .dashboard-grid { margin-top:7px; }
-  html.native-app .mode-panel { grid-column:1; grid-row:auto; order:-1; }
-  html.native-app .activity-panel,html.native-app .investment-panel,html.native-app .mode-panel { grid-column:1; grid-row:auto; width:100%; }
-  html.native-app .focus-state-overlay { padding:12px; }
-  html.native-app .focus-state-overlay-card { padding:26px 16px; }
-  html.native-app .focus-state-overlay-card strong { font-size:34px; }
-  html.native-app .quick-score-drawer .quick-score-head,html.native-app .quick-score-drawer .quick-score-form { padding-right:12px; padding-left:12px; }
-  html.native-app .subject-create-form { grid-template-columns:1fr 64px; }
-  html.native-app .subject-create-form .ui-button { grid-column:1 / -1; }
-  html.native-app .subject-settings-row { grid-template-columns:minmax(0,1fr) 60px auto; }
-  html.native-app .subject-settings-row [data-delete-subject] { grid-column:1 / -1; }
-  html.native-app .focus-item-create-form { grid-template-columns:1fr 1fr; }
-  html.native-app .focus-item-create-form .ui-button { grid-column:1 / -1; }
-  html.native-app .focus-item-settings-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 42px auto; }
-  html.native-app .focus-item-settings-row [data-delete-focus-item] { grid-column:1 / -1; }
+  html.native-app:not([data-viewport-mode="wide"]) .app-shell { padding-top:env(safe-area-inset-top); }
+  html.native-app:not([data-viewport-mode="wide"]) .status-bar { grid-template-columns:minmax(0,1fr) max-content; padding:0 8px; }
+  html.native-app:not([data-viewport-mode="wide"]) .score-board,html.native-app:not([data-viewport-mode="wide"]) .exam-countdown,html.native-app:not([data-viewport-mode="wide"]) .today-study,html.native-app:not([data-viewport-mode="wide"]) .console-date { display:none; }
+  html.native-app:not([data-viewport-mode="wide"]) .status-title { grid-template-rows:1fr; }
+  html.native-app:not([data-viewport-mode="wide"]) .status-title i { grid-row:1; }
+  html.native-app:not([data-viewport-mode="wide"]) .status-title strong { grid-column:2; font-size:12px; }
+  html.native-app:not([data-viewport-mode="wide"]) .current-state { min-width:0; padding-left:6px; }
+  html.native-app:not([data-viewport-mode="wide"]) .current-state #current-state,html.native-app:not([data-viewport-mode="wide"]) .current-state .state-dot { display:none; }
+  html.native-app:not([data-viewport-mode="wide"]) .app-main { padding-bottom:calc(12px + env(safe-area-inset-bottom)); }
+  html.native-app:not([data-viewport-mode="wide"]) .time-grid,html.native-app:not([data-viewport-mode="wide"]) .dashboard-grid { display:grid; grid-template-columns:1fr; gap:7px; }
+  html.native-app:not([data-viewport-mode="wide"]) .time-card { min-height:104px; }
+  html.native-app:not([data-viewport-mode="wide"]) .dashboard-grid { margin-top:7px; }
+  html.native-app:not([data-viewport-mode="wide"]) .mode-panel { grid-column:1; grid-row:auto; order:-1; }
+  html.native-app:not([data-viewport-mode="wide"]) .activity-panel,html.native-app:not([data-viewport-mode="wide"]) .investment-panel,html.native-app:not([data-viewport-mode="wide"]) .mode-panel { grid-column:1; grid-row:auto; width:100%; }
+  html.native-app:not([data-viewport-mode="wide"]) .focus-state-overlay { padding:12px; }
+  html.native-app:not([data-viewport-mode="wide"]) .focus-state-overlay-card { padding:26px 16px; }
+  html.native-app:not([data-viewport-mode="wide"]) .focus-state-overlay-card strong { font-size:34px; }
+  html.native-app:not([data-viewport-mode="wide"]) .quick-score-drawer .quick-score-head,html.native-app:not([data-viewport-mode="wide"]) .quick-score-drawer .quick-score-form { padding-right:12px; padding-left:12px; }
+  html.native-app:not([data-viewport-mode="wide"]) .subject-create-form { grid-template-columns:1fr 64px; }
+  html.native-app:not([data-viewport-mode="wide"]) .subject-create-form .ui-button { grid-column:1 / -1; }
+  html.native-app:not([data-viewport-mode="wide"]) .subject-settings-row { grid-template-columns:minmax(0,1fr) 60px auto; }
+  html.native-app:not([data-viewport-mode="wide"]) .subject-settings-row [data-delete-subject] { grid-column:1 / -1; }
+  html.native-app:not([data-viewport-mode="wide"]) .focus-item-create-form { grid-template-columns:1fr 1fr; }
+  html.native-app:not([data-viewport-mode="wide"]) .focus-item-create-form .ui-button { grid-column:1 / -1; }
+  html.native-app:not([data-viewport-mode="wide"]) .focus-item-settings-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 42px auto; }
+  html.native-app:not([data-viewport-mode="wide"]) .focus-item-settings-row [data-delete-focus-item] { grid-column:1 / -1; }
 }
