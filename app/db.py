@@ -45,6 +45,16 @@ CREATE TABLE IF NOT EXISTS user_settings (
     value TEXT NOT NULL,
     PRIMARY KEY (user_id, key)
 );
+CREATE TABLE IF NOT EXISTS focus_kline_challenge_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    changed_at TEXT NOT NULL,
+    effective_at TEXT NOT NULL,
+    timezone_name TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_focus_kline_challenge_user
+    ON focus_kline_challenge_events(user_id, id);
 CREATE TABLE IF NOT EXISTS dashboard_artwork (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     version TEXT NOT NULL,
@@ -1460,6 +1470,7 @@ def export_migration_data(connection: sqlite3.Connection, now: datetime) -> dict
             "user_focus_items": _rows(connection, "SELECT * FROM user_focus_items ORDER BY id"),
             "focus_sessions": _rows(connection, "SELECT * FROM focus_sessions ORDER BY id"),
             "focus_pauses": _rows(connection, "SELECT * FROM focus_pauses ORDER BY id"),
+            "focus_kline_challenge_events": _rows(connection, "SELECT * FROM focus_kline_challenge_events ORDER BY id") if _table_exists(connection, "focus_kline_challenge_events") else [],
             "scores": list_scores(connection),
             "plans": list_plans(connection),
         }

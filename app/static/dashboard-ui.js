@@ -5,8 +5,11 @@
   const palettes = new Set(["clay", "sage", "ocean"]);
   const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
   const portrait = window.matchMedia("(orientation: portrait)");
-  const compactBrowser = window.matchMedia("(max-width: 900px)");
-  const presets = { balanced: [28, 32, 40], charts: [24, 28, 48], focus: [36, 30, 34] };
+  const compactBrowser = window.matchMedia("(max-width: 1169px)");
+  const presets = { balanced: [150 / 6.5, 300 / 6.5, 200 / 6.5] };
+  const columnMinima = [300, 330, 440];
+  const columnProperties = ["--control-column", "--insight-column", "--activity-column"];
+  const dividerWidth = 10;
   let preferences = {
     theme_mode: root.dataset.themeMode || "system",
     theme_palette: root.dataset.themePalette || "clay",
@@ -19,7 +22,8 @@
   let layoutFrame = null;
   let appearanceSignature = null;
   const storageKey = () => `mutsumiDashboardLayout:v1:${preferences.viewer_id}:${root.classList.contains("native-app") ? "native" : "browser"}`;
-  const singleColumn = () => root.classList.contains("native-app") ? portrait.matches : compactBrowser.matches;
+  const singleColumn = () => (root.classList.contains("native-app") ? portrait.matches : compactBrowser.matches)
+    || (grid && grid.clientWidth < columnMinima.reduce((sum, value) => sum + value, 0) + dividerWidth * 2);
   const effectiveTheme = () => preferences.theme_mode === "system" ? systemTheme.matches ? "dark" : "light" : preferences.theme_mode;
   const announceAppearance = () => document.dispatchEvent(new CustomEvent("dashboard:appearance", { detail: { mode: preferences.theme_mode, palette: preferences.theme_palette, effectiveTheme: effectiveTheme() } }));
 
@@ -39,7 +43,6 @@
     root.dataset.theme = effectiveTheme();
     root.style.colorScheme = effectiveTheme();
     document.body.dataset.quickFocusCount = String(preferences.quick_focus_count);
-    root.style.setProperty("--dashboard-panel-height", `${Math.max(440, preferences.quick_focus_count * 52 + 124)}px`);
     announceAppearance();
   }
 
@@ -58,8 +61,8 @@
   }
 
   function allocatedWidths() {
-    const available = Math.max(0, grid.clientWidth - 24);
-    const minima = [230, 280, 320];
+    const available = Math.max(0, grid.clientWidth - dividerWidth * 2);
+    const minima = columnMinima;
     if (available < minima.reduce((sum, value) => sum + value, 0)) return minima;
     const widths = columns.map((fraction) => available * fraction / 100);
     for (let index = 0; index < 3; index += 1) {
@@ -76,19 +79,43 @@
     return widths;
   }
 
+  function layoutTimeCards() {
+    const timeGrid = document.querySelector(".time-grid");
+    if (!timeGrid) return;
+    const style = getComputedStyle(timeGrid);
+    const morning = Math.max(1, parseFloat(style.getPropertyValue("--morning-window")) || 14400);
+    const library = Math.max(1, parseFloat(style.getPropertyValue("--library-window")) || 30600);
+    const total = morning + library;
+    // Preserve both countdowns' type sizes and their exact duration ratio.
+    // Wrap the current-time card before squeezing a countdown below its text.
+    const minimumPair = Math.max(208 * total / morning, 208 * total / library);
+    const width = timeGrid.clientWidth;
+    const compact = root.classList.contains("native-app") ? portrait.matches : compactBrowser.matches;
+    const layout = compact ? "stacked" : width >= minimumPair + 240 ? "columns" : width >= minimumPair + 10 ? "windows" : "stacked";
+    timeGrid.dataset.layout = layout;
+    if (layout === "columns") timeGrid.style.setProperty("--current-time-width", `${Math.min(468, width - minimumPair - 20)}px`);
+    else timeGrid.style.removeProperty("--current-time-width");
+  }
+
   function renderColumns() {
+    layoutTimeCards();
     if (!grid) return;
     const dividers = [...grid.querySelectorAll("[data-dashboard-divider]")];
     const compact = singleColumn();
+    grid.dataset.layout = compact ? "stacked" : "columns";
     dividers.forEach((divider) => { divider.hidden = compact; divider.tabIndex = compact ? -1 : 0; });
-    if (compact) return;
+    if (compact) {
+      columnProperties.forEach((key) => grid.style.removeProperty(key));
+      document.dispatchEvent(new CustomEvent("dashboard:layout"));
+      return;
+    }
     const widths = allocatedWidths();
-    ["--control-column", "--insight-column", "--activity-column"].forEach((key, index) => grid.style.setProperty(key, `${widths[index]}px`));
+    columnProperties.forEach((key, index) => grid.style.setProperty(key, `${widths[index]}px`));
     const total = widths.reduce((sum, value) => sum + value, 0);
     dividers.forEach((divider, index) => {
       const before = index === 0 ? 0 : widths[0];
       const pair = widths[index] + widths[index + 1];
-      const minima = [230, 280, 320];
+      const minima = columnMinima;
       divider.setAttribute("aria-valuenow", String(Math.round((before + widths[index]) / total * 100)));
       divider.setAttribute("aria-valuemin", String(Math.ceil((before + minima[index]) / total * 100)));
       divider.setAttribute("aria-valuemax", String(Math.floor((before + pair - minima[index + 1]) / total * 100)));
@@ -103,7 +130,7 @@
   }
 
   function resizePair(index, delta, originalWidths = allocatedWidths()) {
-    const minima = [230, 280, 320];
+    const minima = columnMinima;
     const pair = originalWidths[index] + originalWidths[index + 1];
     const left = Math.min(pair - minima[index + 1], Math.max(minima[index], originalWidths[index] + delta));
     const next = [...originalWidths];
@@ -166,7 +193,11 @@
     });
     if (window.ResizeObserver) new ResizeObserver(reflow).observe(grid);
     portrait.addEventListener?.("change", () => { cancelDrag(); reflow(); });
+    compactBrowser.addEventListener?.("change", () => { cancelDrag(); reflow(); });
     window.addEventListener("resize", reflow);
+    window.addEventListener("pageshow", () => { cancelDrag(); reflow(); });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) reflow(); });
+    document.fonts?.ready.then(reflow);
     window.addEventListener("blur", cancelDrag);
     renderColumns();
   }
@@ -248,25 +279,7 @@
     });
   }
 
-  function attachDayAxis(host, chart, start) {
-    host.querySelectorAll(".day-axis-edge").forEach((label) => label.remove());
-    const left = document.createElement("span"), right = document.createElement("span");
-    left.className = "day-axis-edge day-axis-start";
-    right.className = "day-axis-edge day-axis-end";
-    left.textContent = "00:00"; right.textContent = "24:00";
-    left.setAttribute("aria-hidden", "true"); right.setAttribute("aria-hidden", "true");
-    host.append(left, right);
-    const align = () => {
-      const x = chart.timeScale().timeToCoordinate(start + 86400);
-      right.hidden = x === null;
-      if (x !== null) right.style.left = `${Math.min(host.clientWidth, x)}px`;
-    };
-    chart.timeScale().subscribeSizeChange(align);
-    chart.timeScale().subscribeVisibleLogicalRangeChange(align);
-    requestAnimationFrame(() => requestAnimationFrame(align));
-  }
-
-  window.DashboardUI = { applyPreferences, resetLayout, reflow, effectiveTheme, attachDayAxis, get preferences() { return { ...preferences }; } };
+  window.DashboardUI = { applyPreferences, resetLayout, reflow, effectiveTheme, get preferences() { return { ...preferences }; } };
   applyPreferences();
   systemTheme.addEventListener?.("change", () => { if (preferences.theme_mode === "system") applyPreferences(); });
   document.addEventListener("DOMContentLoaded", () => { bindLayout(); bindPreview(); bindTooltips(); bindArtworkKeyboard(); });

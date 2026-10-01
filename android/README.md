@@ -47,6 +47,7 @@ $env:MUTSUMI_VIVO_ATOMIC_SCENE = '<vivo 分配的 scene>'
 - JavaScript 桥只接受计时状态，并将 `baseUrl` 固定为编译时域名。
 - WebView 仅在同一 HTTPS 主机和端口内导航，外链交给系统浏览器。
 - APP 关闭 WebView 页面缩放及缩放控件，固定页面 viewport；指数图保留自身的手势操作。网页端仅在图表区域拦截浏览器的双指/Ctrl 加滚轮缩放，普通页面保留浏览器缩放。
+- APP 横屏使用沉浸式全屏，隐藏系统状态栏和导航栏，不为挖孔预留空白边距；从屏幕边缘滑动可临时显示系统栏。竖屏恢复系统栏和安全区，键盘出现时保留输入区域。
 - 主页表情图片上传通过 AndroidX Activity Result 调起系统图片单选，只读用户选择的 `content://` 图片，不申请图库或存储权限。取消、页面导航和 Activity 销毁会结束 WebView 文件回调；同时出现的新选择请求会被取消。
 - `allowFileAccess=false` 和 `allowContentAccess=false` 保持不变：禁用的是页面直接加载本地 URL；用户通过文件输入明确选择的 URI 经独立的 WebView 文件选择回调传入。API 35 模拟器已通过实际系统选择器的 content URI 预览、原始图片上传、重载比例和取消保留原图；vivo 真机所用 WebView 的上传、取消及旋转屏幕行为仍待验证，范围见 [模拟器验证记录](../docs/android-emulator-validation.md)。
 - 无障碍配置明确使用 `canRetrieveWindowContent=false`，代码不处理事件、不读取节点、不执行手势。

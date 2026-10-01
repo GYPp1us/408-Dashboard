@@ -1,0 +1,10 @@
+.index-challenge { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; margin:12px 0; font-family:var(--font-index); }
+.index-challenge-copy { display:flex; flex:1; flex-direction:column; gap:3px; min-width:150px; }
+.index-challenge-copy strong { font-size:17px; font-weight:600; }
+.index-challenge-copy span { color:var(--muted); font-size:14px; line-height:1.5; }
+.index-challenge-feedback { flex-basis:100%; margin:0; color:var(--index-rise, #d66c58); font-size:14px; }
+.index-challenge-badge { color:var(--muted); font-family:var(--font-index); font-size:12px; font-weight:500; white-space:nowrap; }
+.home-index-head > [data-index-challenge-badge] { margin-right:auto; }
+.index-challenge.is-pending [data-index-challenge-toggle] { animation:index-challenge-pending 1s ease-in-out infinite alternate; }
+@keyframes index-challenge-pending { to { opacity:.55; } }
+@media (prefers-reduced-motion:reduce) { .index-challenge.is-pending [data-index-challenge-toggle] { animation:none; } }

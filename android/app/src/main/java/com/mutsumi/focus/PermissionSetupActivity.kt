@@ -19,6 +19,7 @@ import android.widget.TextView
 
 class PermissionSetupActivity : Activity() {
     private lateinit var list: LinearLayout
+    private lateinit var contentRoot: ScrollView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,6 +30,11 @@ class PermissionSetupActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::list.isInitialized) render()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && ::contentRoot.isInitialized) AppWindowLayout.apply(this, contentRoot)
     }
 
     private fun render() {
@@ -108,7 +114,9 @@ class PermissionSetupActivity : Activity() {
             }
         }, LinearLayout.LayoutParams(-1, dp(28)).apply { topMargin = dp(9) })
 
-        setContentView(ScrollView(this).apply { addView(list) })
+        contentRoot = ScrollView(this).apply { addView(list) }
+        setContentView(contentRoot)
+        AppWindowLayout.apply(this, contentRoot)
     }
 
     private fun addPermission(

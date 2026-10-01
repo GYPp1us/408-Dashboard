@@ -31,6 +31,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .db import REPORTER_HEARTBEAT_TIMEOUT_SECONDS
+from .focus_challenge import CHALLENGE_LIMIT, challenge_decisions, challenge_payload, limit_at, limit_policy, policy_fingerprint
 
 
 INITIAL_INDEX = 100.0
@@ -229,6 +230,28 @@ def close_return(focus_hours: float, parameters: FocusKlineParameters | Mapping[
     else:
         value = LIMIT_RETURN
     return max(-LIMIT_RETURN, min(LIMIT_RETURN, value))
+
+
+def _extended_return(focus_hours: float, parameters: FocusKlineParameters) -> float:
+    """Continue the configured K segments without reclaiming old clipping."""
+    if focus_hours < parameters.a_mid:
+        return -LIMIT_RETURN + float(parameters.k_low) * (focus_hours - parameters.a_low)
+    return float(parameters.k_high) * (focus_hours - parameters.a_mid)
+
+
+def _challenge_activation(policy, day_start, market_close):
+    return next((event["at"].astimezone(day_start.tzinfo) for event in policy
+                 if day_start < event["at"] < market_close and event["limit_return"] == CHALLENGE_LIMIT), None)
+
+
+def _fundamental_return(hours, parameters, *, full_challenge, activation_hours=None):
+    if full_challenge:
+        return max(-CHALLENGE_LIMIT, min(CHALLENGE_LIMIT, _extended_return(hours, parameters)))
+    if activation_hours is not None:
+        earned = close_return(activation_hours, parameters)
+        future = _extended_return(hours, parameters) - _extended_return(activation_hours, parameters)
+        return max(-CHALLENGE_LIMIT, min(CHALLENGE_LIMIT, earned + future))
+    return close_return(hours, parameters)
 
 
 def _zone(timezone_name: str) -> Any:
@@ -557,6 +580,7 @@ def _intraday_path(
     lunch_gap_return: float,
     complete_day: bool,
     aggregate_focus_seconds: int | None,
+    policy: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """Generate points only inside market windows.
 
@@ -582,6 +606,10 @@ def _intraday_path(
     previous_at = day_start
     previous_price = _price(open_price)
     limit_rebound_state = 0.0
+    full_challenge = limit_at(policy, day_start) == CHALLENGE_LIMIT
+    activation = None if full_challenge else _challenge_activation(policy, day_start, day_end)
+    activation_hours = ((_focus_seconds_between(segments, day_start, activation) if aggregate_focus_seconds is None else aggregate_focus_seconds) / 3600.0) if activation else None
+    checkpoint = None
 
     for window_index, window in enumerate(windows):
         if cutoff <= window["start"]:
@@ -601,16 +629,27 @@ def _intraday_path(
             cursor += step
         if timestamps[-1] != window_end:
             timestamps.append(window_end)
+        # Existing completed bars at the exact decision time come first. A
+        # same-price checkpoint then changes only future calculations, without
+        # consuming randomness or overwriting an already emitted price.
+        entries = [(at, False) for at in timestamps]
+        if activation and window["start"] <= activation < window["end"] and activation <= cutoff:
+            entries.append((activation, True))
+        entries.sort(key=lambda item: (item[0], item[1]))
+        prefix_end = window_end
+        if activation and window["start"] < activation <= window["end"] and activation <= cutoff:
+            prefix_end = min(window_end, window["start"] + step * math.floor((activation - window["start"]).total_seconds() / step.total_seconds()))
 
         if window_index == 0:
             session_open = _price(open_price)
         else:
             session_open = _price(previous_price * (1.0 + lunch_gap_return))
+            opening_limit = limit_at(policy, window["start"])
             session_open = max(
                 PRICE_TICK,
                 min(
-                    _price(reference_price * (1.0 + LIMIT_RETURN), floor=0.001),
-                    max(_price(reference_price * (1.0 - LIMIT_RETURN), floor=0.001), session_open),
+                    _price(reference_price * (1.0 + opening_limit), floor=0.001),
+                    max(_price(reference_price * (1.0 - opening_limit), floor=0.001), session_open),
                 ),
             )
         elapsed_before_session = sum(
@@ -620,8 +659,23 @@ def _intraday_path(
         origin_progress = elapsed_before_session / total_market_seconds
         origin_return = (session_open / reference_price) - 1.0
 
-        for index, at in enumerate(timestamps):
-            focused = _contains_focus(segments, min(at, window_end - timedelta(microseconds=1)))
+        if activation and activation < window["start"] and checkpoint is None:
+            checkpoint = {"price": session_open, "elapsed": elapsed_before_session}
+            momentum = noise = limit_rebound_state = 0.0
+            previous_at = window["start"]
+
+        for index, (at, policy_changed) in enumerate(entries):
+            if policy_changed:
+                # Enabling between bars freezes the currently published quote.
+                # At a bar boundary the preceding ordinary bar is retained too.
+                checkpoint = {"price": previous_price, "elapsed": elapsed_before_session + (at - window["start"]).total_seconds()}
+                momentum = noise = limit_rebound_state = 0.0
+                path.append({"timestamp": at.isoformat(), "price": previous_price, "state": previous_state,
+                             "session": window["name"], "changed": False, "limit_policy_changed": True})
+                previous_at = at
+                continue
+            focus_cutoff = prefix_end if at <= prefix_end else window_end
+            focused = _contains_focus(segments, min(at, focus_cutoff - timedelta(microseconds=1)))
             state = "focus" if focused else "idle"
             changed = bool(path) and index > 0 and state != previous_state
             bar_units = max(1.0 / 600.0, (at - previous_at).total_seconds() / 600.0)
@@ -662,16 +716,24 @@ def _intraday_path(
                     projected_seconds = aggregate_focus_seconds
                 projected_hours = max(0.0, min(24.0, projected_seconds / 3600.0))
                 session_progress = (progress - origin_progress) / max(1e-9, 1.0 - origin_progress)
-                anchor = origin_return + session_progress * (
-                    close_return(projected_hours, parameters) - origin_return
-                )
+                if checkpoint is not None:
+                    actual_hours = (_focus_seconds_between(segments, day_start, at) if aggregate_focus_seconds is None else aggregate_focus_seconds) / 3600.0
+                    earned_target = _fundamental_return(actual_hours, parameters, full_challenge=False, activation_hours=activation_hours)
+                    remaining_progress = max(0.0, min(1.0, (elapsed_market_seconds - checkpoint["elapsed"]) / max(1.0, total_market_seconds - checkpoint["elapsed"])))
+                    baseline_return = checkpoint["price"] / reference_price - 1.0
+                    anchor = baseline_return + remaining_progress * (earned_target - baseline_return)
+                else:
+                    anchor = origin_return + session_progress * (
+                        _fundamental_return(projected_hours, parameters, full_challenge=full_challenge) - origin_return
+                    )
                 # Momentum and news-like noise remain visible intraday, but
                 # cannot create a one-bar settlement jump at the close.
                 taper = min(1.0, ((1.0 - progress) / NOISE_CLOSE_TAPER_FRACTION) ** 2)
-                market_return = max(-LIMIT_RETURN, min(LIMIT_RETURN, anchor + (momentum + noise) * taper))
+                point_limit = limit_at(policy, at - timedelta(microseconds=1) if activation == at else at)
+                market_return = max(-point_limit, min(point_limit, anchor + (momentum + noise) * taper))
                 value = _price(reference_price * (1.0 + market_return))
-                lower_bound = max(PRICE_TICK, _price(reference_price * (1.0 - LIMIT_RETURN)))
-                upper_bound = _price(reference_price * (1.0 + LIMIT_RETURN), floor=0.001)
+                lower_bound = max(PRICE_TICK, _price(reference_price * (1.0 - point_limit)))
+                upper_bound = _price(reference_price * (1.0 + point_limit), floor=0.001)
                 value = min(max(value, lower_bound), upper_bound)
                 value, limit_rebound_state = _reflect_limit_price(
                     value,
@@ -715,6 +777,7 @@ def build_focus_klines(
     bar_minutes: int = DEFAULT_BAR_MINUTES,
     initial_price: float = INITIAL_INDEX,
     trading_sessions: Sequence[Sequence[str | time] | Mapping[str, Any]] | None = None,
+    policy: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """Build a complete chronological daily OHLC series from aggregated data.
 
@@ -773,11 +836,16 @@ def build_focus_klines(
         # The previous candle has already settled any floor reset at market
         # close. Today's reference price must be its actual stored close.
         reference_price = _price(previous_close)
-        lower_bound = _price(reference_price * (1.0 - LIMIT_RETURN))
-        upper_bound = _price(reference_price * (1.0 + LIMIT_RETURN))
+        day_limit = limit_at(policy, current if day == current.date() else day_start + timedelta(days=1, microseconds=-1))
+        lower_bound = _price(reference_price * (1.0 - day_limit))
+        upper_bound = _price(reference_price * (1.0 + day_limit))
+        opening_limit = limit_at(policy, market_open)
         open_price = _price(reference_price * (1.0 + pre_open_gap))
-        open_price = min(max(open_price, lower_bound), upper_bound)
-        fundamental_return = close_return(focus_hours, config)
+        open_price = min(max(open_price, _price(reference_price * (1.0 - opening_limit))), _price(reference_price * (1.0 + opening_limit)))
+        full_challenge = limit_at(policy, day_start) == CHALLENGE_LIMIT
+        activation = None if full_challenge else _challenge_activation(policy, day_start, market_close)
+        activation_hours = ((_focus_seconds_between(segments, day_start, activation) if has_segment_detail else focus_seconds) / 3600.0) if activation else None
+        fundamental_return = _fundamental_return(focus_hours, config, full_challenge=full_challenge, activation_hours=activation_hours)
         target_close = min(max(_price(reference_price * (1.0 + fundamental_return)), lower_bound), upper_bound)
         path = _intraday_path(
             day=day,
@@ -793,6 +861,7 @@ def build_focus_klines(
             lunch_gap_return=lunch_gap,
             complete_day=complete_day,
             aggregate_focus_seconds=None if has_segment_detail else focus_seconds,
+            policy=policy,
         )
         close = _price(path[-1]["price"]) if path else open_price
         if complete_day:
@@ -847,7 +916,7 @@ def build_focus_klines(
                 "lunch_gap_pct": round(lunch_gap * 100.0, 3),
                 "status": status,
                 "delisted": bool(below_reset_threshold),
-                "limit_up": _price(reference_price * (1.0 + LIMIT_RETURN)),
+                "limit_up": upper_bound,
                 "limit_down": lower_bound,
                 "trading_sessions": [
                     {"name": item["name"], "start": item["start"].isoformat(), "end": item["end"].isoformat()}
@@ -890,6 +959,7 @@ def ensure_focus_kline_schema(connection: sqlite3.Connection) -> None:
             limit_down REAL NOT NULL,
             intraday_json TEXT NOT NULL DEFAULT '[]',
             trading_sessions_json TEXT NOT NULL DEFAULT '[]',
+            challenge_policy_json TEXT NOT NULL DEFAULT '[]',
             model_version TEXT NOT NULL,
             parameters_json TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -906,6 +976,7 @@ def ensure_focus_kline_schema(connection: sqlite3.Connection) -> None:
         "pre_open_gap_pct": "REAL NOT NULL DEFAULT 0",
         "lunch_gap_pct": "REAL NOT NULL DEFAULT 0",
         "trading_sessions_json": "TEXT NOT NULL DEFAULT '[]'",
+        "challenge_policy_json": "TEXT NOT NULL DEFAULT '[]'",
     }
     for name, definition in migrations.items():
         if name not in columns:
@@ -938,6 +1009,11 @@ def recompute_focus_klines(
     current = _coerce_now(now, target_zone)
     segments = _load_effective_segments(connection, int(user_id), current, target_zone)
     seconds_by_day, segments_by_day = group_focus_segments_by_day(segments)
+    decisions = challenge_decisions(connection, user_id)
+    policy = limit_policy(decisions)
+    if decisions:
+        first_policy_day = _coerce_datetime(decisions[0]["changed_at"], target_zone).date().isoformat()
+        seconds_by_day.setdefault(first_policy_day, 0)
     rows = build_focus_klines(
         seconds_by_day,
         daily_segments=segments_by_day,
@@ -947,6 +1023,7 @@ def recompute_focus_klines(
         bar_minutes=bar_minutes,
         initial_price=initial_price,
         trading_sessions=trading_sessions,
+        policy=policy,
     )
     ensure_focus_kline_schema(connection)
     connection.execute("DELETE FROM focus_klines WHERE user_id = ?", (int(user_id),))
@@ -960,8 +1037,8 @@ def recompute_focus_klines(
                 change, change_pct, focus_seconds, focus_hours,
                 pre_open_focus_seconds, lunch_focus_seconds, after_close_focus_seconds,
                 pre_open_gap_pct, lunch_gap_pct, status, delisted, limit_up, limit_down,
-                intraday_json, trading_sessions_json, model_version, parameters_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                intraday_json, trading_sessions_json, model_version, parameters_json, updated_at, challenge_policy_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 int(user_id),
@@ -989,6 +1066,7 @@ def recompute_focus_klines(
                 MODEL_VERSION,
                 json.dumps(config.to_mapping(), ensure_ascii=False, separators=(",", ":")),
                 updated_at,
+                json.dumps(policy_fingerprint(policy, _day_start(date.fromisoformat(row["date"]) + timedelta(days=1), target_zone) - timedelta(microseconds=1)), separators=(",", ":")),
             ),
         )
     if commit:
@@ -1062,6 +1140,7 @@ def build_focus_kline(
     latest_status = focus["state"]
     return {
         "parameters": public_parameters,
+        "challenge": challenge_payload(challenge_decisions(connection, user_id), datetime.now(_zone(timezone_name)), timezone_name),
         "trading_sessions": [
             {"name": item["name"], "start": item["start"].strftime("%H:%M"), "end": item["end"].strftime("%H:%M")}
             for item in sessions
@@ -1111,8 +1190,12 @@ def build_live_focus_kline(
     config = _as_parameters(parameters)
     sessions = normalize_trading_sessions(trading_sessions)
     today = current.date()
+    decisions = challenge_decisions(connection, user_id)
+    policy = limit_policy(decisions)
+    challenge = challenge_payload(decisions, current, timezone_name)
     if user_id is None:
         return {
+            "challenge": challenge,
             "generated_at": current.isoformat(), "updated_at": current.isoformat(),
             "intraday_date": today.isoformat(), "intraday": [],
             "index": {"current": INITIAL_INDEX}, "previous_close": INITIAL_INDEX,
@@ -1129,8 +1212,11 @@ def build_live_focus_kline(
     segments = _load_effective_segments(connection, int(user_id), current, current.tzinfo)
     seconds_by_day, segments_by_day = group_focus_segments_by_day(segments)
     first_source_day = min(seconds_by_day) if seconds_by_day else today.isoformat()
+    if decisions:
+        first_source_day = min(first_source_day, _coerce_datetime(decisions[0]["changed_at"], current.tzinfo).date().isoformat())
+        seconds_by_day.setdefault(first_source_day, 0)
     cached = connection.execute(
-        "SELECT trading_date, close, model_version, parameters_json, trading_sessions_json FROM focus_klines "
+        "SELECT trading_date, close, model_version, parameters_json, trading_sessions_json, challenge_policy_json, updated_at FROM focus_klines "
         "WHERE user_id = ? AND trading_date < ? ORDER BY trading_date DESC LIMIT 1",
         (int(user_id), today.isoformat()),
     ).fetchone()
@@ -1146,6 +1232,8 @@ def build_live_focus_kline(
             and cached["model_version"] == MODEL_VERSION
             and json.loads(cached["parameters_json"]) == expected_parameters
             and cached_windows == expected_windows
+            and _coerce_datetime(cached["updated_at"], current.tzinfo) >= trading_session_windows(date.fromisoformat(cached["trading_date"]), sessions, target_zone=current.tzinfo)[-1]["end"]
+            and json.loads(cached["challenge_policy_json"]) == policy_fingerprint(policy, _day_start(date.fromisoformat(cached["trading_date"]) + timedelta(days=1), current.tzinfo) - timedelta(microseconds=1))
         )
     except (TypeError, ValueError, json.JSONDecodeError):
         cache_matches = False
@@ -1169,6 +1257,7 @@ def build_live_focus_kline(
         user_key=int(user_id),
         parameters=config, initial_price=float(cached["close"]) if cached else INITIAL_INDEX,
         trading_sessions=sessions,
+        policy=policy,
     )
     latest = rows[-1]
     path = latest["intraday"]
@@ -1176,7 +1265,7 @@ def build_live_focus_kline(
     focus = current_focus_state(connection, int(user_id))
     quote = path[-1] if path else {"timestamp": current.isoformat(), "price": latest["open"]}
     per_second = 0.0
-    if market_active and len(path) >= 2 and not quote.get("changed") and not quote.get("floor_reset"):
+    if market_active and len(path) >= 2 and not quote.get("changed") and not quote.get("floor_reset") and not quote.get("limit_policy_changed"):
         previous = path[-2]
         elapsed = (datetime.fromisoformat(quote["timestamp"]) - datetime.fromisoformat(previous["timestamp"])).total_seconds()
         move = quote["price"] - previous["price"]
@@ -1185,6 +1274,7 @@ def build_live_focus_kline(
         if quote["session"] == previous["session"] and elapsed > 0 and abs(move) <= latest["previous_close"] * 0.005:
             per_second = round(move / elapsed * 0.35, 9)
     return {
+        "challenge": challenge,
         "generated_at": current.isoformat(),
         "updated_at": current.isoformat(),
         "intraday_date": today.isoformat(),
