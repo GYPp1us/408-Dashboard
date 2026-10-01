@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
     private var fileChooserPage: String? = null
     @Volatile private var fileChooserInFlight = false
     @Volatile private var fileChooserReturnedAt = 0L
+    @Volatile private var systemOrientation = Configuration.ORIENTATION_UNDEFINED
     private val imageChooser = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         fileChooserReturnedAt = SystemClock.uptimeMillis()
         if (BuildConfig.DEBUG) Log.d("MutsumiPicker", "result cancelled=${uri == null}")
@@ -277,6 +278,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateWindowLayout() {
+        systemOrientation = resources.configuration.orientation
         val landscape = AppWindowLayout.apply(this, contentRoot)
         permissionChip.visibility = if (landscape || PermissionStatus.allRecommended(this)) View.GONE else View.VISIBLE
         // Reserve a native strip while setup is incomplete. A floating chip
@@ -289,6 +291,15 @@ class MainActivity : ComponentActivity() {
             }
         }
         ViewCompat.requestApplyInsets(contentRoot)
+        if (hasTrustedDocument()) webView.post {
+            if (hasTrustedDocument()) webView.evaluateJavascript("window.MutsumiViewport?.update?.()", null)
+        }
+    }
+
+    internal fun getDisplayOrientation(): String = when (systemOrientation) {
+        Configuration.ORIENTATION_LANDSCAPE -> "landscape"
+        Configuration.ORIENTATION_PORTRAIT -> "portrait"
+        else -> "unknown"
     }
 
     override fun onStart() {
