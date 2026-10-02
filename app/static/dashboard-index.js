@@ -13,6 +13,7 @@
   let latest = null, live = null, dashboardNow = "", fetchedAt = 0, attemptedAt = 0, pending = null, livePending = null, context = null, homeChart = null, drawerDispose = null, refreshDue = false;
   let dashboardClock = null, liveRefreshDue = false, liveRequestVersion = 0, fullRequestVersion = 0;
   const Market = window.IndexMarket;
+  const LIVE_POLL_MS = 1000;
   const acceptPolicy = (data) => !data.challenge || !window.IndexChallenge || window.IndexChallenge.accept(data.challenge);
   const marketDay = (data) => String(data?.intraday_date || data?.day?.date || data?.today?.date || todayDate() || "").slice(0, 10);
   const marketFor = (data) => {
@@ -117,6 +118,7 @@
   }
   function render(data) {
     updateQuote(data.current, data.previous_close);
+    updateDayMetrics(data, data.current);
     $("[data-index-focus]").textContent = duration(data.today_focus_seconds);
     $("[data-index-status]").textContent = data.is_paused ? "已暂停" : data.is_focusing ? "专注中" : "休息中";
     const date = data.intraday_date;
@@ -140,9 +142,40 @@
     target.textContent = next;
     const change = value - number(previous, 100);
     const pct = previous ? change / previous * 100 : 0;
-    $("[data-index-change]").textContent = `${signed(change)} (${signed(pct, 2)}%)`;
+    $("[data-index-change]").textContent = signed(change);
+    const percent = $("[data-index-percent]");
+    if (percent) percent.textContent = `(${signed(pct, 2)}%)`;
     $(".home-index-quote").classList.toggle("index-rise", change >= 0);
     $(".home-index-quote").classList.toggle("index-fall", change < 0);
+  }
+  function dayStatistics(data, value, projection = null) {
+    const market = marketFor(data), date = todayDate();
+    if (!market || market.date !== date) return null;
+    const candle = [data.day, data.today, ...(data.candles || [])].find((row) => row?.date === date);
+    if (!candle || !Number.isFinite(Number(candle.open))) return null;
+    const samples = Market.timeline(market).reconcile(data.intraday || [], (item) => item.time ?? item.at ?? item.timestamp, (item) => item.value ?? item.price ?? item.close);
+    if (projection?.active) samples.append(projection.time, value);
+    let integral = 0, elapsed = 0;
+    const values = [Number(candle.open), value];
+    for (const group of samples.groups) {
+      group.forEach((point) => values.push(point.value));
+      for (let index = 1; index < group.length; index += 1) {
+        const seconds = group[index].time - group[index - 1].time;
+        if (seconds <= 0) continue;
+        integral += (group[index - 1].value + group[index].value) / 2 * seconds;
+        elapsed += seconds;
+      }
+    }
+    const high = Math.max(number(candle.high, Number(candle.open)), ...values);
+    const low = Math.min(number(candle.low, Number(candle.open)), ...values);
+    return { open:Number(candle.open), high, low, average:elapsed ? integral / elapsed : value };
+  }
+  function updateDayMetrics(data, value, projection = null) {
+    const stats = dayStatistics(data, value, projection);
+    for (const key of ["high", "low", "open", "average"]) {
+      const target = $(`[data-index-${key}]`);
+      if (target) target.textContent = stats ? points(stats[key]) : "—";
+    }
   }
   function paintNow(instance, timestamp) {
     if (!instance?.market || !Number.isFinite(timestamp)) return;
@@ -180,6 +213,7 @@
       latest.change = value - previous;
       latest.pct = previous ? latest.change / previous * 100 : 0;
       updateQuote(value, previous);
+      updateDayMetrics(latest, value, projection);
       appendLive(homeChart, projection);
       if (Number.isFinite(Number(snapshot.today_focus_seconds))) $("[data-index-focus]").textContent = duration(snapshot.today_focus_seconds);
       $("[data-index-status]").textContent = snapshot.is_paused ? "已暂停" : snapshot.is_focusing ? "专注中" : "休息中";
@@ -222,7 +256,7 @@
     // Keep a forced state refresh queued while hidden or while an older
     // response is in flight. Its response must not restart the old direction.
     if (!visible() || !latest || livePending) return livePending;
-    if (!liveRefreshDue && live && Date.now() - live.receivedAt < 15000) return;
+    if (!liveRefreshDue && live && Date.now() - live.receivedAt < LIVE_POLL_MS) return;
     const requestVersion = liveRequestVersion;
     liveRefreshDue = false;
     livePending = requestLive().then((snapshot) => {
@@ -241,11 +275,17 @@
       latest.limit_up = snapshot.limit_up ?? latest.limit_up;
       latest.today_focus_seconds = snapshot.today_focus_seconds ?? latest.today_focus_seconds;
       latest.is_focusing = snapshot.is_focusing; latest.is_paused = snapshot.is_paused;
+      if (snapshot.today?.date === snapshot.intraday_date) {
+        latest.day = { ...latest.day, ...snapshot.today };
+        latest.today = latest.day;
+        const candleIndex = latest.candles.findIndex((item) => item.date === snapshot.intraday_date);
+        if (candleIndex >= 0) latest.candles[candleIndex] = { ...latest.candles[candleIndex], ...snapshot.today };
+      }
       if (Array.isArray(snapshot.intraday)) {
         latest.intraday = snapshot.intraday;
         latest.intraday_date = snapshot.intraday_date;
         const candle = latest.candles.find((item) => item.date === snapshot.intraday_date);
-        if (candle) latest.day = candle;
+        if (candle && !snapshot.today) latest.day = candle;
         if (!homeChart && visible()) homeChart = createChart($("[data-index-chart]"));
         setLine(homeChart, latest);
         $("[data-index-empty]").hidden = Boolean(homeChart?.hasData);
@@ -428,7 +468,7 @@
   new MutationObserver(() => { if (visible()) { if (refreshDue || !latest) refreshFull(); else { render(latest); liveSecond(); refreshLive(); } } }).observe(view, { attributes:true, attributeFilter:["hidden", "class", "style"] });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { if (refreshDue || !latest) refreshFull(); else refreshLive(true); } });
   setInterval(liveSecond, 1000);
-  setInterval(() => { if (visible()) refreshLive(); }, 15000);
+  setInterval(() => { if (visible()) refreshLive(); }, LIVE_POLL_MS);
   window.DashboardIndex = { refresh:() => latest ? refreshLive(true) : refreshFull(true), resize:() => { if (homeChart && visible()) { homeChart.chart.applyOptions({ width:$("[data-index-chart]").clientWidth, height:Math.max(70, $("[data-index-chart]").clientHeight) }); Market.pin(homeChart.chart, homeChart.market); liveSecond(); } else if (latest && visible()) render(latest); } };
   refreshFull();
 })();
