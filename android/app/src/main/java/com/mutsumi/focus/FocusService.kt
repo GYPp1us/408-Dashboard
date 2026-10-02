@@ -49,9 +49,14 @@ class FocusService : Service() {
         notificationManager = getSystemService(NotificationManager::class.java)
         applicationOverlay = ApplicationOverlay(this)
         publisher.ensureChannels()
+        runningService = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // All requests and lifecycle callbacks are serialized on the main
+        // thread. A request is no longer pending once this callback owns its
+        // foreground promotion; teardown below still follows that promotion.
+        pendingStarts.remove(intent?.getLongExtra(EXTRA_START_REQUEST, 0L))
         val state = store.read()
         // A previously accepted foreground start can arrive after an idle
         // sync, or take an action branch that immediately stops the service.
@@ -90,6 +95,7 @@ class FocusService : Service() {
 
     override fun onDestroy() {
         destroyed = true
+        if (runningService === this) runningService = null
         handler.removeCallbacksAndMessages(null)
         dismissReminder()
         releaseWakeLock()
@@ -296,8 +302,14 @@ class FocusService : Service() {
         handler.removeCallbacksAndMessages(null)
         dismissReminder()
         releaseWakeLock()
+        // startForegroundService() is a synchronous Binder request, but its
+        // onStartCommand() arrives later. Android can crash us immediately if
+        // we stop while any accepted request still awaits foreground promotion.
+        // Drain those callbacks instead; each reads the latest stored state.
+        if (pendingStarts.isNotEmpty()) return
         stopForeground(if (removeNotification) STOP_FOREGROUND_REMOVE else STOP_FOREGROUND_DETACH)
         if (removeNotification) notificationManager.cancel(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
+        if (runningService === this) runningService = null
         stopSelf()
     }
 
@@ -314,20 +326,25 @@ class FocusService : Service() {
         const val EXTRA_SESSION_ID = "reminder_session_id"
         private const val ACTION_SYNC = "com.mutsumi.focus.SYNC"
         private const val ACTION_CHECK = "com.mutsumi.focus.CHECK"
+        private const val EXTRA_START_REQUEST = "focus_start_request"
         private const val TICK_MS = 15_000L
         private const val SERVER_SYNC_MS = 15_000L
         private const val WAKE_LOCK_WINDOW_MS = 10 * 60_000L
+        private val mainHandler = Handler(Looper.getMainLooper())
+        private var runningService: FocusService? = null
+        private var nextStartRequest = 0L
+        private val pendingStarts = mutableSetOf<Long>()
 
-        fun sync(context: Context, state: FocusRuntimeState) {
+        fun sync(context: Context, state: FocusRuntimeState) = onMainThread {
             FocusStateStore(context).write(state)
             if (state.mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
                 stopAndCancel(context)
-                return
+                return@onMainThread
             }
             start(context, ACTION_SYNC)
         }
 
-        fun clear(context: Context) {
+        fun clear(context: Context) = onMainThread {
             // Identity loss is not a completed session and must not schedule
             // ended reminders or restart an idle foreground service.
             FocusStateStore(context).write(FocusRuntimeState())
@@ -335,23 +352,31 @@ class FocusService : Service() {
         }
 
         private fun stopAndCancel(context: Context) {
-            context.stopService(Intent(context, FocusService::class.java))
+            val service = runningService
+            if (service != null) {
+                service.stopRuntime(removeNotification = true)
+                return
+            }
+            // With no instance yet, an accepted foreground launch must be
+            // allowed to reach onStartCommand(), promote, then read IDLE/REST
+            // and stop itself. stopService() would violate that contract.
+            if (pendingStarts.isNotEmpty()) return
             val notifications = context.getSystemService(NotificationManager::class.java)
             notifications.cancel(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
             notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
         }
 
-        fun requestReminderCheck(context: Context) {
+        fun requestReminderCheck(context: Context) = onMainThread {
             val state = FocusStateStore(context).read()
             if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) {
                 start(context, ACTION_CHECK)
             }
         }
 
-        fun acknowledgeFromNotification(context: Context, notificationIntent: Intent) {
-            if (notificationIntent.action != ACTION_OPEN_FROM_REMINDER) return
+        fun acknowledgeFromNotification(context: Context, notificationIntent: Intent) = onMainThread {
+            if (notificationIntent.action != ACTION_OPEN_FROM_REMINDER) return@onMainThread
             val state = FocusStateStore(context).read()
-            if (state.mode !in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) return
+            if (state.mode !in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) return@onMainThread
             start(context, Intent(context, FocusService::class.java).apply {
                 action = ACTION_ACK_REMINDER
                 putExtra(EXTRA_REMINDER_KIND, notificationIntent.getIntExtra(EXTRA_REMINDER_KIND, -1))
@@ -369,15 +394,28 @@ class FocusService : Service() {
                 stopAndCancel(context)
                 return
             }
+            val request = ++nextStartRequest
+            pendingStarts.add(request)
+            intent.putExtra(EXTRA_START_REQUEST, request)
             try {
-                context.startForegroundService(intent)
+                if (context.startForegroundService(intent) == null) {
+                    pendingStarts.remove(request)
+                    stopAndCancel(context)
+                }
             } catch (error: IllegalStateException) {
+                pendingStarts.remove(request)
                 Log.w("FocusService", "Foreground start rejected; stopping runtime", error)
                 stopAndCancel(context)
             } catch (error: SecurityException) {
+                pendingStarts.remove(request)
                 Log.w("FocusService", "Foreground start denied; stopping runtime", error)
                 stopAndCancel(context)
             }
+        }
+
+        private fun onMainThread(action: () -> Unit) {
+            if (Looper.myLooper() == Looper.getMainLooper()) action()
+            else mainHandler.post { action() }
         }
     }
 }
