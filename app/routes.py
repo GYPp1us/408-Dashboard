@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 import json
-import logging
 import re
 
 import secrets
@@ -19,17 +18,14 @@ from .focus_kline import (
     PRICE_TICK,
     SETTING_KEYS,
     FocusKlineParameters,
-    build_focus_klines,
-    build_focus_kline,
+    build_cached_focus_klines,
     build_live_focus_kline,
     current_focus_state,
-    dynamics_effective_at,
-    group_focus_segments_by_day,
     trading_sessions_from_settings,
     validate_setting_payload,
 )
 from .focus_reporter import ReporterError, apply_frame, authenticate_reporter, connection_details
-from .focus_challenge import account_now, challenge_decisions, challenge_payload, limit_policy, set_challenge
+from .focus_challenge import account_now, challenge_decisions, challenge_payload, set_challenge
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 from .settlement_report import build_settlement_report
 
@@ -37,7 +33,6 @@ from .settlement_report import build_settlement_report
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 HEATMAP_HOURS = tuple(range(0, 24, 2))
 DAILY_TARGET_SECONDS = 7 * 3600
-LOGGER = logging.getLogger(__name__)
 
 
 def _heatmap_hours(value: str) -> list[int]:
@@ -237,7 +232,7 @@ def _focus_kline_payload(
     now: datetime | None = None,
     intraday_date: str | None = None,
 ) -> dict:
-    """Build the API payload without creating or updating any DB rows."""
+    """Reuse derived history without modifying source rows or committing a caller transaction."""
 
     timezone_name = settings.get("timezone", "Asia/Shanghai")
     current = now or _now(timezone_name)
@@ -246,21 +241,15 @@ def _focus_kline_payload(
     if user_id is None:
         candles = []
     else:
-        sessions = _focus_sessions(connection, current, _pause_map(connection), user_id)
-        segments = [(start, end) for _, start, end in sessions]
-        seconds_by_day, segments_by_day = group_focus_segments_by_day(segments)
-        if decisions:
-            first_policy_day = account_now(datetime.fromisoformat(decisions[0]["changed_at"]), timezone_name).date().isoformat()
-            seconds_by_day.setdefault(first_policy_day, 0)
-        candles = build_focus_klines(
-            seconds_by_day,
-            daily_segments=segments_by_day,
+        candles = build_cached_focus_klines(
+            connection,
+            int(user_id),
             now=current,
-            user_key=int(user_id),
+            timezone_name=timezone_name,
             parameters=parameters,
             trading_sessions=trading_sessions_from_settings(settings),
-            policy=limit_policy(decisions),
-            dynamics_at=dynamics_effective_at(connection),
+            intraday_date=intraday_date or "latest_available",
+            commit=not connection.in_transaction,
         )
     latest = candles[-1] if candles else None
     selected_intraday = next((row for row in candles if row["date"] == intraday_date), None) if intraday_date else None
@@ -283,13 +272,7 @@ def _focus_kline_payload(
         "is_paused": False,
     }
     status = focus["state"]
-    public_parameters = {
-        "a_low_hours": parameters.a_low,
-        "a_mid_hours": parameters.a_mid,
-        "a_high_hours": parameters.a_high,
-        "k_low_percent_per_hour": round(float(parameters.k_low) * 100, 6),
-        "k_high_percent_per_hour": round(float(parameters.k_high) * 100, 6),
-    }
+    public_parameters = _focus_kline_public_parameters(parameters)
     return {
         "challenge": challenge_payload(decisions, current, timezone_name),
         "parameters": public_parameters,
@@ -319,23 +302,22 @@ def _focus_kline_payload(
     }
 
 
+def _focus_kline_public_parameters(parameters: FocusKlineParameters) -> dict:
+    return {
+        "a_low_hours": parameters.a_low,
+        "a_mid_hours": parameters.a_mid,
+        "a_high_hours": parameters.a_high,
+        "k_low_percent_per_hour": round(float(parameters.k_low) * 100, 6),
+        "k_high_percent_per_hour": round(float(parameters.k_high) * 100, 6),
+    }
+
+
 def _refresh_focus_kline(connection, user_id: int | None, settings: dict | None = None) -> None:
-    """Refresh the complete derived series after a session/settings write.
+    """Compatibility hook: cache readers detect changes from source fingerprints.
 
-    Cache refresh is best-effort.  The source session/settings transaction is
-    already committed before this helper is called; a cache schema or disk
-    error must not turn a successful focus action into a 500 response.  The
-    GET endpoint always rebuilds a pure payload from source rows.
+    Focus and settings writes return as soon as their business transaction
+    commits. The next history/live read refreshes only the changed suffix.
     """
-
-    if user_id is None:
-        return
-    values = settings or get_settings(connection, user_id)
-    try:
-        build_focus_kline(connection, user_id, values.get("timezone", "Asia/Shanghai"), values)
-    except Exception:  # pragma: no cover - defensive boundary around derived cache
-        connection.rollback()
-        LOGGER.exception("focus_kline_cache_refresh_failed", extra={"user_id": user_id})
 
 
 def _friend_diff_payload(connection, now: datetime, user_id: int | None) -> list[dict]:
@@ -462,7 +444,7 @@ def register_routes(app):
     @app.get("/api/focus-kline")
     @login_required
     def focus_kline_api():
-        """Return the complete historical OHLC series without DB writes."""
+        """Return historical OHLC, updating only its derived cache if needed."""
 
         requested_date = request.args.get("date")
         if requested_date:
@@ -550,7 +532,7 @@ def register_routes(app):
                 connection.commit()
                 settings = get_settings(connection, user_id)
                 _refresh_focus_kline(connection, user_id, settings)
-            parameters = _focus_kline_payload(connection, user_id, settings)["parameters"]
+            parameters = _focus_kline_public_parameters(_focus_kline_parameters(settings))
             result = jsonify(
                 settings={key: settings.get(key) for key in SETTING_KEYS.values()},
                 parameters=parameters,

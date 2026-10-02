@@ -186,12 +186,13 @@ def test_midnight_reconciles_an_incomplete_challenge_cache_once_then_uses_settle
     connection, owner = challenge_db
     set_challenge(connection, owner, True, local(10), "Asia/Shanghai")
     recompute_focus_klines(connection, owner, now=local(14))
-    rebuild = focus_kline.recompute_focus_klines
-    calls = []
+    rebuild = focus_kline.build_focus_klines
+    historical_suffixes = []
     def tracked(*args, **kwargs):
-        calls.append(kwargs["now"])
+        if kwargs.get("end_date") is not None:
+            historical_suffixes.append((kwargs["now"], kwargs["end_date"]))
         return rebuild(*args, **kwargs)
-    monkeypatch.setattr(focus_kline, "recompute_focus_klines", tracked)
+    monkeypatch.setattr(focus_kline, "build_focus_klines", tracked)
     first = focus_kline.build_live_focus_kline(connection, owner, now=local(9, day=2))
     full = build_focus_klines({local().date(): 0}, now=local(9, day=2), user_key=owner,
                              policy=limit_policy(challenge_decisions(connection, owner)))
@@ -200,7 +201,7 @@ def test_midnight_reconciles_an_incomplete_challenge_cache_once_then_uses_settle
     assert first["challenge"]["active_today"] is True
     second = focus_kline.build_live_focus_kline(connection, owner, now=local(9, 0, 15, day=2))
     assert second["previous_close"] == first["previous_close"]
-    assert len(calls) == 1
+    assert historical_suffixes == [(local(9, day=2), local(9, day=2).date() - timedelta(days=1))]
 
 
 def test_off_uses_account_midnight_and_stored_effective_instant_survives_timezone_changes(challenge_db):

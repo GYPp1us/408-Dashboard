@@ -273,15 +273,30 @@ def test_focus_kline_parameter_post_accepts_five_public_controls(authenticated_c
     }
 
 
-def test_focus_kline_get_is_read_only_for_the_derived_cache(authenticated_client):
+def test_focus_kline_get_updates_only_derived_cache(authenticated_client, monkeypatch):
+    from datetime import datetime
+    from app import routes
     from app.db import connect
 
+    monkeypatch.setattr(routes, "_now", lambda zone="UTC": datetime.fromisoformat("2026-10-03T15:00:00+08:00"))
     database_path = authenticated_client.application.config["DATABASE"]
+    source_tables = ("focus_sessions", "focus_pauses", "user_settings", "settings",
+                     "focus_kline_challenge_events", "daily_settlements")
+
+    def source_snapshot(connection):
+        return {table: [tuple(row) for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+                for table in source_tables}
+
     before = connect(database_path)
     try:
-        assert before.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'focus_klines'"
-        ).fetchone() is None
+        owner = before.execute("SELECT id FROM users WHERE role = 'site_owner'").fetchone()[0]
+        before.execute(
+            "INSERT INTO focus_sessions(user_id, subject, mode, planned_minutes, started_at, ended_at, status) "
+            "VALUES (?, 'cache read', 'focus', 60, '2026-10-01T09:00:00+08:00', '2026-10-01T10:00:00+08:00', 'completed')",
+            (owner,),
+        )
+        before.commit()
+        source_before = source_snapshot(before)
     finally:
         before.close()
 
@@ -290,9 +305,8 @@ def test_focus_kline_get_is_read_only_for_the_derived_cache(authenticated_client
 
     after = connect(database_path)
     try:
-        assert after.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'focus_klines'"
-        ).fetchone() is None
+        assert source_snapshot(after) == source_before
+        assert after.execute("SELECT COUNT(*) FROM focus_klines WHERE user_id = ?", (owner,)).fetchone()[0] >= 2
     finally:
         after.close()
 
@@ -304,6 +318,55 @@ def test_focus_kline_guest_can_read_but_cannot_change_parameters(authenticated_c
     denied = guest.post("/api/focus-kline/parameters", json={"a_low_hours": 3})
     assert denied.status_code == 403
     assert denied.get_json() == {"error": "guest_read_only"}
+
+
+def test_focus_actions_and_parameter_reads_do_not_build_history(authenticated_client, monkeypatch):
+    from app import focus_kline, routes
+
+    def history_on_response_path(*args, **kwargs):
+        raise AssertionError("focus action waited for derived history")
+
+    monkeypatch.setattr(routes, "build_cached_focus_klines", history_on_response_path)
+    monkeypatch.setattr(focus_kline, "build_focus_kline", history_on_response_path)
+    monkeypatch.setattr(focus_kline, "recompute_focus_klines", history_on_response_path)
+    assert authenticated_client.get("/api/focus-kline/settings").status_code == 200
+    changed = authenticated_client.post("/api/focus-kline/parameters", json={"a_mid_hours": 6})
+    assert changed.status_code == 200
+    assert changed.get_json()["parameters"]["a_mid_hours"] == 6
+
+    started = authenticated_client.post("/api/focus/start", json={"subject": "数学二轮", "mode": "专注"})
+    assert started.status_code == 201
+    session_id = started.get_json()["session"]["id"]
+    for paused in (True, False):
+        response = authenticated_client.post("/api/focus/pause", json={"session_id": session_id, "paused": paused})
+        assert response.status_code == 200
+    ended = authenticated_client.post("/api/focus/end", json={"session_id": session_id})
+    assert ended.status_code == 200
+    assert ended.get_json()["session"]["status"] == "completed"
+
+
+def test_settlement_cache_read_does_not_commit_a_failed_report(authenticated_client, monkeypatch):
+    from app import routes
+    from app.db import connect
+
+    started = authenticated_client.post("/api/focus/start", json={"subject": "数学二轮", "mode": "专注"})
+    assert started.status_code == 201
+    session_id = started.get_json()["session"]["id"]
+    assert authenticated_client.get("/api/focus-kline").status_code == 200
+
+    def report_failure(*args, **kwargs):
+        raise RuntimeError("synthetic report failure after index read")
+
+    monkeypatch.setattr(routes, "build_settlement_report", report_failure)
+    with pytest.raises(RuntimeError, match="synthetic report failure"):
+        authenticated_client.post("/api/daily-settlement", json={"session_id": session_id})
+    connection = connect(authenticated_client.application.config["DATABASE"])
+    try:
+        row = connection.execute("SELECT status, ended_at FROM focus_sessions WHERE id = ?", (session_id,)).fetchone()
+        assert tuple(row) == ("active", None)
+        assert connection.execute("SELECT COUNT(*) FROM daily_settlements").fetchone()[0] == 0
+    finally:
+        connection.close()
 
 
 def test_general_settings_patch_rebuilds_kline_cache(authenticated_client):
@@ -356,9 +419,9 @@ def test_kline_get_reflects_historical_source_changes_after_cache_exists(authent
     connection.commit()
     connection.close()
 
-    # A write path creates the optional cache; the GET must still use source
-    # rows so an imported/edited historical session cannot remain stale.
-    assert authenticated_client.post("/api/focus-kline/parameters", json={}).status_code == 200
+    # Warm the derived cache before an external source edit. The next read
+    # must discover that edit without requiring a write endpoint to invalidate it.
+    assert authenticated_client.get("/api/focus-kline").status_code == 200
     connection = connect(authenticated_client.application.config["DATABASE"])
     try:
         connection.execute(
