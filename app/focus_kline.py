@@ -481,10 +481,10 @@ def _load_effective_segments(
     ).fetchall()
     pauses: dict[int, list[dict[str, Any]]] = defaultdict(list)
     if rows:
-        placeholders = ",".join("?" for _ in rows)
         pause_rows = connection.execute(
-            f"SELECT session_id, started_at, ended_at FROM focus_pauses WHERE session_id IN ({placeholders}) ORDER BY started_at",
-            tuple(int(row["id"]) for row in rows),
+            "SELECT p.session_id, p.started_at, p.ended_at FROM focus_pauses p "
+            "JOIN focus_sessions s ON s.id=p.session_id WHERE s.user_id=? ORDER BY p.started_at",
+            (user_id,),
         ).fetchall()
         for pause in pause_rows:
             pauses[int(pause["session_id"])].append(dict(pause))
@@ -814,6 +814,7 @@ def build_focus_klines(
     trading_sessions: Sequence[Sequence[str | time] | Mapping[str, Any]] | None = None,
     policy: Sequence[Mapping[str, Any]] = (),
     dynamics_at: datetime | None = None,
+    end_date: date | str | None = None,
 ) -> list[dict[str, Any]]:
     """Build a complete chronological daily OHLC series from aggregated data.
 
@@ -834,7 +835,7 @@ def build_focus_klines(
     }
     first_key = min(normalized_seconds or {current.date().isoformat()})
     first_day = date.fromisoformat(first_key)
-    last_day = current.date()
+    last_day = min(current.date(), date.fromisoformat(_date_key(end_date))) if end_date is not None else current.date()
     if first_day > last_day:
         first_day = last_day
     result: list[dict[str, Any]] = []
@@ -1000,6 +1001,9 @@ def ensure_focus_kline_schema(connection: sqlite3.Connection) -> None:
             model_version TEXT NOT NULL,
             parameters_json TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            source_fingerprint TEXT NOT NULL DEFAULT '',
+            cache_fingerprint TEXT NOT NULL DEFAULT '',
+            content_fingerprint TEXT NOT NULL DEFAULT '',
             UNIQUE(user_id, trading_date)
         )
         """
@@ -1014,6 +1018,9 @@ def ensure_focus_kline_schema(connection: sqlite3.Connection) -> None:
         "lunch_gap_pct": "REAL NOT NULL DEFAULT 0",
         "trading_sessions_json": "TEXT NOT NULL DEFAULT '[]'",
         "challenge_policy_json": "TEXT NOT NULL DEFAULT '[]'",
+        "source_fingerprint": "TEXT NOT NULL DEFAULT ''",
+        "cache_fingerprint": "TEXT NOT NULL DEFAULT ''",
+        "content_fingerprint": "TEXT NOT NULL DEFAULT ''",
     }
     for name, definition in migrations.items():
         if name not in columns:
@@ -1112,6 +1119,226 @@ def recompute_focus_klines(
     return rows
 
 
+_CACHE_VERSION = "focus-history-cache-v1"
+_CANDLE_FIELDS = (
+    "open", "high", "low", "close", "previous_close", "change", "change_pct",
+    "focus_seconds", "focus_hours", "pre_open_focus_seconds", "lunch_focus_seconds",
+    "after_close_focus_seconds", "pre_open_gap_pct", "lunch_gap_pct", "status",
+    "delisted", "limit_up", "limit_down",
+)
+_CACHE_CONTENT_FIELDS = (
+    "user_id", "trading_date", *_CANDLE_FIELDS, "intraday_json", "trading_sessions_json",
+    "challenge_policy_json", "model_version", "parameters_json", "updated_at",
+    "source_fingerprint", "cache_fingerprint",
+)
+
+
+def _compact_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _fingerprint(value: Any) -> str:
+    return hashlib.sha256(_compact_json(value).encode("utf-8")).hexdigest()
+
+
+def _cache_content_fingerprint(row: Mapping[str, Any]) -> str:
+    """Check raw cached paths without inflating hundreds of historical arrays."""
+    digest = hashlib.sha256()
+    for field in _CACHE_CONTENT_FIELDS:
+        value = row[field]
+        data = (value if isinstance(value, str) else _compact_json(value)).encode("utf-8")
+        digest.update(str(len(data)).encode("ascii"))
+        digest.update(b":")
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def _cached_candle(row: Mapping[str, Any], *, intraday: bool) -> dict[str, Any]:
+    result = {field: row[field] for field in _CANDLE_FIELDS}
+    result["date"] = row["trading_date"]
+    result["delisted"] = bool(result["delisted"])
+    result["trading_sessions"] = json.loads(row["trading_sessions_json"])
+    result["intraday"] = json.loads(row["intraday_json"]) if intraday else []
+    return result
+
+
+def build_cached_focus_klines(
+    connection: sqlite3.Connection,
+    user_id: int,
+    *,
+    now: datetime | None = None,
+    timezone_name: str = DEFAULT_TIMEZONE,
+    parameters: FocusKlineParameters | Mapping[str, Any] | None = None,
+    bar_minutes: int = DEFAULT_BAR_MINUTES,
+    initial_price: float = INITIAL_INDEX,
+    trading_sessions: Sequence[Sequence[str | time] | Mapping[str, Any]] | None = None,
+    intraday_date: date | str | None = None,
+    commit: bool = True,
+) -> list[dict[str, Any]]:
+    """Reuse a validated settled prefix and rebuild only its changed suffix.
+
+    Effective source segments, rather than write counters, fingerprint each
+    day. Heartbeats and elapsed active time only affect the days they actually
+    change; old SQL edits, pause corrections, and imports are still detected.
+    Today's candle is generated from the same source snapshot but stays out of
+    the durable settled cache. A selected intraday date avoids decoding other
+    daily paths. ``intraday_date="latest_available"`` selects the latest
+    nonempty path, including yesterday before today's open; an unavailable
+    date uses that same fallback. Explicitly selecting today keeps its empty
+    pre-open path.
+
+    Cache maintenance and source reads share a SQLite transaction so another
+    worker cannot associate a stale candle with a newer source fingerprint.
+    An existing business transaction is never committed or rolled back here.
+    Owned transactions commit before today's calculation and path decoding.
+    With ``commit=False`` the caller owns the newly opened transaction too.
+    """
+    user_id = int(user_id)
+    target_zone = _zone(timezone_name)
+    current = _coerce_now(now, target_zone)
+    today = current.date()
+    today_key = today.isoformat()
+    config = _as_parameters(parameters)
+    sessions = normalize_trading_sessions(trading_sessions)
+    owned_transaction = not connection.in_transaction
+    if owned_transaction:
+        connection.execute("BEGIN IMMEDIATE")
+    connection.execute("SAVEPOINT focus_history_cache")
+    savepoint_active = True
+    try:
+        ensure_focus_kline_schema(connection)
+        segments = _load_effective_segments(connection, user_id, current, target_zone)
+        seconds_by_day, segments_by_day = group_focus_segments_by_day(segments)
+        decisions = challenge_decisions(connection, user_id)
+        policy = limit_policy(decisions)
+        if decisions:
+            first_policy_day = _coerce_datetime(decisions[0]["changed_at"], target_zone).date().isoformat()
+            seconds_by_day.setdefault(first_policy_day, 0)
+        first_key = min(min(seconds_by_day or {today_key}), today_key)
+        dynamics_at = dynamics_effective_at(connection)
+        stored = [dict(row) for row in connection.execute(
+            "SELECT * FROM focus_klines WHERE user_id=? ORDER BY trading_date", (user_id,)
+        )]
+        by_date = {row["trading_date"]: row for row in stored}
+        prefix: list[dict[str, Any]] = []
+        fingerprints: dict[str, tuple[str, str]] = {}
+        previous_close = _price(initial_price)
+        dirty_day = None
+        day = date.fromisoformat(first_key)
+        while day < today:
+            key = day.isoformat()
+            windows = trading_session_windows(day, sessions, target_zone=target_zone)
+            day_end = _day_start(day + timedelta(days=1), target_zone) - timedelta(microseconds=1)
+            source_hash = _fingerprint({
+                "seconds": seconds_by_day.get(key, 0),
+                "detail": key in segments_by_day,
+                "segments": [(start.isoformat(), end.isoformat()) for start, end in segments_by_day.get(key, ())],
+            })
+            # Cutovers after this day's close are equivalent to the legacy
+            # model; later policy decisions likewise leave the prefix intact.
+            dynamics_key = None if dynamics_at is None or dynamics_at >= windows[-1]["end"] else dynamics_at.isoformat()
+            cache_hash = _fingerprint({
+                "cache_version": _CACHE_VERSION, "model_version": MODEL_VERSION,
+                "parameters": config.to_mapping(), "bar_minutes": max(1, int(bar_minutes)),
+                "initial_price": _price(initial_price), "timezone": timezone_name,
+                "windows": [{"name": item["name"], "start": item["start"].isoformat(), "end": item["end"].isoformat()} for item in windows],
+                "policy": policy_fingerprint(policy, day_end), "dynamics_at": dynamics_key,
+            })
+            fingerprints[key] = (source_hash, cache_hash)
+            cached = by_date.get(key)
+            valid = False
+            if dirty_day is None and cached is not None:
+                try:
+                    valid = (
+                        cached["source_fingerprint"] == source_hash
+                        and cached["cache_fingerprint"] == cache_hash
+                        and cached["model_version"] == MODEL_VERSION
+                        and cached["previous_close"] == previous_close
+                        and _coerce_datetime(cached["updated_at"], target_zone) >= windows[-1]["end"]
+                        and cached["content_fingerprint"] == _cache_content_fingerprint(cached)
+                    )
+                except (TypeError, ValueError, KeyError):
+                    valid = False
+            if valid:
+                prefix.append(cached)
+                previous_close = _price(cached["close"])
+            elif dirty_day is None:
+                dirty_day = day
+            day += timedelta(days=1)
+
+        # Source deletion, a timezone change, or an earlier `now` can shrink
+        # the series. Remove only rows outside its finalized date range.
+        if any(row["trading_date"] < first_key or row["trading_date"] >= today_key for row in stored):
+            connection.execute(
+                "DELETE FROM focus_klines WHERE user_id=? AND (trading_date<? OR trading_date>=?)",
+                (user_id, first_key, today_key),
+            )
+        if dirty_day is not None:
+            dirty_key = dirty_day.isoformat()
+            suffix_seconds = {key: count for key, count in seconds_by_day.items() if dirty_key <= key < today_key}
+            suffix_seconds.setdefault(dirty_key, 0)
+            suffix = build_focus_klines(
+                suffix_seconds,
+                daily_segments={key: value for key, value in segments_by_day.items() if dirty_key <= key < today_key},
+                now=current, user_key=user_id, parameters=config, bar_minutes=bar_minutes,
+                initial_price=previous_close, trading_sessions=sessions, policy=policy,
+                dynamics_at=dynamics_at, end_date=today - timedelta(days=1),
+            )
+            columns = (*_CACHE_CONTENT_FIELDS, "content_fingerprint")
+            update_columns = [field for field in columns if field not in {"user_id", "trading_date"}]
+            query = (
+                f"INSERT INTO focus_klines ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)}) "
+                "ON CONFLICT(user_id, trading_date) DO UPDATE SET "
+                + ",".join(f"{field}=excluded.{field}" for field in update_columns)
+            )
+            writes = []
+            for candle in suffix:
+                key = candle["date"]
+                row = {field: candle[field] for field in _CANDLE_FIELDS}
+                row.update({
+                    "user_id": user_id, "trading_date": key, "delisted": int(bool(candle["delisted"])),
+                    "intraday_json": _compact_json(candle["intraday"]),
+                    "trading_sessions_json": _compact_json(candle["trading_sessions"]),
+                    "challenge_policy_json": _compact_json(policy_fingerprint(policy, _day_start(date.fromisoformat(key) + timedelta(days=1), target_zone) - timedelta(microseconds=1))),
+                    "model_version": MODEL_VERSION, "parameters_json": _compact_json(config.to_mapping()),
+                    "updated_at": current.isoformat(), "source_fingerprint": fingerprints[key][0],
+                    "cache_fingerprint": fingerprints[key][1],
+                })
+                row["content_fingerprint"] = _cache_content_fingerprint(row)
+                writes.append(tuple(row[field] for field in columns))
+                prefix.append(row)
+            connection.executemany(query, writes)
+            previous_close = suffix[-1]["close"]
+        connection.execute("RELEASE SAVEPOINT focus_history_cache")
+        savepoint_active = False
+        if owned_transaction and commit:
+            connection.commit()
+    except Exception:
+        if savepoint_active:
+            connection.execute("ROLLBACK TO SAVEPOINT focus_history_cache")
+            connection.execute("RELEASE SAVEPOINT focus_history_cache")
+        if owned_transaction:
+            connection.rollback()
+        raise
+
+    latest = build_focus_klines(
+        {today_key: seconds_by_day.get(today_key, 0)},
+        daily_segments={today_key: segments_by_day[today_key]} if today_key in segments_by_day else {},
+        now=current, user_key=user_id, parameters=config, bar_minutes=bar_minutes,
+        initial_price=previous_close, trading_sessions=sessions, policy=policy, dynamics_at=dynamics_at,
+    )[0]
+    selected = (intraday_date if intraday_date == "latest_available" else _date_key(intraday_date)) if intraday_date is not None else None
+    if selected == "latest_available" or (selected is not None and not (first_key <= selected <= today_key)):
+        selected = today_key if latest["intraday"] else next(
+            (row["trading_date"] for row in reversed(prefix) if row["intraday_json"] != "[]"), today_key,
+        )
+    candles = [_cached_candle(row, intraday=selected is None or row["trading_date"] == selected) for row in prefix]
+    if selected is not None and selected != today_key:
+        latest["intraday"] = []
+    candles.append(latest)
+    return candles
+
+
 def current_focus_state(connection: sqlite3.Connection, user_id: int) -> dict[str, bool | str]:
     """Read the user's live focus state from source rows.
 
@@ -1151,14 +1378,14 @@ def build_focus_kline(
 ) -> dict[str, Any]:
     """Compatibility facade for the standalone page/API integration.
 
-    Every call rebuilds the complete series from raw ``focus_sessions``.  The
+    Calls reuse the validated settled history from raw ``focus_sessions``. The
     result includes a compact public parameter payload and daily candles; the
     latest candle also exposes the day's intraday path for the分时 chart.
     """
 
     config = _parameters_from_settings(settings)
     sessions = trading_sessions_from_settings(settings)
-    candles = recompute_focus_klines(
+    candles = build_cached_focus_klines(
         connection,
         int(user_id),
         timezone_name=timezone_name,
@@ -1219,9 +1446,8 @@ def build_live_focus_kline(
 ) -> dict[str, Any]:
     """Return today's minute path and a bounded, client-interpolated quote.
 
-    Historical settlement comes from the derived cache. A version/parameter
-    mismatch refreshes it once; normal polls only generate missing days and
-    today's path from the cached close. No historical bars are built per tick.
+    Historical settlement uses the same source-validated cache as full chart
+    requests. Normal polls only generate today's path from the cached close.
     """
 
     current = _coerce_now(now, _zone(timezone_name))
@@ -1246,57 +1472,9 @@ def build_live_focus_kline(
                           "per_second": 0.0, "active": False},
             "model_version": MODEL_VERSION,
         }
-    ensure_focus_kline_schema(connection)
-    segments = _load_effective_segments(connection, int(user_id), current, current.tzinfo)
-    seconds_by_day, segments_by_day = group_focus_segments_by_day(segments)
-    first_source_day = min(seconds_by_day) if seconds_by_day else today.isoformat()
-    if decisions:
-        first_source_day = min(first_source_day, _coerce_datetime(decisions[0]["changed_at"], current.tzinfo).date().isoformat())
-        seconds_by_day.setdefault(first_source_day, 0)
-    cached = connection.execute(
-        "SELECT trading_date, close, model_version, parameters_json, trading_sessions_json, challenge_policy_json, updated_at FROM focus_klines "
-        "WHERE user_id = ? AND trading_date < ? ORDER BY trading_date DESC LIMIT 1",
-        (int(user_id), today.isoformat()),
-    ).fetchone()
-    expected_parameters = config.to_mapping()
-    try:
-        cached_windows = json.loads(cached["trading_sessions_json"]) if cached else []
-        expected_windows = [
-            {"name": window["name"], "start": window["start"].isoformat(), "end": window["end"].isoformat()}
-            for window in trading_session_windows(date.fromisoformat(cached["trading_date"]), sessions, target_zone=current.tzinfo)
-        ] if cached else []
-        cache_matches = (
-            cached is not None
-            and cached["model_version"] == MODEL_VERSION
-            and json.loads(cached["parameters_json"]) == expected_parameters
-            and cached_windows == expected_windows
-            and _coerce_datetime(cached["updated_at"], current.tzinfo) >= trading_session_windows(date.fromisoformat(cached["trading_date"]), sessions, target_zone=current.tzinfo)[-1]["end"]
-            and json.loads(cached["challenge_policy_json"]) == policy_fingerprint(policy, _day_start(date.fromisoformat(cached["trading_date"]) + timedelta(days=1), current.tzinfo) - timedelta(microseconds=1))
-        )
-    except (TypeError, ValueError, json.JSONDecodeError):
-        cache_matches = False
-    if (cached is not None and not cache_matches) or (cached is None and first_source_day < today.isoformat()):
-        recompute_focus_klines(
-            connection, int(user_id), now=current, timezone_name=timezone_name,
-            parameters=config, trading_sessions=sessions,
-        )
-        cached = connection.execute(
-            "SELECT trading_date, close FROM focus_klines WHERE user_id = ? AND trading_date < ? "
-            "ORDER BY trading_date DESC LIMIT 1",
-            (int(user_id), today.isoformat()),
-        ).fetchone()
-
-    first_day = date.fromisoformat(cached["trading_date"]) + timedelta(days=1) if cached else today
-    relevant_seconds = {day: count for day, count in seconds_by_day.items() if day >= first_day.isoformat()}
-    relevant_seconds.setdefault(first_day.isoformat(), 0)
-    relevant_segments = {day: value for day, value in segments_by_day.items() if day >= first_day.isoformat()}
-    rows = build_focus_klines(
-        relevant_seconds, daily_segments=relevant_segments, now=current,
-        user_key=int(user_id),
-        parameters=config, initial_price=float(cached["close"]) if cached else INITIAL_INDEX,
-        trading_sessions=sessions,
-        policy=policy,
-        dynamics_at=dynamics_effective_at(connection),
+    rows = build_cached_focus_klines(
+        connection, int(user_id), now=current, timezone_name=timezone_name,
+        parameters=config, trading_sessions=sessions, intraday_date=today,
     )
     latest = rows[-1]
     path = latest["intraday"]
@@ -1397,6 +1575,7 @@ __all__ = [
     "PRICE_TICK",
     "SETTING_KEYS",
     "build_focus_kline",
+    "build_cached_focus_klines",
     "build_focus_klines",
     "build_live_focus_kline",
     "close_return",
