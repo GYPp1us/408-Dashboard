@@ -25,7 +25,8 @@
       .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
       .sort((a, b) => a.start - b.start);
     if (!windows.length) return null;
-    return { date, offset, windows, open:windows[0].start, close:windows.at(-1).end };
+    return { date, offset, windows, open:windows[0].start, close:windows.at(-1).end,
+      asOf:parse(reference), receivedAt:Date.now() / 1000 };
   }
   function sessionIndex(session, time, includeClose = true) {
     return session?.windows.findIndex((window) => time >= window.start && (includeClose ? time <= window.end : time < window.end)) ?? -1;
@@ -76,6 +77,25 @@
       get events() { return events; },
     };
   }
+  // Plot market breaks without changing the price samples used for statistics.
+  // Hold the closing quote across the break, then jump at the reopening x.
+  function breakSegments(session, points, asOf = Date.now() / 1000) {
+    const segments = [];
+    if (!session || !Number.isFinite(asOf)) return segments;
+    for (let index = 0; index < session.windows.length - 1; index += 1) {
+      const end = session.windows[index].end, start = session.windows[index + 1].start;
+      if (start <= end || asOf <= end) continue;
+      const closing = points.findLast((point) => point.time === end && Number.isFinite(point.value));
+      if (!closing) continue;
+      const segment = [{ time:end, value:closing.value }, { time:Math.min(asOf, start), value:closing.value }];
+      if (asOf >= start) {
+        const opening = points.find((point) => point.time === start && Number.isFinite(point.value));
+        if (opening && opening.value !== closing.value) segment.push({ time:start, value:opening.value });
+      }
+      segments.push(segment);
+    }
+    return segments;
+  }
   function project(snapshot, session, nowMs = Date.now()) {
     if (!snapshot) return null;
     const generated = parse(snapshot.generated_at || snapshot.updated_at);
@@ -97,7 +117,7 @@
     const value = Math.max(finite(snapshot.limit_down, -Infinity), Math.min(finite(snapshot.limit_up, Infinity), raw));
     return { value, now, time:Math.floor(projectedAt), active:active && age <= 20, stale:age > 20, group };
   }
-  const pin = (chart, session) => { if (session) chart.timeScale().setVisibleRange({ from:session.open, to:session.close }); };
+  const pin = (chart, session) => { if (session) { chart.setMarket?.(session); chart.timeScale().setVisibleRange({ from:session.open, to:session.close }); } };
   const coordinate = (chart, time) => chart.timeScale().timeToCoordinate(time);
 
   // Lightweight Charts places timestamps on consecutive business indexes.
@@ -163,6 +183,14 @@
       }
       svg.append(label(g.right, g.height - 7, clock(range.to, offset), "end"));
       const plot = node("g", { "clip-path":`url(#${clipId})` }), markerLayer = node("g");
+      const visibleLines = lines.filter((line) => line.options.visible !== false && line.options.color !== "transparent");
+      const breakPoints = visibleLines.flatMap((line) => line.data);
+      const asOf = Number.isFinite(session?.asOf) ? session.asOf + Math.max(0, Date.now() / 1000 - session.receivedAt) : Date.now() / 1000;
+      breakSegments(session, breakPoints, asOf).forEach((points) => {
+        const line = visibleLines.find((item) => item.data.some((point) => point.time === points[0].time));
+        const path = points.map((point, index) => `${index ? "L" : "M"}${xAt(point.time).toFixed(3)},${yAt(point.value).toFixed(3)}`).join(" ");
+        plot.append(node("path", { class:"market-break-path", d:path, fill:"none", stroke:line?.options.color || "#8067b3", "stroke-width":Math.min(2, line?.options.lineWidth || 2), "stroke-linejoin":"miter", "stroke-linecap":"butt" }));
+      });
       lines.forEach((line) => {
         if (line.options.visible === false) return;
         const points = line.data.filter((point) => Number.isFinite(point.value));
@@ -244,5 +272,5 @@
     };
   }
   const createSeriesMarkers = (series, markers = []) => { series.setMarkers(markers); return { setMarkers:(next) => series.setMarkers(next) }; };
-  window.IndexMarket = { parse, offsetOf, clock, clockSeconds, dateAt, market, sessionIndex, samples, timeline, project, pin, coordinate, createChart, createSeriesMarkers };
+  window.IndexMarket = { parse, offsetOf, clock, clockSeconds, dateAt, market, sessionIndex, samples, timeline, breakSegments, project, pin, coordinate, createChart, createSeriesMarkers };
 })();
