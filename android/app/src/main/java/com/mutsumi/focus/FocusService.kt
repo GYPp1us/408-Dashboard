@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.util.Log
 import java.util.concurrent.Executors
 
 class FocusService : Service() {
@@ -26,9 +27,6 @@ class FocusService : Service() {
     private var liveSessionId = 0L
     private var wakeLock: PowerManager.WakeLock? = null
     private var destroyed = false
-    private val idleStop = Runnable {
-        if (store.read().mode in setOf(FocusMode.IDLE, FocusMode.REST)) stopRuntime(removeNotification = true)
-    }
 
     private val tick = object : Runnable {
         override fun run() {
@@ -55,6 +53,20 @@ class FocusService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val state = store.read()
+        // A previously accepted foreground start can arrive after an idle
+        // sync, or take an action branch that immediately stops the service.
+        // Fulfil the platform contract before either dispatch or teardown.
+        val operation = when {
+            state.mode in setOf(FocusMode.IDLE, FocusMode.REST, FocusMode.ENDED) -> OriginOsAtomicPublisher.AtomicOperation.END
+            liveSessionId != state.sessionId -> OriginOsAtomicPublisher.AtomicOperation.CREATE
+            else -> OriginOsAtomicPublisher.AtomicOperation.UPDATE
+        }
+        if (!publishLive(state, operation)) return START_NOT_STICKY
+        if (operation == OriginOsAtomicPublisher.AtomicOperation.CREATE) liveSessionId = state.sessionId
+        if (state.mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
+            stopRuntime(removeNotification = true)
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_PAUSE -> executeRemoteAction(state, RemoteAction.PAUSE)
             ACTION_RESUME -> executeRemoteAction(state, RemoteAction.RESUME)
@@ -87,13 +99,11 @@ class FocusService : Service() {
 
     private fun applyState(state: FocusRuntimeState) {
         handler.removeCallbacks(tick)
-        handler.removeCallbacks(idleStop)
         if (currentReminder != null &&
             (reminderSessionId != state.sessionId || currentReminder != dueNow(state)?.kind)
         ) dismissReminder()
         if (state.mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
-            publishLive(state, OriginOsAtomicPublisher.AtomicOperation.END)
-            handler.postDelayed(idleStop, 350)
+            stopRuntime(removeNotification = true)
             return
         }
         if (state.mode == FocusMode.ENDED && store.endedAcknowledgedCount() >= 3) {
@@ -106,17 +116,21 @@ class FocusService : Service() {
         } else {
             OriginOsAtomicPublisher.AtomicOperation.UPDATE
         }
-        publishLive(state, if (state.mode == FocusMode.ENDED) OriginOsAtomicPublisher.AtomicOperation.END else operation)
+        if (!publishLive(state, if (state.mode == FocusMode.ENDED) OriginOsAtomicPublisher.AtomicOperation.END else operation)) return
         checkReminder(state)
         handler.postDelayed(tick, TICK_MS)
     }
 
-    private fun publishLive(state: FocusRuntimeState, operation: OriginOsAtomicPublisher.AtomicOperation) {
-        val notification = publisher.liveNotification(state, operation)
+    private fun publishLive(state: FocusRuntimeState, operation: OriginOsAtomicPublisher.AtomicOperation): Boolean {
         try {
-            startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
-        } catch (_: Exception) {
-            notificationManager.notify(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
+            startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, publisher.liveNotification(state, operation))
+            return true
+        } catch (error: Exception) {
+            // A plain notification cannot discharge a foreground-start
+            // obligation. Cancel the runtime instead of leaving its watchdog.
+            Log.w("FocusService", "Foreground promotion failed; stopping runtime", error)
+            stopRuntime(removeNotification = true)
+            return false
         }
     }
 
@@ -153,7 +167,7 @@ class FocusService : Service() {
     private fun executeRemoteAction(state: FocusRuntimeState, action: RemoteAction) {
         if (state.sessionId <= 0) { applyState(state); return }
         val requestedRevision = store.transitionRevision()
-        publishLive(state, OriginOsAtomicPublisher.AtomicOperation.UPDATE)
+        if (!publishLive(state, OriginOsAtomicPublisher.AtomicOperation.UPDATE)) return
         networkExecutor.execute {
             val result = when (action) {
                 RemoteAction.PAUSE -> FocusApi.setPaused(state, true)
@@ -283,6 +297,7 @@ class FocusService : Service() {
         dismissReminder()
         releaseWakeLock()
         stopForeground(if (removeNotification) STOP_FOREGROUND_REMOVE else STOP_FOREGROUND_DETACH)
+        if (removeNotification) notificationManager.cancel(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
         stopSelf()
     }
 
@@ -305,6 +320,10 @@ class FocusService : Service() {
 
         fun sync(context: Context, state: FocusRuntimeState) {
             FocusStateStore(context).write(state)
+            if (state.mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
+                stopAndCancel(context)
+                return
+            }
             start(context, ACTION_SYNC)
         }
 
@@ -312,6 +331,10 @@ class FocusService : Service() {
             // Identity loss is not a completed session and must not schedule
             // ended reminders or restart an idle foreground service.
             FocusStateStore(context).write(FocusRuntimeState())
+            stopAndCancel(context)
+        }
+
+        private fun stopAndCancel(context: Context) {
             context.stopService(Intent(context, FocusService::class.java))
             val notifications = context.getSystemService(NotificationManager::class.java)
             notifications.cancel(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
@@ -329,7 +352,7 @@ class FocusService : Service() {
             if (notificationIntent.action != ACTION_OPEN_FROM_REMINDER) return
             val state = FocusStateStore(context).read()
             if (state.mode !in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) return
-            context.startForegroundService(Intent(context, FocusService::class.java).apply {
+            start(context, Intent(context, FocusService::class.java).apply {
                 action = ACTION_ACK_REMINDER
                 putExtra(EXTRA_REMINDER_KIND, notificationIntent.getIntExtra(EXTRA_REMINDER_KIND, -1))
                 putExtra(EXTRA_SESSION_ID, notificationIntent.getLongExtra(EXTRA_SESSION_ID, -1))
@@ -337,8 +360,24 @@ class FocusService : Service() {
         }
 
         private fun start(context: Context, action: String) {
-            val intent = Intent(context, FocusService::class.java).setAction(action)
-            context.startForegroundService(intent)
+            start(context, Intent(context, FocusService::class.java).setAction(action))
+        }
+
+        private fun start(context: Context, intent: Intent) {
+            // Reminder/action dispatch may race a newer idle bridge sync.
+            if (FocusStateStore(context).read().mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
+                stopAndCancel(context)
+                return
+            }
+            try {
+                context.startForegroundService(intent)
+            } catch (error: IllegalStateException) {
+                Log.w("FocusService", "Foreground start rejected; stopping runtime", error)
+                stopAndCancel(context)
+            } catch (error: SecurityException) {
+                Log.w("FocusService", "Foreground start denied; stopping runtime", error)
+                stopAndCancel(context)
+            }
         }
     }
 }

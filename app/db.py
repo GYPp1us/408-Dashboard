@@ -9,6 +9,7 @@ from typing import Any
 
 
 REPORTER_HEARTBEAT_TIMEOUT_SECONDS = 45
+FOCUS_DYNAMICS_EFFECTIVE_KEY = "focus_kline_dynamics_v041_effective_at"
 
 
 SCHEMA = """
@@ -912,6 +913,10 @@ def init_db(connection: sqlite3.Connection, *, allow_subject_migration_review: b
         "INSERT OR IGNORE INTO settings(key, value) VALUES ('migration_instance_id', ?)",
         (secrets.token_hex(16),),
     )
+    # A durable cutover keeps old chart points on their original dynamics.
+    # Settings are part of the existing database export and survive restart.
+    connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
+                       (FOCUS_DYNAMICS_EFFECTIVE_KEY, datetime.now(timezone.utc).isoformat()))
     connection.commit()
 
 

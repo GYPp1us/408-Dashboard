@@ -23,6 +23,7 @@ from .focus_kline import (
     build_focus_kline,
     build_live_focus_kline,
     current_focus_state,
+    dynamics_effective_at,
     group_focus_segments_by_day,
     trading_sessions_from_settings,
     validate_setting_payload,
@@ -259,6 +260,7 @@ def _focus_kline_payload(
             parameters=parameters,
             trading_sessions=trading_sessions_from_settings(settings),
             policy=limit_policy(decisions),
+            dynamics_at=dynamics_effective_at(connection),
         )
     latest = candles[-1] if candles else None
     selected_intraday = next((row for row in candles if row["date"] == intraday_date), None) if intraday_date else None

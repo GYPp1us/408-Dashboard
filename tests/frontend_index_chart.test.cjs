@@ -72,7 +72,7 @@ test('home appends one-second points and briefly flashes the quote without reloa
   assert.equal(env.get('[data-index-points]').textContent, '100.003');
   assert.equal(env.get('[data-index-points]').classList.contains('is-tick-up'), true);
   assert.equal(env.calls.length, initialCalls);
-  assert.equal(env.intervals.find(item => item.delay === 15000).delay, 15000);
+  assert.equal(env.intervals.filter(item => item.delay === 1000).length, 2);
 });
 
 test('home freezes a lost-network projection after twenty seconds and keeps the existing path', async () => {

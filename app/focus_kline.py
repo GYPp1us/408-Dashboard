@@ -30,7 +30,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .db import REPORTER_HEARTBEAT_TIMEOUT_SECONDS
+from .db import FOCUS_DYNAMICS_EFFECTIVE_KEY, REPORTER_HEARTBEAT_TIMEOUT_SECONDS
 from .focus_challenge import CHALLENGE_LIMIT, challenge_decisions, challenge_payload, limit_at, limit_policy, policy_fingerprint
 
 
@@ -67,6 +67,19 @@ LIMIT_TOUCH_PROBABILITY = 0.12
 LIMIT_REBOUND_DECAY = 0.72
 LIMIT_REBOUND_NOISE = 0.0016
 NOISE_CLOSE_TAPER_FRACTION = 0.08
+DYNAMICS_SCALE = 0.90
+
+
+def dynamics_effective_at(connection: sqlite3.Connection) -> datetime | None:
+    """Read the durable rollout boundary without writing from chart GETs."""
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").fetchone():
+        return None
+    row = connection.execute("SELECT value FROM settings WHERE key=?", (FOCUS_DYNAMICS_EFFECTIVE_KEY,)).fetchone()
+    try:
+        value = datetime.fromisoformat(row[0]) if row else None
+        return value if value and value.tzinfo else None
+    except (TypeError, ValueError):
+        return None
 
 # Settings are persisted by the existing user-settings store.  The values in
 # storage use percentage points for K values because that is friendlier to a
@@ -517,6 +530,24 @@ def _seed_for(user_key: int | str, day_key: str) -> int:
     return int.from_bytes(digest[:8], "big")
 
 
+def _live_slope(path: Sequence[Mapping[str, Any]], reference_price: float) -> float:
+    """Continue recent ordinary motion, without repeating a discrete shock."""
+    if len(path) < 2 or path[-1].get("floor_reset") or path[-1].get("limit_policy_changed"):
+        return 0.0
+    session = path[-1]["session"]
+    for index in range(len(path) - 1, max(0, len(path) - 13), -1):
+        point, previous = path[index], path[index - 1]
+        if point["session"] != session or previous["session"] != session:
+            break
+        if point.get("changed") or point.get("floor_reset") or point.get("limit_policy_changed"):
+            continue
+        elapsed = (datetime.fromisoformat(point["timestamp"]) - datetime.fromisoformat(previous["timestamp"])).total_seconds()
+        move = point["price"] - previous["price"]
+        if elapsed > 0 and abs(move) <= reference_price * 0.005:
+            return round(move / elapsed * 0.35, 9)
+    return 0.0
+
+
 def _reflect_limit_price(
     value: float,
     *,
@@ -581,6 +612,7 @@ def _intraday_path(
     complete_day: bool,
     aggregate_focus_seconds: int | None,
     policy: Sequence[Mapping[str, Any]] = (),
+    dynamics_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Generate points only inside market windows.
 
@@ -684,13 +716,16 @@ def _intraday_path(
             noise *= max(0.03, 1.0 - NOISE_MEAN_REVERSION) ** bar_units
             switch_shock = 0.0
             if index > 0:
-                momentum += sign * MOMENTUM_IMPULSE * bar_units
+                # Scale only newly introduced pressure/shocks. The pre-cutover
+                # state and RNG stream remain intact, with no policy price jump.
+                scale = DYNAMICS_SCALE if dynamics_at and at > dynamics_at else 1.0
+                momentum += sign * MOMENTUM_IMPULSE * bar_units * scale
                 if changed:
-                    momentum += sign * MOMENTUM_SWITCH_IMPULSE
-                    switch_shock = NOISE_SWITCH_VOLATILITY
+                    momentum += sign * MOMENTUM_SWITCH_IMPULSE * scale
+                    switch_shock = NOISE_SWITCH_VOLATILITY * scale
                 noise += rng.gauss(
                     0.0,
-                    NOISE_VOLATILITY * math.sqrt(bar_units) + switch_shock,
+                    NOISE_VOLATILITY * math.sqrt(bar_units) * scale + switch_shock,
                 )
 
             if index == 0:
@@ -778,6 +813,7 @@ def build_focus_klines(
     initial_price: float = INITIAL_INDEX,
     trading_sessions: Sequence[Sequence[str | time] | Mapping[str, Any]] | None = None,
     policy: Sequence[Mapping[str, Any]] = (),
+    dynamics_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Build a complete chronological daily OHLC series from aggregated data.
 
@@ -862,6 +898,7 @@ def build_focus_klines(
             complete_day=complete_day,
             aggregate_focus_seconds=None if has_segment_detail else focus_seconds,
             policy=policy,
+            dynamics_at=dynamics_at,
         )
         close = _price(path[-1]["price"]) if path else open_price
         if complete_day:
@@ -1024,6 +1061,7 @@ def recompute_focus_klines(
         initial_price=initial_price,
         trading_sessions=trading_sessions,
         policy=policy,
+        dynamics_at=dynamics_effective_at(connection),
     )
     ensure_focus_kline_schema(connection)
     connection.execute("DELETE FROM focus_klines WHERE user_id = ?", (int(user_id),))
@@ -1258,6 +1296,7 @@ def build_live_focus_kline(
         parameters=config, initial_price=float(cached["close"]) if cached else INITIAL_INDEX,
         trading_sessions=sessions,
         policy=policy,
+        dynamics_at=dynamics_effective_at(connection),
     )
     latest = rows[-1]
     path = latest["intraday"]
@@ -1265,14 +1304,8 @@ def build_live_focus_kline(
     focus = current_focus_state(connection, int(user_id))
     quote = path[-1] if path else {"timestamp": current.isoformat(), "price": latest["open"]}
     per_second = 0.0
-    if market_active and len(path) >= 2 and not quote.get("changed") and not quote.get("floor_reset") and not quote.get("limit_policy_changed"):
-        previous = path[-2]
-        elapsed = (datetime.fromisoformat(quote["timestamp"]) - datetime.fromisoformat(previous["timestamp"])).total_seconds()
-        move = quote["price"] - previous["price"]
-        # Extrapolate only ordinary minute motion. A state-switch shock or
-        # closing reset is a discrete event and must never repeat each second.
-        if quote["session"] == previous["session"] and elapsed > 0 and abs(move) <= latest["previous_close"] * 0.005:
-            per_second = round(move / elapsed * 0.35, 9)
+    if market_active:
+        per_second = _live_slope(path, latest["previous_close"])
     return {
         "challenge": challenge,
         "generated_at": current.isoformat(),
@@ -1284,6 +1317,7 @@ def build_live_focus_kline(
         "limit_down": latest["limit_down"],
         "limit_up": latest["limit_up"],
         "today_focus_seconds": latest["focus_seconds"],
+        "today": {key:latest[key] for key in ("date", "open", "high", "low", "close", "trading_sessions")},
         "market_active": market_active,
         "market_status": latest["status"],
         "status": focus["state"],

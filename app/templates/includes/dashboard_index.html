@@ -1,7 +1,8 @@
 <div id="activity-index-view" class="activity-view" data-activity-view-panel="index">
   <section class="home-index" data-detail-kind="index" data-detail-key="current" aria-label="专注指数">
-    <div class="home-index-quote" data-tooltip-target="#index-data-note" tabindex="0"><strong data-index-points>—</strong><span data-index-change>等待行情</span><span class="index-challenge-badge" data-index-challenge-badge hidden></span><span id="index-data-note" data-index-updated class="sr-only" role="status">正在读取指数</span></div>
+    <div class="home-index-quote" data-tooltip-target="#index-data-note" tabindex="0"><strong data-index-points>—</strong><span data-index-change>等待行情</span><span data-index-percent></span><span class="index-challenge-badge" data-index-challenge-badge hidden></span><span id="index-data-note" data-index-updated class="sr-only" role="status">正在读取指数</span></div>
     <div class="home-index-metrics"><div><span>今日专注</span><strong data-index-focus>—</strong></div><div><span>当前状态</span><strong data-index-status>读取中</strong></div></div>
+    <div class="home-index-metrics home-index-session-metrics"><div><span>高</span><strong data-index-high>—</strong></div><div><span>低</span><strong data-index-low>—</strong></div><div><span>开</span><strong data-index-open>—</strong></div><div data-tooltip="均价按当日交易时段的行情时间加权，排除午休；盘中包含当前秒级报价" tabindex="0"><span>均</span><strong data-index-average>—</strong></div></div>
     <div class="home-index-chart-wrap"><div class="home-index-chart" data-index-chart role="img" aria-label="专注指数交易时段分时图，虚线标记当前时间" data-tooltip="横轴固定展示配置的开盘至收盘时间，保留午休间隔；盘中逐秒更新，可触摸或悬停查看时刻与点位" tabindex="0"></div><p class="home-index-empty" data-index-empty hidden>暂无分时记录</p></div>
     <footer class="home-index-foot"><button type="button" data-index-retry hidden>重试</button></footer>
   </section>
