@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 import re
 
@@ -29,6 +30,7 @@ from .focus_kline import (
 from .focus_reporter import ReporterError, apply_frame, authenticate_reporter, connection_details
 from .focus_challenge import account_now, challenge_decisions, challenge_payload, limit_policy, set_challenge
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
+from .settlement_report import build_settlement_report
 
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -632,8 +634,9 @@ def register_routes(app):
     def dashboard_api():
         connection = connect(app.config["DATABASE"])
         viewer_id = _viewer_user_id(connection)
-        connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active' AND reporter_source IS NULL AND user_id = ?", (_now("UTC").isoformat(), viewer_id))
-        connection.commit()
+        if not is_guest():
+            connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active' AND reporter_source IS NULL AND user_id = ?", (_now("UTC").isoformat(), current_user_id()))
+            connection.commit()
         settings = get_settings(connection, viewer_id)
         now = _now(settings.get("timezone", "Asia/Shanghai"))
         try:
@@ -667,8 +670,6 @@ def register_routes(app):
                 "daily_settlement": daily_settlement,
                 "can_settle_today": bool(
                     not is_guest()
-                    and windows["library"]["state"] == "complete"
-                    and active_row is None
                     and daily_settlement is None
                 ),
                 "windows": windows,
@@ -846,6 +847,20 @@ def register_routes(app):
     @app.post("/api/daily-settlement")
     @user_required
     def settle_today():
+        requested = request.get_json(silent=True)
+        if not isinstance(requested, dict):
+            return jsonify(error="json_object_required"), 400
+        expected_date = requested.get("expected_date")
+        if expected_date is not None:
+            try:
+                if not isinstance(expected_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expected_date):
+                    raise ValueError
+                datetime.strptime(expected_date, "%Y-%m-%d")
+            except ValueError:
+                return jsonify(error="invalid_settlement_date"), 400
+        if "session_id" in requested and requested["session_id"] is not None:
+            if type(requested["session_id"]) is not int or requested["session_id"] <= 0:
+                return jsonify(error="invalid_session_id"), 400
         connection = connect(app.config["DATABASE"])
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -853,22 +868,37 @@ def register_routes(app):
             settings = get_settings(connection, user_id)
             now = _now(settings.get("timezone", "Asia/Shanghai"))
             settlement_date = now.date().isoformat()
-            existing = get_daily_settlement(connection, user_id, settlement_date)
+            # A delayed retry for yesterday must return yesterday's immutable
+            # report without ending a new session or settling another day.
+            existing = get_daily_settlement(connection, user_id, expected_date or settlement_date)
             if existing:
                 connection.commit()
                 existing_sessions = _focus_sessions(connection, now, _pause_map(connection), user_id)
-                return jsonify(settlement=existing, leaderboard=focus_leaderboard(existing_sessions, now), idempotent=True), 200
-            library_window = calculate_window(now, settings["library_open"], settings["library_close"])
+                return jsonify(
+                    settlement=existing, report=existing["report"], ended_session=None,
+                    focus_state=current_focus_state(connection, user_id),
+                    leaderboard=focus_leaderboard(existing_sessions, now), idempotent=True,
+                ), 200
+            if expected_date is not None and expected_date != settlement_date:
+                connection.rollback()
+                return jsonify(error="settlement_date_changed", current_date=settlement_date), 409
             active = connection.execute(
-                "SELECT id FROM focus_sessions WHERE status = 'active' AND user_id = ? LIMIT 1",
+                "SELECT * FROM focus_sessions WHERE status = 'active' AND user_id = ? ORDER BY id DESC LIMIT 1",
                 (user_id,),
             ).fetchone()
-            if library_window["state"] != "complete":
+            if "session_id" in requested and requested["session_id"] != (int(active["id"]) if active else None):
                 connection.rollback()
-                return jsonify(error="settlement_not_available"), 409
+                return jsonify(error="focus_session_changed"), 409
+            ended_session_id = None
             if active:
-                connection.rollback()
-                return jsonify(error="focus_still_active"), 409
+                ended_at = now.astimezone(timezone.utc)
+                # Closing a reporter-backed row removes its live timeout cap.
+                # Preserve that same cap in the durable end timestamp.
+                if active["reporter_source"] and active["last_foreground_at"]:
+                    last_seen = datetime.fromisoformat(active["last_foreground_at"]).astimezone(timezone.utc)
+                    ended_at = min(ended_at, last_seen + timedelta(seconds=REPORTER_HEARTBEAT_TIMEOUT_SECONDS))
+                ended_session_id = int(active["id"])
+                finish_focus_session(connection, ended_session_id, ended_at.isoformat(), "daily_settlement")
             pauses = _pause_map(connection)
             focus_sessions = _focus_sessions(connection, now, pauses, user_id)
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -883,7 +913,7 @@ def register_routes(app):
             payload = {
                 "user_id": user_id,
                 "settlement_date": settlement_date,
-                "settled_at": _now("UTC").isoformat(),
+                "settled_at": now.astimezone(timezone.utc).isoformat(),
                 "total_seconds": today_seconds,
                 "yesterday_seconds": yesterday_seconds,
                 "delta_seconds": today_seconds - yesterday_seconds,
@@ -893,26 +923,63 @@ def register_routes(app):
                 "top_subject": top_subject,
                 "top_subject_seconds": top_subject_seconds,
             }
+            leaderboard = focus_leaderboard(focus_sessions, now)
+            user = get_user(connection, user_id)
+            report = build_settlement_report(
+                payload, timezone_name=settings.get("timezone", "Asia/Shanghai"),
+                username=user["username"] if user else None, today_rows=today_rows,
+                subject_names={row["id"]: row["name"] for row in list_subjects(connection, user_id)},
+                leaderboard=leaderboard,
+                index_payload=_focus_kline_payload(connection, user_id, settings, now),
+            )
             cursor = connection.execute(
                 """INSERT INTO daily_settlements(
                     user_id, settlement_date, settled_at, total_seconds, yesterday_seconds,
                     delta_seconds, target_seconds, completion, session_count,
-                    top_subject, top_subject_seconds
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                tuple(payload[key] for key in (
+                    top_subject, top_subject_seconds, report_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (*tuple(payload[key] for key in (
                     "user_id", "settlement_date", "settled_at", "total_seconds", "yesterday_seconds",
                     "delta_seconds", "target_seconds", "completion", "session_count",
                     "top_subject", "top_subject_seconds",
-                )),
+                )), json.dumps(report, ensure_ascii=False, separators=(",", ":"))),
             )
+            ended_session = _row(connection, ended_session_id, now) if ended_session_id is not None else None
             connection.commit()
             payload["id"] = cursor.lastrowid
-            return jsonify(settlement=payload, leaderboard=focus_leaderboard(focus_sessions, now)), 201
-        except sqlite3.IntegrityError:
+            payload["report"] = report
+            _refresh_focus_kline(connection, user_id, settings)
+            return jsonify(
+                settlement=payload, report=report, ended_session=ended_session,
+                focus_state={"state": "rest", "is_focusing": False, "is_paused": False},
+                leaderboard=leaderboard, idempotent=False,
+            ), 201
+        except Exception:
             connection.rollback()
-            existing = get_daily_settlement(connection, current_user_id(), settlement_date)
-            existing_sessions = _focus_sessions(connection, now, _pause_map(connection), current_user_id())
-            return jsonify(settlement=existing, leaderboard=focus_leaderboard(existing_sessions, now), idempotent=True), 200
+            raise
+        finally:
+            connection.close()
+
+    @app.get("/api/daily-settlement/report")
+    @login_required
+    def daily_settlement_report():
+        connection = connect(app.config["DATABASE"])
+        try:
+            viewer_id = _viewer_user_id(connection)
+            settings = get_settings(connection, viewer_id)
+            settlement_date = request.args.get("date", _now(settings.get("timezone", "Asia/Shanghai")).date().isoformat())
+            try:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", settlement_date):
+                    raise ValueError
+                datetime.strptime(settlement_date, "%Y-%m-%d")
+            except ValueError:
+                return jsonify(error="invalid_settlement_date"), 400
+            settlement = get_daily_settlement(connection, viewer_id, settlement_date)
+            if not settlement:
+                return jsonify(error="daily_settlement_not_found"), 404
+            response = jsonify(settlement=settlement, report=settlement["report"])
+            response.headers["Cache-Control"] = "no-store"
+            return response
         finally:
             connection.close()
 

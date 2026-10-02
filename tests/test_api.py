@@ -247,13 +247,14 @@ def test_daily_settlement_snapshots_seven_hour_goal_and_is_idempotent(authentica
     assert blocked.get_json() == {"error": "daily_focus_already_settled"}
 
 
-def test_daily_settlement_rejects_an_active_focus(authenticated_client):
+def test_daily_settlement_ends_an_active_focus(authenticated_client):
     authenticated_client.patch("/api/settings", json={"library_open": "00:00", "library_close": "00:01"})
     started = authenticated_client.post("/api/focus/start", json={"subject": "数学二轮", "mode": "专注"}).get_json()["session"]
     response = authenticated_client.post("/api/daily-settlement", json={})
-    assert response.status_code == 409
-    assert response.get_json() == {"error": "focus_still_active"}
-    authenticated_client.post("/api/focus/end", json={"session_id": started["id"]})
+    assert response.status_code == 201
+    assert response.get_json()["ended_session"]["id"] == started["id"]
+    assert response.get_json()["ended_session"]["ended_reason"] == "daily_settlement"
+    assert authenticated_client.get("/api/focus").get_json()["active"] is None
 
 
 def test_focus_pause_resume_and_lock_are_persisted(authenticated_client):

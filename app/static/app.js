@@ -249,6 +249,7 @@
     setSecondTask("stateOverlay", (now) => {
       $("#focus-state-overlay-timer").textContent = formatSeconds(Math.max(0, Math.floor((now - startedAt) / 1000)));
     });
+    initDragSettlement();
   }
 
   function startRest() {
@@ -278,8 +279,12 @@
   function bindFocusStateOverlay() {
     document.querySelectorAll("[data-start-rest]").forEach((button) => button.addEventListener("click", startRest));
     const overlay = $("#focus-state-overlay");
-    overlay?.addEventListener("click", exitFocusStateOverlay);
+    overlay?.addEventListener("click", (event) => {
+      if (event.target.closest?.("[data-settle-today]")) return;
+      exitFocusStateOverlay();
+    });
     overlay?.addEventListener("keydown", (event) => {
+      if (event.target.closest?.("[data-settle-today]")) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         exitFocusStateOverlay();
@@ -363,8 +368,8 @@
       $("#exam-days").textContent = `${Math.floor(value / 86400)} 天`;
       $("#exam-clock").textContent = formatSeconds(value % 86400);
       const todaySeconds = Number(today.seconds || 0) + activeExtraSeconds(active, todayFetchedAt, now);
-      $("#today-study").textContent = `${formatSeconds(todaySeconds)} / 07:00`;
-      $("#today-progress").textContent = `完成度 ${Math.min(100, Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 100))}%`;
+      $("#today-study")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 07:00`));
+      $("#today-progress")?.replaceChildren(document.createTextNode(`完成度 ${Math.min(100, Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 100))}%`));
       $("#focus-today")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 07:00`));
       $("#guest-today-total")?.replaceChildren(document.createTextNode(formatSeconds(todaySeconds)));
       $("#guest-today-target")?.replaceChildren(document.createTextNode(`7 小时目标 · ${Math.min(100, Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 100))}%`));
@@ -854,8 +859,10 @@
     target.innerHTML = entries.map((entry) => {
       if (entry.isGap) return '<div class="focus-leaderboard-gap" aria-hidden="true">···</div>';
       const isToday = entry.date === today.date;
+      const podium = isToday && Number(entry.rank) >= 1 && Number(entry.rank) <= 3;
       const gapText = entry.rank === 1 ? "榜首" : `−${formatSeconds(Number(entry.gap_to_previous_seconds || 0))}`;
-      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}${animate ? " is-swapping" : ""}" data-leaderboard-date="${escapeHtml(entry.date)}"><div class="focus-leaderboard-identity"><time>${isToday ? "今天" : escapeHtml(String(entry.date).slice(5).replace("-", "/"))}</time><b>#${entry.rank}</b></div><div class="focus-leaderboard-metric"><strong>${formatSeconds(entry.seconds)}</strong></div><div class="focus-leaderboard-metric"><strong>${gapText}</strong></div></div>`;
+      const outline = podium ? '<svg class="focus-podium-outline" aria-hidden="true"><rect x="1" y="1" width="100%" height="100%" rx="6" pathLength="100"/></svg>' : "";
+      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}${podium ? ` is-podium podium-${Number(entry.rank)}` : ""}${animate ? " is-swapping" : ""}" data-leaderboard-date="${escapeHtml(entry.date)}">${outline}<div class="focus-leaderboard-identity"><time>${isToday ? "今天" : escapeHtml(String(entry.date).slice(5).replace("-", "/"))}</time><b>#${entry.rank}</b></div><div class="focus-leaderboard-metric"><strong>${formatSeconds(entry.seconds)}</strong></div><div class="focus-leaderboard-metric"><strong>${gapText}</strong></div></div>`;
     }).join("");
   }
 
@@ -1366,7 +1373,29 @@
     const modes = $("#focus-modes");
     const actions = $(".focus-launch-actions");
     const settlement = data.daily_settlement;
-    if (banner) banner.hidden = !data.can_settle_today;
+    const canSettle = canManageOwnFocus() && Boolean(data.can_settle_today);
+    if (banner) banner.hidden = !canSettle;
+    document.querySelectorAll("[data-settle-today]").forEach((track) => {
+      track.hidden = !canSettle;
+      const active = data.focus?.active;
+      const day = String(data.now || "").slice(0, 10);
+      if (!state.settling && track.dataset.settlementDate !== day) {
+        track.dataset.settlementDate = day;
+        const thumb = track.querySelector(".drag-thumb");
+        if (thumb && window.gsap) { gsap.set(thumb, { x:0 }); setDragProgress(track, thumb); }
+        track.classList.remove("armed");
+      }
+      const label = track.querySelector(".drag-label");
+      if (label) label.textContent = state.settling ? "正在收官…" : "结算本日";
+      const note = active ? "滑动收官会结束当前专注并固定今日总结；本日不再开启专注。" : "滑动收官会固定今日总结；本日不再开启专注。";
+      track.setAttribute("data-tooltip", note);
+      track.querySelector(".drag-thumb")?.setAttribute("aria-label", note);
+      track.setAttribute("aria-disabled", String(!canSettle || state.settling));
+    });
+    const guestReport = $("#guest-open-daily-report");
+    if (guestReport) guestReport.hidden = !settlement;
+    window.DailyReport?.acceptSettlement(settlement);
+    initDragSettlement();
     if (modes) modes.hidden = Boolean(settlement);
     if (actions) actions.hidden = Boolean(settlement);
     if (!achievement) return;
@@ -1382,9 +1411,36 @@
     const evaluation = completion >= 100 ? "目标达成" : completion >= 80 ? "接近目标" : completion >= 50 ? "稳步推进" : "保留节奏";
     const deltaText = delta > 0 ? `比昨天多 ${formatSeconds(delta)}` : delta < 0 ? `比昨天少 ${formatSeconds(Math.abs(delta))}` : "与昨天持平";
     const subject = settlement.top_subject ? `${escapeHtml(settlement.top_subject)} · ${formatSeconds(settlement.top_subject_seconds || 0)}` : "今天还没有专注记录";
-    const rank = data.focus_leaderboard?.today;
+    const rank = settlement.report || data.focus_leaderboard?.today;
     const rankText = rank?.rank ? rank.rank === 1 ? `第 1 名 · ${Number(rank.percentile || 100)}% 分位` : `第 ${rank.rank} 名 · 距上一名 ${formatSeconds(Number(rank.gap_to_previous_seconds || 0))}` : "今天暂无有效专注排名";
-    achievement.innerHTML = `<div class="section-heading"><h2>当日成就</h2><span>已结算 · ${escapeHtml(settlement.settlement_date)}</span></div><div class="achievement-total"><span>今日有效专注</span><strong>${formatSeconds(total)}</strong><b>${completion}% · ${evaluation}</b></div><div class="achievement-list"><div><span>昨日差值</span><b class="${delta >= 0 ? "good" : "bad"}">${escapeHtml(deltaText)}</b></div><div><span>历日排名</span><b>${escapeHtml(rankText)}</b></div><div><span>专注次数</span><b>${Number(settlement.session_count || 0)} 次</b></div><div><span>主要投入</span><b>${subject}</b></div></div>`;
+    achievement.innerHTML = `<div class="section-heading"><h2>当日成就</h2><span>已结算 · ${escapeHtml(settlement.settlement_date)}</span></div><div class="achievement-total"><span>今日有效专注</span><strong>${formatSeconds(total)}</strong><b>${completion}% · ${evaluation}</b></div><div class="achievement-list"><div><span>昨日差值</span><b class="${delta >= 0 ? "good" : "bad"}">${escapeHtml(deltaText)}</b></div><div><span>历日排名</span><b>${escapeHtml(rankText)}</b></div><div><span>专注次数</span><b>${Number(settlement.session_count || 0)} 次</b></div><div><span>主要投入</span><b>${subject}</b></div></div><button type="button" class="ui-button ui-button--secondary daily-report-reopen" data-open-daily-report>查看今日纪念卡 ↗</button>`;
+  }
+
+  function renderFocusChallenge() {
+    const row = $("#focus-challenge-row"), status = $("#focus-challenge-state"), track = $("#start-focus-challenge");
+    if (!row || !status || !track) return;
+    const challenge = window.IndexChallenge?.getState();
+    const readonly = !canManageOwnFocus() || !window.IndexChallenge?.canEdit();
+    row.hidden = readonly;
+    if (readonly) return;
+    const enabled = Boolean(challenge?.active_today);
+    if (!enabled && track.dataset.challengeActive === "1") {
+      const thumb = track.querySelector(".drag-thumb");
+      if (thumb && window.gsap) { gsap.set(thumb, { x:0 }); setDragProgress(track, thumb); }
+      track.classList.remove("armed");
+    }
+    track.dataset.challengeActive = enabled ? "1" : "0";
+    status.hidden = !enabled;
+    track.hidden = enabled;
+    const rule = "连胜挑战开启后今日及后续交易日涨跌限制为 ±20%；退出后今日仍为 ±20%，次日恢复普通 ±10%。";
+    status.querySelector("b").textContent = challenge?.pending_disable ? "明日恢复" : "±20%";
+    status.setAttribute("data-tooltip", rule);
+    const pendingDisable = Boolean(challenge?.pending_disable);
+    track.querySelector(".drag-label").textContent = state.challenging ? "正在开启…" : pendingDisable ? "继续连胜挑战" : "开始连胜挑战";
+    track.setAttribute("data-tooltip", pendingDisable ? `今日挑战仍为 ±20%，明日起恢复普通限制；滑动可继续挑战。${rule}` : rule);
+    const disabled = !challenge || state.challenging || state.settling;
+    track.setAttribute("aria-disabled", String(disabled));
+    track.querySelector(".drag-thumb").setAttribute("aria-disabled", String(disabled));
   }
 
   function bindInvestmentRange() {
@@ -1441,7 +1497,7 @@
   }
 
   async function startFocusItem(focusItemId) {
-    if (state.starting) return false;
+    if (!canManageOwnFocus() || state.starting || state.settling) return false;
     state.starting = true;
     try {
       const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(focusItemId), mode: "专注", planned_minutes: 0, client_token: createClientToken() }) });
@@ -1495,7 +1551,7 @@
 
   async function toggleFocusPause() {
     const active = state.dashboard?.focus?.active;
-    if (!active || state.pausing) return;
+    if (!active || state.pausing || state.settling) return;
     state.pausing = true;
     const button = $("#toggle-focus-pause");
     if (button) button.disabled = true;
@@ -1591,6 +1647,7 @@
     }
     updatePauseControl(active);
     updateFocusLockControl(active);
+    renderFocusChallenge();
     $("#focus-subject").textContent = active.subject;
     requestAnimationFrame(updateFocusSubjectOverflow);
     $("#focus-start").textContent = accountClock(Date.parse(active.started_at), false);
@@ -1602,6 +1659,8 @@
     setSecondTask("focus", tick);
     initDragEnd();
     initDragLock();
+    initDragChallenge();
+    initDragSettlement();
   }
 
   function dashboardSignature(data) {
@@ -1613,7 +1672,7 @@
       scores: (data.score_history || []).map((item) => [item.id, item.subject, item.exam_date, item.score, item.target]),
       modes: (data.focus_items || data.focus_modes || []).map((item) => [item.id, item.label || item.subject, item.sort_order]),
       messages: (data.focus_messages || []).map((item) => [item.category, item.text]),
-      settlement: data.daily_settlement ? [data.daily_settlement.id, data.daily_settlement.settlement_date, data.daily_settlement.total_seconds] : null,
+      settlement: data.daily_settlement ? [data.daily_settlement.id, data.daily_settlement.settlement_date, data.daily_settlement.total_seconds, data.daily_settlement.report_hash, data.daily_settlement.report] : null,
       canSettle: Boolean(data.can_settle_today),
       windows: [windowSignature(data.windows?.morning), windowSignature(data.windows?.library)],
       exam: data.exam?.date,
@@ -1637,11 +1696,24 @@
     state.dashboardFetchedAt = Date.now();
     syncServerClock(data.now, state.dashboardFetchedAt);
     state.dashboardSignature = dashboardSignature(data);
+    const settledInactive = canManageOwnFocus() && data.daily_settlement && !data.focus?.active;
+    if (settledInactive) {
+      state.focusRecoverySessionId = null;
+      state.restStartedAt = null;
+      try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
+      closeFocusSummary();
+    }
     document.body.classList.toggle("is-settled", Boolean(data.daily_settlement));
     renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_items || data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderFocusTrendChart(data.focus_leaderboard); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderFriendDiffBoard(data.friends); renderGuestSummary(data);
     renderDailySettlement(data);
     selectActivityView(state.activityView);
     applyFocusState(data.focus.active, false);
+    if (settledInactive) {
+      clearNativeFocus();
+      state.recentlyEnded = null;
+      state.nativeStateSignature = null;
+      notifyNativeFocusState(null);
+    }
     document.dispatchEvent(new CustomEvent("dashboard:updated", { detail: data }));
   }
 
@@ -1792,7 +1864,7 @@
 
   async function endFocus() {
     const active = state.dashboard?.focus?.active;
-    if (!active) return false;
+    if (!active || state.settling) return false;
     try {
       const result = await api("/api/focus/end", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
       state.focusRecoverySessionId = null;
@@ -1845,49 +1917,117 @@
   }
 
   async function commitDailySettlement(track, thumb) {
-    if (state.settling || !state.dashboard?.can_settle_today) return;
+    if (!canManageOwnFocus() || state.settling || state.ending || state.pausing || state.locking || !state.dashboard?.can_settle_today) return;
     state.settling = true;
     track.classList.add("armed");
+    const active = state.dashboard?.focus?.active;
+    const date = String(state.dashboard?.now || "").slice(0, 10) || accountDateKey();
+    window.DailyReport?.pending(date, thumb);
+    renderDailySettlement(state.dashboard);
     try {
-      await api("/api/daily-settlement", { method: "POST", body: "{}" });
-      await loadDashboard();
-      playSettlementFireworks();
+      const result = await api("/api/daily-settlement", { method: "POST", body: JSON.stringify({ expected_date:date, session_id:active?.id ?? null }) });
+      if (!result.settlement || !result.report) throw new Error("当日报告尚未确认，请刷新后重试。");
+      // This response is the transaction's authoritative ended transition. Clear
+      // recovery before a dashboard read so a slow read cannot revive the timer.
+      const ended = result.ended_session;
+      if (ended || (result.report.date === accountDateKey() && result.focus_state?.is_focusing === false && result.focus_state?.is_paused !== true)) {
+        state.focusRecoverySessionId = null;
+        state.heartbeatFailureSince = null;
+        window.clearTimeout(state.heartbeatFailureTimer);
+        setSyncLost(false);
+        state.lastActiveSnapshot = null;
+        closeFocusSummary();
+        state.restStartedAt = null;
+        try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
+        state.recentlyEnded = ended ? { id:ended.id, subject:ended.subject, endedAt:Date.parse(ended.ended_at) || Date.now(), elapsedSeconds:Number(ended.effective_seconds ?? ended.duration_seconds ?? focusElapsedSeconds(ended)) } : null;
+        state.dashboard = { ...state.dashboard, focus:{ ...(state.dashboard?.focus || {}), active:null } };
+        applyFocusState(null);
+        clearNativeFocus();
+        state.recentlyEnded = null;
+        state.nativeStateSignature = null;
+        notifyNativeFocusState(null);
+      }
+      if (result.report.date === accountDateKey()) {
+        state.dashboard = { ...state.dashboard, daily_settlement:result.settlement, can_settle_today:false, focus_leaderboard:result.leaderboard || state.dashboard?.focus_leaderboard };
+        document.body.classList.add("is-settled");
+      }
+      renderDailySettlement(state.dashboard);
+      window.DailyReport?.complete(result.report, thumb);
       showToast("今日已结算");
+      try { await loadDashboard(); }
+      catch (_error) { showToast("今日已结算，控制台同步稍有延迟。"); }
     } catch (error) {
-      gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
-      showToast(error.message);
+      resetCommitSlider(track, thumb);
+      const message = error.message === "settlement_date_changed" ? "账户日期已改变，已刷新；请确认新一天后重新滑动。" : error.message === "focus_session_changed" ? "当前专注已改变，已刷新；请确认后重新滑动。" : "结算未能确认，正在重新读取服务端状态，请稍后重试。";
+      showToast(message);
+      window.DailyReport?.fail(message);
+      try {
+        await loadDashboard();
+        // A response can be lost after the server commits. Only a fresh server
+        // snapshot can reconcile that case; the client never invents success.
+        if (state.dashboard?.daily_settlement?.report) window.DailyReport?.complete(state.dashboard.daily_settlement.report, thumb);
+      } catch (_error) { /* Keep the explicit failure and the retry entry. */ }
     } finally {
       state.settling = false;
+      if (state.dashboard) renderDailySettlement(state.dashboard);
     }
   }
 
-  function initDragSettlement() {
-    const track = $("#settle-today");
-    if (!track || !window.gsap || !window.Draggable || track.dataset.bound) return;
+  function resetCommitSlider(track, thumb) {
+    if (!window.gsap) return;
+    gsap.to(thumb, { x:0, duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : .42, ease:"power2.out", onUpdate:() => setDragProgress(track, thumb), onComplete:() => track.classList.remove("armed") });
+  }
+
+  function bindCommitSlider(track, canCommit, commit) {
+    if (!track || !window.gsap || !window.Draggable) return;
+    if (track.dataset.bound) { Draggable.get(track.querySelector(".drag-thumb"))?.update(true); return; }
     const thumb = track.querySelector(".drag-thumb");
     track.dataset.bound = "1";
+    const finish = () => {
+      if (!canCommit()) { resetCommitSlider(track, thumb); return; }
+      const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+      track.classList.add("armed");
+      gsap.to(thumb, { x:max, duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : .42, ease:"power2.out", onUpdate:() => setDragProgress(track, thumb), onComplete:() => canCommit() ? commit(track, thumb) : resetCommitSlider(track, thumb) });
+    };
     const drag = Draggable.create(thumb, {
       type: "x",
       bounds: track,
-      onPress() { if (state.settling) this.endDrag?.(); },
+      onPress() { if (!canCommit()) this.endDrag?.(); },
       onDrag() { setDragProgress(track, thumb); },
       onRelease() {
-        const { max, ratio } = setDragProgress(track, thumb);
-        if (ratio >= .82) {
-          track.classList.add("armed");
-          gsap.to(thumb, { x: max, duration: .42, ease: "power2.out", onComplete: () => commitDailySettlement(track, thumb) });
-        } else {
-          gsap.to(thumb, { x: 0, duration: .5, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
-        }
+        if (setDragProgress(track, thumb).ratio >= .82) finish();
+        else resetCommitSlider(track, thumb);
       },
     })[0];
     thumb.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
-      gsap.to(thumb, { x: max, duration: .42, ease: "power2.out", onUpdate: () => setDragProgress(track, thumb), onComplete: () => commitDailySettlement(track, thumb) });
+      finish();
     });
     drag.update();
+  }
+
+  function initDragSettlement() {
+    document.querySelectorAll("[data-settle-today]").forEach((track) => bindCommitSlider(track, () => canManageOwnFocus() && state.dashboard?.can_settle_today && !state.settling && !state.ending && !state.locking && !state.pausing, commitDailySettlement));
+  }
+
+  function initDragChallenge() {
+    bindCommitSlider($("#start-focus-challenge"), () => canManageOwnFocus() && window.IndexChallenge?.canEdit() && window.IndexChallenge?.getState() && !window.IndexChallenge.getState().active_today && !state.challenging && !state.settling, async (track, thumb) => {
+      if (state.challenging) return;
+      state.challenging = true;
+      renderFocusChallenge();
+      try {
+        if (!await window.IndexChallenge.setEnabled(true)) {
+          showToast("挑战未能开启，已重新读取服务端状态，请重试。");
+          resetCommitSlider(track, thumb);
+          await window.IndexChallenge.refresh(true);
+          try { await loadDashboard(); } catch (_error) {}
+        } else showToast("连胜挑战已开启 · 今日涨跌限制 ±20%");
+      } finally {
+        state.challenging = false;
+        renderFocusChallenge();
+      }
+    });
   }
 
   function playSettlementFireworks() {
@@ -1980,7 +2120,7 @@
 
   async function commitFocusLock(track, thumb) {
     const active = state.dashboard?.focus?.active;
-    if (!active || state.locking || active.focus_locked) return;
+    if (!active || state.locking || state.settling || active.focus_locked) return;
     const confirmed = await requestConfirmation({ title: "锁定本段专注", message: "锁定后本段记录将标记为非受信，且不能恢复受信状态。确定继续？", label: "锁定专注", tone: "danger" });
     if (!confirmed) {
       gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
@@ -2545,6 +2685,9 @@
       },
     };
     initDragSettlement();
+    initDragChallenge();
+    document.addEventListener("dashboard:challenge-updated", renderFocusChallenge);
+    window.IndexChallenge?.refresh()?.then(renderFocusChallenge);
     bindSettingsForms();
     bindSettingsTabs();
     bindAccountForms();
@@ -2554,6 +2697,7 @@
     }));
     bindButtonMotion();
     window.addEventListener("resize", updateFocusSubjectOverflow);
+    window.addEventListener("dashboard:viewport", () => { initDragSettlement(); initDragChallenge(); });
     try {
       if (document.body.dataset.page === "settings") {
         await loadSettings();

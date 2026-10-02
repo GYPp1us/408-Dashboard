@@ -191,8 +191,8 @@ def test_browser_keeps_horizontal_dashboard_while_native_portrait_is_scoped():
     assert "@media (orientation:portrait)" in css
     assert "@media (max-width:1099px)" not in css
     assert "@media (max-width:720px)" not in css
-    assert "html.native-app .time-grid,html.native-app .dashboard-grid" in css
-    assert "html.native-app .score-board,html.native-app .exam-countdown" in css
+    assert 'html.native-app:not([data-viewport-mode="wide"]) .time-grid,html.native-app:not([data-viewport-mode="wide"]) .dashboard-grid' in css
+    assert 'html.native-app:not([data-viewport-mode="wide"]) .score-board,html.native-app:not([data-viewport-mode="wide"]) .exam-countdown' in css
     assert ".dashboard-grid { display:grid; grid-template-columns:minmax(300px,1.5fr) minmax(330px,3fr) minmax(440px,2fr)" in css
 
 
