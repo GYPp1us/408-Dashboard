@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS daily_settlements (
     session_count INTEGER NOT NULL,
     top_subject TEXT,
     top_subject_seconds INTEGER NOT NULL DEFAULT 0,
+    report_json TEXT,
     UNIQUE(user_id, settlement_date)
 );
 CREATE TABLE IF NOT EXISTS migration_tokens (
@@ -894,6 +895,7 @@ def init_db(connection: sqlite3.Connection, *, allow_subject_migration_review: b
     connection.executescript(SCHEMA)
     _hierarchy_ensure_history_columns(connection)
     _hierarchy_add_columns(connection, "focus_reporter_keys", {"token": "TEXT"})
+    _hierarchy_add_columns(connection, "daily_settlements", {"report_json": "TEXT"})
     _migrate_focus_hierarchy(connection)
     connection.execute("DROP INDEX IF EXISTS one_active_focus")
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_focus_per_user ON focus_sessions(user_id) WHERE status = 'active' AND user_id IS NOT NULL")
@@ -920,7 +922,19 @@ def get_daily_settlement(connection: sqlite3.Connection, user_id: int | None, se
         "SELECT * FROM daily_settlements WHERE user_id = ? AND settlement_date = ?",
         (user_id, settlement_date),
     ).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    result = dict(row)
+    raw_report = result.pop("report_json", None)
+    try:
+        report = json.loads(raw_report) if raw_report else None
+    except (TypeError, ValueError):
+        report = None
+    if not isinstance(report, dict) or report.get("date") != settlement_date:
+        from .settlement_report import legacy_settlement_report
+        report = legacy_settlement_report(result)
+    result["report"] = report
+    return result
 
 
 def ensure_site_owner(connection: sqlite3.Connection, username: str, email: str, password_hash: str) -> int:
@@ -1404,11 +1418,15 @@ def record_foreground_heartbeat(
         )
         session_id = int(active["id"])
     elif session_id is not None and allow_recovery:
+        from .focus_challenge import account_now
+        settings = get_settings(connection, user_id)
+        local_day = account_now(now, settings.get("timezone", "Asia/Shanghai")).date().isoformat()
+        already_settled = get_daily_settlement(connection, user_id, local_day) is not None
         row = connection.execute(
             "SELECT id FROM focus_sessions WHERE id = ? AND user_id = ? AND reporter_source IS NULL AND status = 'completed' AND ended_reason = 'foreground_timeout'",
             (session_id, user_id),
         ).fetchone()
-        if row:
+        if row and not already_settled:
             connection.execute(
                 "UPDATE focus_sessions SET status = 'active', ended_at = NULL, ended_reason = NULL, last_foreground_at = ? WHERE id = ?",
                 (now_value, session_id),
@@ -1470,6 +1488,7 @@ def export_migration_data(connection: sqlite3.Connection, now: datetime) -> dict
             "user_focus_items": _rows(connection, "SELECT * FROM user_focus_items ORDER BY id"),
             "focus_sessions": _rows(connection, "SELECT * FROM focus_sessions ORDER BY id"),
             "focus_pauses": _rows(connection, "SELECT * FROM focus_pauses ORDER BY id"),
+            "daily_settlements": _rows(connection, "SELECT * FROM daily_settlements ORDER BY id"),
             "focus_kline_challenge_events": _rows(connection, "SELECT * FROM focus_kline_challenge_events ORDER BY id") if _table_exists(connection, "focus_kline_challenge_events") else [],
             "scores": list_scores(connection),
             "plans": list_plans(connection),

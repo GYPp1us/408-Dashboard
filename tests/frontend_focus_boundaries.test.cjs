@@ -5,7 +5,7 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8');
-const testSource = source.replace(/\}\)\(\);\s*$/, 'globalThis.focusTest = { state, canManageOwnFocus, initializeFocusIdentity, sendForegroundHeartbeat, startForegroundHeartbeat, notifyNativeFocusState, applyFocusState, refreshCurrentPage, revokeFocusIdentity, startRest, api };})();');
+const testSource = source.replace(/\}\)\(\);\s*$/, 'globalThis.focusTest = { state, canManageOwnFocus, initializeFocusIdentity, sendForegroundHeartbeat, startForegroundHeartbeat, notifyNativeFocusState, applyFocusState, refreshCurrentPage, revokeFocusIdentity, startRest, commitDailySettlement, api };})();');
 const active = { id: 9, user_id: 2, subject: '数学 · 二轮', started_at: new Date(Date.now() - 60000).toISOString(), ended_at: null, paused_at: null, paused_seconds: 0 };
 
 function context({ page = 'home', role = 'admin', viewerId = '2', response, storage = new Map(), nodes = new Map() } = {}) {
@@ -15,6 +15,7 @@ function context({ page = 'home', role = 'admin', viewerId = '2', response, stor
   const window = {
     location: { href: `https://example.test/${page}`, pathname: `/${page}`, origin: 'https://example.test' },
     addEventListener() {},
+    matchMedia: () => ({ matches: false }),
     setTimeout(fn, delay) { calls.timeouts.push(delay); return calls.timeouts.length; }, clearTimeout() {},
     setInterval(fn, delay) { calls.intervals.push(delay); return calls.intervals.length; }, clearInterval() {},
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
@@ -177,4 +178,51 @@ test('logout submit clears native and stops focus actions before navigation', as
   assert.equal(app.api.canManageOwnFocus(), false);
   assert.equal(app.calls.clear, 1);
   assert.equal(app.calls.native.some(call => call.mode === 'ended'), false);
+});
+
+test('settlement uses one guarded transaction and clears confirmed ended native focus before a slow dashboard read', async () => {
+  const now = new Date().toISOString();
+  const date = now.slice(0, 10);
+  const report = { version: 1, date, snapshot_kind: 'settled', total_seconds: 60 };
+  const app = context({ response: async url => url === '/api/daily-settlement'
+    ? { ok: true, status: 201, json: async () => ({ settlement: { id: 4, settlement_date: date, report }, report, ended_session: { ...active, ended_at: now }, focus_state: { is_focusing: false, is_paused: false } }) }
+    : { ok: false, status: 503, json: async () => ({ error: 'sync unavailable' }) } });
+  app.api.state.dashboard = { now, focus: { active }, can_settle_today: true };
+  app.api.state.lastActiveSnapshot = active;
+  app.api.state.focusRecoverySessionId = active.id;
+  await app.api.commitDailySettlement({ classList: { add() {} } }, {});
+  assert.deepEqual(app.calls.fetch.map(call => call.url), ['/api/daily-settlement', '/api/dashboard']);
+  assert.deepEqual(JSON.parse(app.calls.fetch[0].options.body), { expected_date: date, session_id: active.id });
+  assert.equal(app.api.state.dashboard.focus.active, null);
+  assert.equal(app.api.state.focusRecoverySessionId, null);
+  assert.equal(app.api.state.restStartedAt, null);
+  assert.ok(app.calls.native.some(call => call.mode === 'ended'));
+  assert.equal(app.calls.native.at(-1).mode, 'idle');
+  assert.equal(app.calls.clear, 1);
+});
+
+test('an old-day idempotent report cannot clear a newer paused session or native recovery', async () => {
+  const now = new Date().toISOString();
+  const oldDate = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const paused = { ...active, paused_at: now };
+  const report = { version: 1, date: oldDate, snapshot_kind: 'settled', total_seconds: 60 };
+  const app = context({ response: async url => url === '/api/daily-settlement'
+    ? { ok: true, status: 200, json: async () => ({ settlement: { id: 4, settlement_date: oldDate, report }, report, ended_session: null, focus_state: { is_focusing: false, is_paused: true }, idempotent: true }) }
+    : { ok: false, status: 503, json: async () => ({ error: 'sync unavailable' }) } });
+  app.api.state.dashboard = { now, focus: { active: paused }, can_settle_today: true };
+  app.api.state.focusRecoverySessionId = paused.id;
+  app.api.state.lastActiveSnapshot = paused;
+  await app.api.commitDailySettlement({ classList: { add() {} } }, {});
+  assert.equal(app.api.state.dashboard.focus.active.id, paused.id);
+  assert.equal(app.api.state.focusRecoverySessionId, paused.id);
+  assert.equal(app.calls.clear, 0);
+  assert.equal(app.calls.native.length, 0);
+  assert.equal(app.api.state.dashboard.can_settle_today, true);
+});
+
+test('guest cannot submit settlement even if viewed dashboard exposes an active session', async () => {
+  const app = context({ role: 'guest', viewerId: '99' });
+  app.api.state.dashboard = { now: new Date().toISOString(), focus: { active }, can_settle_today: true };
+  await app.api.commitDailySettlement({}, {});
+  assert.equal(app.calls.fetch.length, 0);
 });

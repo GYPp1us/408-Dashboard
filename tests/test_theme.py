@@ -57,15 +57,20 @@ def test_heatmap_scale_and_current_time_art_assets():
 
 def test_status_bar_uses_stacked_date_and_tall_score_billboard():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    ui_css = (ROOT / "app" / "static" / "dashboard-ui.css").read_text(encoding="utf-8")
+    template = (ROOT / "app" / "templates" / "base.html").read_text(encoding="utf-8")
 
-    assert ".status-bar { display:grid; grid-template-columns:minmax(220px,1fr) max-content minmax(250px,320px) max-content max-content" in css
+    assert ".status-bar { display:grid; grid-template-columns:minmax(220px,1fr) max-content minmax(250px,320px) max-content;" in css
+    assert "today-study" not in template
+    assert "today-progress" not in template
+    assert ".status-title { text-align: right; }" in ui_css
+    assert ".score-board { text-align: right; }" in ui_css
     assert ".status-title { display:grid" in css
     assert ".status-title { display:grid; grid-template-columns:9px minmax(0,1fr); grid-template-rows:auto auto; align-items:center; gap:2px 8px; min-width:0; text-align:left" in css
     assert ".status-title i { grid-row:1 / 3" in css
     assert ".exam-countdown { display:flex; align-items:baseline; gap:7px" in css
     assert ".score-window { flex:1; height:38px" in css
     assert ".score-row { display:flex; align-items:center; gap:10px" in css
-    assert ".today-study { display:flex; flex-direction:column; align-items:flex-start" in css
     assert ".current-state { display:flex; align-items:center; gap:6px" in css
     assert "translateY(-152px)" in css
 
@@ -133,7 +138,7 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".focus-profile-row.is-muted" in css
     assert ".focus-profile-row.is-current i" in css
     assert "@media (max-width:560px)" not in css
-    assert "html.native-app .activity-panel,html.native-app .investment-panel,html.native-app .mode-panel" in css
+    assert 'html.native-app:not([data-viewport-mode="wide"]) .activity-panel,html.native-app:not([data-viewport-mode="wide"]) .investment-panel,html.native-app:not([data-viewport-mode="wide"]) .mode-panel' in css
 
 
 def test_settings_page_uses_modern_two_column_editor_layout():

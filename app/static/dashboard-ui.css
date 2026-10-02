@@ -1,5 +1,7 @@
 /* Shared appearance tokens and the adjustable desktop workspace. */
 :root {
+  --focus-entry-height: 42px;
+  --dashboard-panel-height: calc(352px + var(--focus-entry-height));
   --font-ui: var(--font-serif);
   --font-number: var(--font-serif);
   --font-index: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -30,6 +32,12 @@ body { background: var(--canvas); font-family: var(--font-ui); }
 button, input, select, textarea { font-family: var(--font-ui); }
 .app-shell { border-color: var(--line); background: var(--paper); }
 .status-bar { background: var(--surface); border-color: var(--line); }
+.page-site .status-bar { grid-template-columns: minmax(0, 1fr) max-content; }
+.status-title { text-align: right; }
+.status-title strong, .status-title .console-date { justify-self: end; }
+.status-title i { justify-self: start; }
+.exam-countdown, .score-row, .current-state { justify-content: flex-end; }
+.score-board { text-align: right; }
 .panel { border-color: var(--line); background: var(--surface); }
 .current-time-card > .current-time-art { position: absolute; z-index: 0; top: 0; right: 8px; width: auto; max-width: none; height: 100%; opacity: .8; pointer-events: none; user-select: none; }
 .artwork-editor { display: grid; gap: 20px; }
@@ -78,6 +86,23 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .mode-panel { display: flex; flex-direction: column; }
 #idle-mode-view { min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--accent-border) transparent; }
 .active-mode-view { min-height: 0; overflow-y: auto; }
+.active-mode-view > .key-list { margin-top: 14px; }
+.focus-lock-row { grid-template-rows: repeat(2, 32px); }
+#focus-challenge-row { min-width: 0; }
+#focus-challenge-row .drag-action { height: 32px; margin: 0; }
+#focus-challenge-state { background: var(--accent-soft); color: var(--accent-deep); }
+#focus-challenge-state[hidden], #start-focus-challenge[hidden], #settle-overlay-today[hidden] { display: none; }
+#focus-challenge-state b { overflow: hidden; text-overflow: ellipsis; }
+#settle-overlay-today { margin-top: 24px; cursor: default; }
+.focus-state-overlay-card #settle-overlay-today .drag-label { color: var(--accent-deep); font-size: 11px; letter-spacing: 0; }
+.focus-leaderboard-row.is-today.is-podium { position: relative; border-bottom-color: transparent; border-radius: 5px; background: var(--accent-soft); }
+.focus-leaderboard-row.is-podium > :not(.focus-podium-outline) { position: relative; z-index: 1; }
+.focus-podium-outline { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; color: var(--accent-deep); }
+.focus-podium-outline rect { width: calc(100% - 2px); height: calc(100% - 2px); fill: none; stroke: currentColor; stroke-width: 1; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; opacity: .65; animation: podium-outline-flow 6s linear infinite; }
+.podium-2 .focus-podium-outline rect { opacity: .5; }
+.podium-3 .focus-podium-outline rect { opacity: .4; }
+@keyframes podium-outline-flow { to { stroke-dashoffset: -36; } }
+@media (prefers-reduced-motion: reduce) { .focus-podium-outline rect { animation: none; } }
 .mode-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .mode-panel:has(.active-mode-view:not([hidden])) .mode-panel-heading { display: none; }
 .mode { padding-right: 60px; }
@@ -156,14 +181,12 @@ body.page-focus-kline { background: var(--canvas); }
   html.native-app:not([data-viewport-mode="wide"]) .current-state { grid-column: 3; grid-row: 1; }
   html.native-app:not([data-viewport-mode="wide"]) .exam-countdown { grid-column: 1; grid-row: 2; }
   html.native-app:not([data-viewport-mode="wide"]) .score-board { grid-column: 2; grid-row: 2; }
-  html.native-app:not([data-viewport-mode="wide"]) .today-study { grid-column: 3; grid-row: 2; }
 }
 @media (orientation: landscape) and (max-width: 760px) {
   html.native-app:not([data-viewport-mode="wide"]) .status-bar { grid-template-columns: minmax(0, 1fr) max-content; }
   html.native-app:not([data-viewport-mode="wide"]) .status-title { grid-column: 1; }
   html.native-app:not([data-viewport-mode="wide"]) .current-state { grid-column: 2; }
   html.native-app:not([data-viewport-mode="wide"]) .exam-countdown { grid-column: 1; }
-  html.native-app:not([data-viewport-mode="wide"]) .today-study { grid-column: 2; }
   html.native-app:not([data-viewport-mode="wide"]) .score-board { grid-column: 1 / -1; grid-row: 3; }
 }
 @media (orientation: portrait) {
@@ -181,10 +204,9 @@ body.page-focus-kline { background: var(--canvas); }
 @media (max-width: 1169px) {
   html:not(.native-app):not([data-viewport-mode="wide"]) .status-bar { grid-template-columns: minmax(0, 1fr) auto; gap: 7px 10px; padding: 10px 12px; }
   html:not(.native-app):not([data-viewport-mode="wide"]) .status-title { grid-column: 1 / -1; grid-row: 1; }
-  html:not(.native-app):not([data-viewport-mode="wide"]) .current-state { grid-column: 1 / -1; grid-row: 2; display: flex; flex-wrap: wrap; justify-content: flex-start; max-width: none; min-width: 0; padding: 0; border: 0; }
+  html:not(.native-app):not([data-viewport-mode="wide"]) .current-state { grid-column: 1 / -1; grid-row: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: none; min-width: 0; padding: 0; border: 0; }
   html:not(.native-app):not([data-viewport-mode="wide"]) .exam-countdown { grid-column: 1; grid-row: 3; padding: 0; border: 0; }
-  html:not(.native-app):not([data-viewport-mode="wide"]) .today-study { grid-column: 2; grid-row: 3; padding: 0; border: 0; }
-  html:not(.native-app):not([data-viewport-mode="wide"]) .score-board { grid-column: 1 / -1; grid-row: 4; padding: 0; border: 0; }
+  html:not(.native-app):not([data-viewport-mode="wide"]) .score-board { grid-column: 2; grid-row: 3; padding: 0; border: 0; }
   html:not(.native-app):not([data-viewport-mode="wide"]) .time-grid { grid-template-columns: minmax(0, 1fr); }
   html:not(.native-app):not([data-viewport-mode="wide"]) .dashboard-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   html:not(.native-app):not([data-viewport-mode="wide"]) .dashboard-grid .mode-panel,
