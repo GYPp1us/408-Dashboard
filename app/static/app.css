@@ -21,9 +21,9 @@ button { cursor:pointer; }
 .time-card h2 { color:var(--muted); font-size:13px; font-weight:700; line-height:1; }
 .section-heading h2 { color:#626e68; font-size:12px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; }
 .time-card > :not(h2) { position:relative; z-index:2; }
-.time-card > strong { display:block; margin-top:5px; font-size:40px; line-height:1; }
+.time-card > strong { display:block; margin-top:5px; font-size:46px; line-height:1; }
 .current-time-card { position:relative; overflow:hidden; }
-.current-time-card > strong { margin-top:5px; font-size:45px; }
+.current-time-card > strong { margin-top:5px; font-size:51.75px; }
 .current-time-card .current-window { margin:0; color:var(--muted); font-size:13px; font-weight:700; line-height:1; white-space:nowrap; }
 .time-card p { margin:8px 0 0; color:var(--muted); font-size:12px; }
 .time-card p b { color:var(--ink); }

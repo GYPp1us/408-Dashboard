@@ -14,7 +14,9 @@ from .routes import _viewer_user_id
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_REQUEST_BYTES = MAX_IMAGE_BYTES + 64 * 1024
-DEFAULT_ARTWORK = {"url": "/static/current-time-art.jpg", "is_custom": False}
+DEFAULT_MOTTO = "放弃幻想，准备斗争"
+MAX_MOTTO_LENGTH = 80
+DEFAULT_ARTWORK = {"url": "/static/current-time-art.jpg", "is_custom": False, "motto": DEFAULT_MOTTO}
 
 
 def _png(data):
@@ -212,7 +214,10 @@ def image_mime(data):
 def register_dashboard_artwork(app):
     def artwork_for(connection, user_id):
         row = connection.execute("SELECT version FROM dashboard_artwork WHERE user_id = ?", (user_id,)).fetchone()
-        return {"url": url_for("dashboard_artwork_image", user_id=user_id, version=row["version"]), "is_custom": True} if row else dict(DEFAULT_ARTWORK)
+        artwork = {"url": url_for("dashboard_artwork_image", user_id=user_id, version=row["version"]), "is_custom": True} if row else dict(DEFAULT_ARTWORK)
+        motto = connection.execute("SELECT value FROM user_settings WHERE user_id = ? AND key = 'dashboard_motto'", (user_id,)).fetchone()
+        artwork["motto"] = motto["value"] if motto else DEFAULT_MOTTO
+        return artwork
 
     @app.context_processor
     def inject_dashboard_artwork():
@@ -239,22 +244,37 @@ def register_dashboard_artwork(app):
         request.max_form_parts = 4
         try:
             uploaded = request.files.get("image")
-            if uploaded is None:
+            motto_values = request.form.getlist("motto")
+            if request.is_json:
+                payload = request.get_json(silent=True)
+                if not isinstance(payload, dict):
+                    return jsonify(error="invalid_motto"), 400
+                motto_values = [payload["motto"]] if "motto" in payload else []
+            if "motto" in request.files or len(motto_values) > 1:
+                return jsonify(error="invalid_motto"), 400
+            motto = motto_values[0] if motto_values else None
+            if motto_values and (not isinstance(motto, str) or len(motto) > MAX_MOTTO_LENGTH):
+                return jsonify(error="invalid_motto"), 400
+            if uploaded is None and not motto_values:
                 return jsonify(error="image_required"), 400
-            data = uploaded.stream.read(MAX_IMAGE_BYTES + 1)
+            data = uploaded.stream.read(MAX_IMAGE_BYTES + 1) if uploaded is not None else None
         except RequestEntityTooLarge:
             return jsonify(error="image_too_large"), 413
-        if len(data) > MAX_IMAGE_BYTES:
+        if data is not None and len(data) > MAX_IMAGE_BYTES:
             return jsonify(error="image_too_large"), 413
-        mime = image_mime(data)
-        if mime is None:
+        mime = image_mime(data) if data is not None else None
+        if data is not None and mime is None:
             return jsonify(error="invalid_image"), 400
         connection = connect(app.config["DATABASE"])
         try:
             user_id = current_user_id()
-            connection.execute("""INSERT INTO dashboard_artwork(user_id, version, mime_type, image) VALUES (?, ?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET version=excluded.version, mime_type=excluded.mime_type, image=excluded.image""",
-                (user_id, secrets.token_hex(16), mime, data))
+            if data is not None:
+                connection.execute("""INSERT INTO dashboard_artwork(user_id, version, mime_type, image) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET version=excluded.version, mime_type=excluded.mime_type, image=excluded.image""",
+                    (user_id, secrets.token_hex(16), mime, data))
+            if motto_values:
+                connection.execute("""INSERT INTO user_settings(user_id, key, value) VALUES (?, 'dashboard_motto', ?)
+                    ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value""", (user_id, motto.strip()))
             connection.commit()
             return jsonify(artwork=artwork_for(connection, user_id))
         finally:
@@ -265,9 +285,10 @@ def register_dashboard_artwork(app):
     def dashboard_artwork_delete():
         connection = connect(app.config["DATABASE"])
         try:
-            connection.execute("DELETE FROM dashboard_artwork WHERE user_id = ?", (current_user_id(),))
+            user_id = current_user_id()
+            connection.execute("DELETE FROM dashboard_artwork WHERE user_id = ?", (user_id,))
             connection.commit()
-            return jsonify(artwork=dict(DEFAULT_ARTWORK))
+            return jsonify(artwork=artwork_for(connection, user_id))
         finally:
             connection.close()
 

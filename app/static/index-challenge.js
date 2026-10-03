@@ -11,6 +11,8 @@
     const rule = "开启后立即将今日及后续交易日涨跌限制扩大至 ±20%，已发生点位保持不变；关闭后今日仍为 ±20%，下个账户日恢复 ±10%。";
     const explanation = `${rule}${current?.effective_at ? ` 生效时间：${current.effective_at}` : ""}${readonly ? " 访客仅可查看。" : ""}`;
     document.querySelectorAll("[data-index-challenge]").forEach((host) => {
+      host.classList.toggle("is-active", Boolean(current?.active_today));
+      host.classList.toggle("is-pending-disable", Boolean(current?.pending_disable));
       host.classList.toggle("is-pending", Boolean(writePending));
       host.setAttribute("aria-busy", String(Boolean(writePending)));
       const text = host.querySelector("[data-index-challenge-status]");
@@ -27,6 +29,8 @@
     });
     document.querySelectorAll("[data-index-challenge-badge]").forEach((badge) => {
       badge.hidden = !current?.active_today;
+      badge.classList.toggle("is-active", Boolean(current?.active_today));
+      badge.classList.toggle("is-pending-disable", Boolean(current?.pending_disable));
       badge.textContent = current?.pending_disable ? "今日 ±20%" : "挑战 · ±20%";
       badge.title = explanation;
       badge.setAttribute("data-tooltip", explanation);

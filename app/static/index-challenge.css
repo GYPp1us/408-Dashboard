@@ -3,8 +3,16 @@
 .index-challenge-copy strong { font-size:17px; font-weight:600; }
 .index-challenge-copy span { color:var(--muted); font-size:14px; line-height:1.5; }
 .index-challenge-feedback { flex-basis:100%; margin:0; color:var(--index-rise, #d66c58); font-size:14px; }
-.index-challenge-badge { color:var(--muted); font-family:var(--font-index); font-size:12px; font-weight:500; white-space:nowrap; }
+.index-challenge-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 9px; border:1px dashed color-mix(in srgb, var(--accent-deep) 38%, transparent); border-radius:999px; background:var(--accent-soft); color:var(--accent-deep); font-family:var(--font-index); font-size:12px; font-weight:500; white-space:nowrap; }
+.index-challenge-badge[hidden] { display:none; }
+.index-challenge-badge.is-active::before { content:""; flex:0 0 auto; width:5px; height:5px; border-radius:50%; background:currentColor; animation:index-challenge-breathe 3.8s ease-in-out infinite; }
+.index-challenge.is-active [data-index-challenge-toggle] { border-style:dashed; animation:index-challenge-outline 4.8s ease-in-out infinite; }
+.index-challenge-badge.is-pending-disable::before, .index-challenge.is-pending-disable [data-index-challenge-toggle] { animation-duration:6s; }
+#focus-challenge-state:not([hidden]) { position:relative; border:1px dashed color-mix(in srgb, var(--accent-deep) 38%, transparent); animation:index-challenge-outline 4.8s ease-in-out infinite; }
+#focus-challenge-state:not([hidden])::after { content:""; position:absolute; top:7px; right:7px; width:4px; height:4px; border-radius:50%; background:currentColor; animation:index-challenge-breathe 3.8s ease-in-out infinite; }
 .home-index-head > [data-index-challenge-badge] { margin-right:auto; }
 .index-challenge.is-pending [data-index-challenge-toggle] { animation:index-challenge-pending 1s ease-in-out infinite alternate; }
 @keyframes index-challenge-pending { to { opacity:.55; } }
-@media (prefers-reduced-motion:reduce) { .index-challenge.is-pending [data-index-challenge-toggle] { animation:none; } }
+@keyframes index-challenge-breathe { 0%, 100% { opacity:.5; transform:scale(.82); box-shadow:0 0 0 1px color-mix(in srgb, currentColor 12%, transparent); } 50% { opacity:.95; transform:scale(1.08); box-shadow:0 0 0 3px color-mix(in srgb, currentColor 8%, transparent); } }
+@keyframes index-challenge-outline { 0%, 100% { border-color:color-mix(in srgb, var(--accent-deep) 30%, transparent); } 50% { border-color:color-mix(in srgb, var(--accent-deep) 65%, transparent); } }
+@media (prefers-reduced-motion:reduce) { .index-challenge.is-active [data-index-challenge-toggle], .index-challenge.is-pending [data-index-challenge-toggle], .index-challenge-badge.is-active::before, #focus-challenge-state:not([hidden]), #focus-challenge-state:not([hidden])::after { animation:none; } }

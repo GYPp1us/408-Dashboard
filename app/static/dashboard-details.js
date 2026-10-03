@@ -32,7 +32,7 @@
     document.dispatchEvent(new CustomEvent("dashboard:detail-closed", { detail: current }));
   }
   const descriptor = (target) => target instanceof Element ? { kind: target.dataset.detailKind, key: target.dataset.detailKey, date: target.dataset.detailDate, hour: target.dataset.detailHour } : { ...target };
-  const blocked = () => document.body.classList.contains("is-paused") || document.body.classList.contains("is-resting") || document.querySelector("#focus-state-overlay:not([hidden])");
+  const blocked = () => document.body.classList.contains("is-resting") || Boolean(document.querySelector("#focus-state-overlay:not([hidden]):not(.is-panel-overlay)"));
   function restoreFocus() {
     let target = returnFocus;
     if (!target?.isConnected && current) target = [...document.querySelectorAll("[data-detail-kind]")].find((element) => {
@@ -206,6 +206,6 @@
   });
   new MutationObserver(() => { if (blocked()) { cancelPress(); if (dialog.open) close(); } }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
   const overlay = document.getElementById("focus-state-overlay");
-  if (overlay) new MutationObserver(() => { if (!overlay.hidden) { cancelPress(); close(); } }).observe(overlay, { attributes: true, attributeFilter: ["hidden"] });
+  if (overlay) new MutationObserver(() => { if (blocked()) { cancelPress(); close(); } }).observe(overlay, { attributes: true, attributeFilter: ["hidden", "class"] });
   window.DashboardDetails = { open, close, register(kind, provider) { providers.set(kind, provider); } };
 })();
