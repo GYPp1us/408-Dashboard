@@ -13,9 +13,27 @@ class Element {
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   removeAttribute(name) { this.attributes.delete(name); }
-  append(...children) { children.forEach(child => { child.parent = this; this.children.push(child); }); }
-  replaceChildren(...children) { this.children = []; this.append(...children); }
-  remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); this.isConnected = false; }
+  contains(target) { return target != null && (target === this || this.children.some(child => child === target || child.contains?.(target))); }
+  append(...children) {
+    children.forEach(child => {
+      const previous = child.parentElement || child.parent;
+      if (previous) previous.children = previous.children.filter(node => node !== child);
+      child.parent = child.parentElement = child.parentNode = this;
+      child.isConnected = this.isConnected;
+      this.children.push(child);
+    });
+  }
+  replaceChildren(...children) {
+    this.children.forEach(child => { child.parent = child.parentElement = child.parentNode = null; child.isConnected = false; });
+    this.children = [];
+    this.append(...children);
+  }
+  remove() {
+    const parent = this.parentElement || this.parent;
+    if (parent) parent.children = parent.children.filter(child => child !== this);
+    this.parent = this.parentElement = this.parentNode = null;
+    this.isConnected = false;
+  }
   querySelector() { return null; }
   querySelectorAll() { return []; }
   closest() { return { classList:this.classList }; }
@@ -38,8 +56,9 @@ function harness({ now = '2026-09-30T09:01:00+08:00', fetch } = {}) {
   }
   const get = selector => { if (!nodes.has(selector)) nodes.set(selector, new Element()); return nodes.get(selector); };
   const view = get('#activity-index-view'); view.querySelector = get;
+  const body = new Element('body'); body.dataset.page = 'focus-kline';
   const document = {
-    hidden:false, documentElement:new Element(), body:{ dataset:{ page:'focus-kline' } },
+    hidden:false, documentElement:new Element(), body,
     getElementById:id => id === 'activity-index-view' ? view : null,
     querySelector:get, querySelectorAll:() => [],
     createElement:tag => new Element(tag), createElementNS:(_ns, tag) => new Element(tag),

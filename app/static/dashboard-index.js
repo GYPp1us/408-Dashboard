@@ -53,13 +53,13 @@
   }
   function indexColors() {
     const style = getComputedStyle(document.documentElement);
-    return { rise:style.getPropertyValue("--index-rise").trim() || "#d66c58", fall:style.getPropertyValue("--index-fall").trim() || "#4d8a73" };
+    return { rise:style.getPropertyValue("--index-rise").trim() || "#d66c58", fall:style.getPropertyValue("--index-fall").trim() || "#4d8a73", line:style.getPropertyValue("--index-line").trim() || "#718398" };
   }
   function applyChartTheme(instance, host) {
     if (!instance) return;
     const colors = indexColors();
     instance.chart.applyOptions(chartOptions(host, instance.market));
-    (instance.lines || [instance.series]).forEach((line) => line.applyOptions(instance.daily ? { upColor:colors.rise, downColor:colors.fall, wickUpColor:colors.rise, wickDownColor:colors.fall } : { color:instance.falling ? colors.fall : colors.rise }));
+    (instance.lines || [instance.series]).forEach((line) => line.applyOptions(instance.daily ? { upColor:colors.rise, downColor:colors.fall, wickUpColor:colors.rise, wickDownColor:colors.fall } : { color:colors.line }));
     if (instance.daily) instance.chart.applyOptions({ timeScale:{ timeVisible:false } });
   }
   function createChart(host, daily = false) {
@@ -67,7 +67,7 @@
     if (!library?.createChart || !library.LineSeries || !library.CandlestickSeries) return null;
     const chart = daily ? library.createChart(host, chartOptions(host)) : Market.createChart(host, chartOptions(host));
     const colors = indexColors();
-    const options = daily ? { upColor:colors.rise, downColor:colors.fall, borderVisible:false, wickUpColor:colors.rise, wickDownColor:colors.fall, priceFormat:{ type:"price", precision:3, minMove:.001 } } : { color:colors.rise, lineWidth:2, crosshairMarkerVisible:true, priceFormat:{ type:"price", precision:3, minMove:.001 } };
+    const options = daily ? { upColor:colors.rise, downColor:colors.fall, borderVisible:false, wickUpColor:colors.rise, wickDownColor:colors.fall, priceFormat:{ type:"price", precision:3, minMove:.001 } } : { color:colors.line, lineWidth:2, crosshairMarkerVisible:true, priceFormat:{ type:"price", precision:3, minMove:.001 } };
     const series = chart.addSeries(daily ? library.CandlestickSeries : library.LineSeries, options);
     const markers = daily ? null : Market.createSeriesMarkers(series, []);
     if (daily) chart.applyOptions({ timeScale:{ timeVisible:false } });
@@ -77,7 +77,7 @@
       if (!daily) Market.pin(chart, result.market);
     });
     observer.observe(host);
-    const result = { chart, host, series, lines:[series], markerGroups:[markers], markers, market:null, daily, showEvents:host !== $("[data-index-chart]"), falling:false, hasData:false, dispose:() => { observer.disconnect(); chart.remove(); } };
+    const result = { chart, host, series, lines:[series], markerGroups:[markers], markers, market:null, daily, showEvents:host !== $("[data-index-chart]"), hasData:false, dispose:() => { observer.disconnect(); chart.remove(); } };
     return result;
   }
   function ensureMarket(instance, market) {
@@ -96,19 +96,18 @@
     const market = marketFor(data);
     ensureMarket(instance, market);
     const colors = indexColors();
-    instance.falling = data.change < 0;
     if (!market) return;
     instance.timeline.reconcile(data.intraday, (item) => item.time ?? item.at ?? item.timestamp, (item) => item.value ?? item.price ?? item.close);
     const samples = instance.timeline;
     const activeIndex = samples.groups.findLastIndex((group) => group.length);
     while (instance.lines.length < samples.groups.length) {
-      const line = instance.chart.addSeries(window.LightweightCharts.LineSeries, { color:instance.falling ? colors.fall : colors.rise, lineWidth:2, priceFormat:{ type:"price", precision:3, minMove:.001 }, lastValueVisible:true });
+      const line = instance.chart.addSeries(window.LightweightCharts.LineSeries, { color:colors.line, lineWidth:2, priceFormat:{ type:"price", precision:3, minMove:.001 }, lastValueVisible:true });
       instance.lines.push(line);
       instance.markerGroups.push(Market.createSeriesMarkers(line, []));
     }
     instance.lines.forEach((line, index) => {
       const group = samples.groups[index] || [];
-      line.applyOptions({ color:instance.falling ? colors.fall : colors.rise, lastValueVisible:index === activeIndex });
+      line.applyOptions({ color:colors.line, lastValueVisible:index === activeIndex });
       line.setData(group);
       instance.markerGroups[index]?.setMarkers(instance.showEvents ? (samples.events[index] || []).map((event) => ({ time:event.time, value:event.value, position:event.floorReset ? "belowBar" : "aboveBar", shape:event.floorReset ? "arrowUp" : "circle", color:event.floorReset ? "#8067b3" : "#b47a59", text:event.floorReset ? "复位" : "" })) : []);
     });
@@ -119,8 +118,6 @@
   function render(data) {
     updateQuote(data.current, data.previous_close);
     updateDayMetrics(data, data.current);
-    $("[data-index-focus]").textContent = duration(data.today_focus_seconds);
-    $("[data-index-status]").textContent = data.is_paused ? "已暂停" : data.is_focusing ? "专注中" : "休息中";
     const date = data.intraday_date;
     $("[data-index-updated]").textContent = `${date && date !== todayDate() ? `回看 ${date} · ` : ""}更新 ${updateClock(data.updated_at, data)}`;
     $("[data-index-retry]").hidden = true;
@@ -144,7 +141,7 @@
     const pct = previous ? change / previous * 100 : 0;
     $("[data-index-change]").textContent = signed(change);
     const percent = $("[data-index-percent]");
-    if (percent) percent.textContent = `(${signed(pct, 2)}%)`;
+    if (percent) percent.textContent = `${signed(pct, 2)}%`;
     $(".home-index-quote").classList.toggle("index-rise", change >= 0);
     $(".home-index-quote").classList.toggle("index-fall", change < 0);
   }
@@ -215,8 +212,6 @@
       updateQuote(value, previous);
       updateDayMetrics(latest, value, projection);
       appendLive(homeChart, projection);
-      if (Number.isFinite(Number(snapshot.today_focus_seconds))) $("[data-index-focus]").textContent = duration(snapshot.today_focus_seconds);
-      $("[data-index-status]").textContent = snapshot.is_paused ? "已暂停" : snapshot.is_focusing ? "专注中" : "休息中";
       paintNow(homeChart, projection.now * 1000);
       if (projection.stale) $("[data-index-updated]").textContent = "实时更新暂不可用 · 显示最近数据";
     } else paintNow(homeChart, snapshot ? (Market.project(snapshot, homeChart?.market)?.now ?? serverNow() / 1000) * 1000 : serverNow());

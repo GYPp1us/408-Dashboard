@@ -41,7 +41,7 @@ test('percent arithmetic stays unchanged and a flat or closed market never fabri
   const env = await setup();
   env.api.quote(110, 100);
   assert.equal(env.get('[data-index-change]').textContent, '+10.000');
-  assert.equal(env.get('[data-index-percent]').textContent, '(+10.00%)');
+  assert.equal(env.get('[data-index-percent]').textContent, '+10.00%');
   const target = env.get('[data-index-points]'); target.classList.remove('is-tick-up', 'is-tick-down');
   env.api.quote(110, 100); assert.equal(target.classList.contains('is-tick-up'), false);
   env.flat(); await env.api.live(true); target.classList.remove('is-tick-up', 'is-tick-down');

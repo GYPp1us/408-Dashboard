@@ -6,6 +6,7 @@ import zlib
 
 from flask import render_template_string, session, template_rendered
 import pytest
+from werkzeug.datastructures import MultiDict
 
 from app import create_app
 from app.dashboard_artwork import DEFAULT_ARTWORK, MAX_IMAGE_BYTES
@@ -155,3 +156,34 @@ def test_template_initial_context_and_reads_do_not_change_database(setup):
     connection = connect(app.config["DATABASE"])
     assert list(connection.iterdump()) == before
     connection.close()
+
+
+def test_motto_persists_per_account_and_survives_image_replacement_and_reset(setup):
+    _, client, owner, other = setup
+    result = client(owner)
+    saved = result.post("/api/dashboard/artwork", data={"motto": "  每天向前一步  "}).get_json()["artwork"]
+    assert saved == {**DEFAULT_ARTWORK, "motto": "每天向前一步"}
+    assert client(owner).get("/api/dashboard/artwork").get_json()["artwork"] == saved
+    assert client(other).get("/api/dashboard/artwork").get_json()["artwork"] == DEFAULT_ARTWORK
+    for viewer in (client(owner, guest=True), client(other, viewing=owner)):
+        assert viewer.get("/api/dashboard/artwork").get_json()["artwork"] == saved
+        assert viewer.post("/api/dashboard/artwork", data={"motto": "改写"}).status_code == 403
+    assert upload(result, GIF).get_json()["artwork"]["motto"] == saved["motto"]
+    assert result.delete("/api/dashboard/artwork").get_json()["artwork"] == saved
+    hidden = result.post("/api/dashboard/artwork", data={"motto": "  "}).get_json()["artwork"]
+    assert hidden["motto"] == ""
+    assert client(owner).get("/api/dashboard/artwork").get_json()["artwork"] == hidden
+
+
+def test_invalid_motto_or_image_cannot_partially_save(setup):
+    _, client, owner, _ = setup
+    result = client(owner)
+    saved = result.post("/api/dashboard/artwork", data={"motto": "已保存", "image": (BytesIO(GIF), "a.gif")}).get_json()["artwork"]
+    for invalid in (None, 7, ["多值"], "字" * 81):
+        response = result.post("/api/dashboard/artwork", json={"motto": invalid})
+        assert response.status_code == 400
+        assert response.get_json()["error"] == "invalid_motto"
+    assert result.post("/api/dashboard/artwork", data=MultiDict([("motto", "一"), ("motto", "二")])).status_code == 400
+    response = result.post("/api/dashboard/artwork", data={"motto": "不能保存", "image": (BytesIO(b"invalid"), "a.gif")})
+    assert response.status_code == 400
+    assert result.get("/api/dashboard/artwork").get_json()["artwork"] == saved

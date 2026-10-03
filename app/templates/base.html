@@ -59,10 +59,11 @@
   </dialog>{% endif %}
   {% if not is_guest %}<dialog id="confirm-action-modal" class="confirm-dialog" aria-labelledby="confirm-action-title"><div class="confirm-dialog-head"><span class="confirm-dialog-mark">!</span><div><h2 id="confirm-action-title">请确认操作</h2><p id="confirm-action-message">此操作无法撤销。</p></div></div><div class="confirm-dialog-actions"><button id="confirm-action-cancel" class="ui-button ui-button--quiet" type="button">取消</button><button id="confirm-action-submit" class="ui-button ui-button--primary" type="button">确认</button></div></dialog>{% endif %}
   <div id="sync-warning" class="sync-warning" role="alert" hidden><strong>失去同步</strong><span>前台状态上报失败，正在持续重连。</span></div>
-  {% if not is_guest %}<div id="focus-state-overlay" class="focus-state-overlay" role="button" tabindex="0" aria-live="polite" hidden>
+  {% if not is_guest %}<div id="focus-state-overlay" class="focus-state-overlay" role="button" tabindex="0" aria-labelledby="focus-state-overlay-title" aria-describedby="focus-state-overlay-note" aria-live="polite" hidden>
     <div class="focus-state-overlay-card">
       <span id="focus-state-overlay-kicker">PAUSED</span>
       <h2 id="focus-state-overlay-title">专注已暂停</h2>
+      <span id="focus-state-overlay-timer-label" class="focus-state-overlay-timer-label" hidden>暂停时长</span>
       <strong id="focus-state-overlay-timer">00:00:00</strong>
       <p id="focus-state-overlay-note">点击任意位置继续专注</p>
       {% if page_name == 'home' %}<div id="settle-overlay-today" class="drag-action daily-settlement-action" data-settle-today role="group" aria-label="滑动结束当前专注并结算本日" hidden><div class="drag-fill"></div><span class="drag-label">结算本日</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动结束当前专注并结算本日">→</span></div>{% endif %}

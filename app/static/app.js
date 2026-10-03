@@ -11,6 +11,8 @@
     settled: ["#6f8f78", "#557763", "#8aa891", "#486653", "#789c81", "#abc0ad", "#5d8068", "#94ae99"],
   };
   const $ = (selector) => document.querySelector(selector);
+  const commitSliders = new Map();
+  let slidersLifecycleBound = false;
   const elementScale = (element) => window.MutsumiViewport?.elementScale(element) || 1;
   const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => {
     if (active) return themePalettes.focus;
@@ -105,6 +107,8 @@
     try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
     clearNativeFocus();
     setSyncLost(false);
+    document.body.classList.remove("is-paused");
+    renderFocusStateOverlay(null);
   }
 
   function initializeFocusIdentity() {
@@ -185,15 +189,46 @@
   }
 
   async function api(url, options = {}) {
-    const response = await fetch(url, { headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
-    if (response.status === 401) {
-      revokeFocusIdentity();
-      window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
-      throw new Error("authentication_required");
+    const controller = new AbortController();
+    let timedOut = false, timer;
+    const abort = () => controller.abort();
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once:true });
+    const deadline = new Promise((_, reject) => {
+      timer = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        reject(new Error("请求超时，请检查网络后重试。"));
+      }, 15000);
+    });
+    try {
+      const request = (async () => {
+        const response = await fetch(url, { ...options, headers:{ "Content-Type":"application/json", ...(options.headers || {}) }, signal:controller.signal });
+        if (controller.signal.aborted) throw new Error("request_aborted");
+        if (response.status === 401) {
+          revokeFocusIdentity();
+          window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
+          throw new Error("authentication_required");
+        }
+        const payload = await response.json();
+        if (controller.signal.aborted) throw new Error("request_aborted");
+        if (!response.ok) throw new Error(payload.error || "请求失败");
+        return payload;
+      })();
+      return await Promise.race([request, deadline]);
+    } catch (error) {
+      const focusWrite = String(options.method || "GET").toUpperCase() === "POST"
+        && /^\/api\/(?:focus\/(?:start|end|pause|lock)|daily-settlement)$/.test(url);
+      if (!options.signal?.aborted && focusWrite && (timedOut || error instanceof TypeError)) {
+        showToast("操作结果暂未确认，将刷新页面核对；请勿重复提交。");
+        window.setTimeout(() => window.location.reload(), 1800);
+      }
+      if (timedOut) throw new Error("请求超时，将重新核对操作结果。");
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
     }
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "请求失败");
-    return payload;
   }
 
   function showToast(message) {
@@ -234,22 +269,46 @@
   function renderFocusStateOverlay(active = state.dashboard?.focus?.active) {
     const overlay = $("#focus-state-overlay");
     if (!overlay) return;
-    const resting = Boolean(state.restStartedAt);
-    const paused = Boolean(active?.paused_at);
-    overlay.hidden = !resting && !paused;
+    const resting = canManageOwnFocus() && Boolean(state.restStartedAt);
+    const paused = canManageOwnFocus() && Boolean(active?.paused_at);
+    const panel = document.body.dataset.page === "home" ? $("#dashboard-controls") : null;
+    const panelPaused = !resting && paused && Boolean(panel);
+    const wasPanelPaused = !overlay.hidden && overlay.classList.contains("is-panel-overlay");
+    const focusWasInside = overlay.contains(document.activeElement);
+    const showOverlay = resting || panelPaused;
+    const host = panelPaused ? panel : document.body;
+
+    // Set the bounds while hidden: a pause must never flash across the page.
+    if (overlay.parentElement !== host || overlay.classList.contains("is-panel-overlay") !== panelPaused) overlay.hidden = true;
+    overlay.classList.toggle("is-panel-overlay", panelPaused);
+    if (overlay.parentElement !== host) host.append(overlay);
     document.body.classList.toggle("is-resting", resting);
-    if (!resting && !paused) {
+    [$("#idle-mode-view"), $("#active-mode-view")].filter(Boolean).forEach((view) => {
+      if (view.inert !== panelPaused) view.inert = panelPaused;
+    });
+    overlay.hidden = !showOverlay;
+    if (!showOverlay) {
       removeSecondTask("stateOverlay");
+      if (wasPanelPaused && focusWasInside && canManageOwnFocus()) {
+        requestAnimationFrame(() => {
+          if (!overlay.hidden || document.querySelector("dialog[open]")) return;
+          const target = active ? $("#toggle-focus-pause") : $("#start-rest");
+          if (target && !target.disabled && !target.closest("[hidden], [inert]")) target.focus({ preventScroll: true });
+        });
+      }
       return;
     }
     $("#focus-state-overlay-kicker").textContent = resting ? "REST" : "PAUSED";
-    $("#focus-state-overlay-title").textContent = resting ? "正在休息" : `${active.subject} 已暂停`;
-    $("#focus-state-overlay-note").textContent = resting ? "点击任意位置结束休息" : "点击任意位置继续专注";
+    $("#focus-state-overlay-title").textContent = resting ? "正在休息" : `${active.subject || "专注"} 已暂停`;
+    $("#focus-state-overlay-note").textContent = resting ? "点击任意位置结束休息" : "点击此分栏或按回车继续专注";
+    $("#focus-state-overlay-timer-label").hidden = !panelPaused;
     const startedAt = resting ? state.restStartedAt : Date.parse(active.paused_at);
     setSecondTask("stateOverlay", (now) => {
       $("#focus-state-overlay-timer").textContent = formatSeconds(Math.max(0, Math.floor((now - startedAt) / 1000)));
     });
     initDragSettlement();
+    // Refreshes update the clock without taking focus from the other columns.
+    if (panelPaused && !wasPanelPaused) overlay.focus({ preventScroll: true });
   }
 
   function startRest() {
@@ -277,8 +336,14 @@
   }
 
   function bindFocusStateOverlay() {
-    document.querySelectorAll("[data-start-rest]").forEach((button) => button.addEventListener("click", startRest));
+    document.querySelectorAll("[data-start-rest]").forEach((button) => {
+      if (button.dataset.restBound) return;
+      button.dataset.restBound = "1";
+      button.addEventListener("click", startRest);
+    });
     const overlay = $("#focus-state-overlay");
+    if (!overlay || overlay.dataset.focusOverlayBound) return;
+    overlay.dataset.focusOverlayBound = "1";
     overlay?.addEventListener("click", (event) => {
       if (event.target.closest?.("[data-settle-today]")) return;
       exitFocusStateOverlay();
@@ -1184,7 +1249,7 @@
     const signature = JSON.stringify(quickModes.map((item) => [item.id, item.label, state.quickFocus.pinned.includes(Number(item.id))]));
     if (target.dataset.signature === signature) return;
     target.dataset.signature = signature;
-    target.querySelectorAll(".drag-thumb").forEach((thumb) => window.Draggable?.get(thumb)?.kill());
+    target.querySelectorAll(".drag-launch").forEach(disposeCommitSlider);
     target.innerHTML = quickModes.map((item) => {
       const label = item.label || `${item.subject} · ${item.name}`;
       const pinned = state.quickFocus.pinned.includes(Number(item.id));
@@ -1467,34 +1532,8 @@
   }
 
   function initDragLaunchers() {
-    if (!window.gsap || !window.Draggable) return;
     document.querySelectorAll(".drag-launch").forEach((track) => {
-      const thumb = track.querySelector(".drag-thumb");
-      if (track.dataset.bound) return;
-      track.dataset.bound = "1";
-      const drag = Draggable.create(thumb, {
-        type: "x",
-        bounds: track,
-        onPress() { if (state.starting) this.endDrag?.(); },
-        onDrag() { setDragProgress(track, thumb); },
-        onRelease() {
-          const { max, ratio } = setDragProgress(track, thumb);
-          if (ratio >= .82) {
-            track.classList.add("armed");
-            gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onComplete: () => commitFocusStart(track, thumb, max) });
-          } else {
-            gsap.to(thumb, { x: 0, duration: .58, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
-          }
-        }
-      })[0];
-      thumb.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
-          gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => commitFocusStart(track, thumb, max) });
-        }
-      });
-      drag.update();
+      bindCommitSlider(track, () => canManageOwnFocus() && !state.dashboard?.focus?.active && !state.starting && !state.settling, commitFocusStart);
     });
   }
 
@@ -1521,9 +1560,8 @@
 
   async function commitFocusStart(track, thumb) {
     track.classList.add("armed");
-    if (await startFocusItem(Number(track.dataset.focusItemId))) return;
-    gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb) });
-    track.classList.remove("armed");
+    try { await startFocusItem(Number(track.dataset.focusItemId)); }
+    finally { resetCommitSlider(track, thumb); }
   }
 
   function animateLayout() {
@@ -1582,6 +1620,8 @@
     track.querySelector(".drag-label").textContent = locked ? "专注已锁定" : "锁定专注";
     const thumb = track.querySelector(".drag-thumb");
     if (!window.gsap || !thumb) return;
+    const slider = commitSliders.get(track), drag = window.Draggable?.get(thumb);
+    if (state.locking || (slider && slider.phase !== "idle") || drag?.isPressed || drag?.isDragging || gsap.isTweening?.(thumb)) return;
     const x = locked ? Math.max(1, track.clientWidth - thumb.offsetWidth - 4) : 0;
     gsap.set(thumb, { x });
     setDragProgress(track, thumb);
@@ -1594,6 +1634,7 @@
       // that account's timer, recovery state, native service or pause overlay.
       document.body.classList.toggle("is-focusing", Boolean(active));
       document.body.classList.remove("is-paused");
+      renderFocusStateOverlay(null);
       syncScoreChartTheme(active);
       return;
     }
@@ -1603,6 +1644,7 @@
     }
     if (animate) animateLayout();
     const previousActive = state.lastActiveSnapshot;
+    if (previousActive?.id !== active?.id) refreshCommitSliders(true);
     if (active) {
       state.recentlyEnded = null;
       if (state.restStartedAt) exitRest();
@@ -1635,6 +1677,7 @@
     renderFocusComparison(active);
     $("#home-state-note").textContent = active ? "专注中，保持当前上下文" : "准备开始下一段专注";
     if (!active) {
+      initDragLaunchers();
       removeSecondTask("focus");
       $("#focus-timer").textContent = "00:00:00";
       updatePauseControl(null);
@@ -1879,32 +1922,7 @@
   }
 
   function initDragEnd() {
-    const track = $("#end-focus");
-    if (!track || !window.gsap || !window.Draggable || track.dataset.bound) return;
-    const thumb = track.querySelector(".drag-thumb");
-    track.dataset.bound = "1";
-    const drag = Draggable.create(thumb, {
-      type: "x",
-      bounds: track,
-      onDrag() { setDragProgress(track, thumb); },
-      onRelease() {
-        const { max, ratio } = setDragProgress(track, thumb);
-        if (ratio >= .82) {
-          track.classList.add("armed");
-          gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onComplete: () => commitFocusEnd(track, thumb) });
-        } else {
-          gsap.to(thumb, { x: 0, duration: .58, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
-        }
-      }
-    })[0];
-    thumb.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
-        gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => commitFocusEnd(track, thumb) });
-      }
-    });
-    drag.update();
+    bindCommitSlider($("#end-focus"), () => canManageOwnFocus() && Boolean(state.dashboard?.focus?.active) && !state.ending && !state.settling, commitFocusEnd);
   }
 
   async function commitFocusEnd(track, thumb) {
@@ -1977,36 +1995,137 @@
 
   function resetCommitSlider(track, thumb) {
     if (!window.gsap) return;
-    gsap.to(thumb, { x:0, duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : .42, ease:"power2.out", onUpdate:() => setDragProgress(track, thumb), onComplete:() => track.classList.remove("armed") });
+    const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+    const x = commitSliders.get(track)?.restX(max) || 0;
+    gsap.killTweensOf(thumb);
+    gsap.to(thumb, { x, duration:!track.getClientRects().length || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : .42, ease:"power2.out", onUpdate:() => setDragProgress(track, thumb), onComplete:() => { setDragProgress(track, thumb); track.classList.remove("armed"); } });
   }
 
-  function bindCommitSlider(track, canCommit, commit) {
+  function disposeCommitSlider(track) {
+    const slider = commitSliders.get(track);
+    if (slider) {
+      slider.phase = "disposed";
+      gsap.killTweensOf(slider.thumb);
+      slider.drag.kill();
+      slider.observer?.disconnect();
+      slider.thumb.removeEventListener("keydown", slider.keydown);
+      commitSliders.delete(track);
+    }
+    delete track.dataset.bound;
+  }
+
+  function refreshCommitSliders(cancel = false) {
+    commitSliders.forEach((slider, track) => {
+      if (!track.isConnected) { disposeCommitSlider(track); return; }
+      if (cancel) slider.cancel();
+      else slider.refresh();
+    });
+  }
+
+  function bindSliderLifecycle() {
+    if (slidersLifecycleBound) return;
+    slidersLifecycleBound = true;
+    const cancel = () => refreshCommitSliders(true);
+    document.addEventListener("pointercancel", cancel, true);
+    document.addEventListener("touchcancel", cancel, true);
+    document.addEventListener("visibilitychange", cancel);
+    window.addEventListener("pagehide", cancel);
+    window.addEventListener("pageshow", cancel);
+    window.addEventListener("blur", cancel);
+    window.addEventListener("dashboard:viewport", cancel);
+  }
+
+  function bindCommitSlider(track, canCommit, commit, restX = () => 0) {
     if (!track || !window.gsap || !window.Draggable) return;
-    if (track.dataset.bound) { Draggable.get(track.querySelector(".drag-thumb"))?.update(true); return; }
     const thumb = track.querySelector(".drag-thumb");
+    if (!thumb) return;
+    const existing = commitSliders.get(track);
+    if (existing) { existing.refresh(); return; }
+    const visible = () => track.isConnected && !track.hidden && track.getClientRects().length > 0 && track.clientWidth > thumb.offsetWidth + 4;
+    // Hidden controls have no usable geometry. Bind when their view becomes visible.
+    if (!visible()) return;
+    const slider = { thumb, phase:"idle", generation:0, restX, drag:null, observer:null, keydown:null, refresh:null, cancel:null };
     track.dataset.bound = "1";
-    const finish = () => {
-      if (!canCommit()) { resetCommitSlider(track, thumb); return; }
+    commitSliders.set(track, slider);
+    slider.refresh = () => {
+      if (slider.phase !== "idle" || !visible()) return;
       const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+      gsap.killTweensOf(thumb);
+      gsap.set(thumb, { x:restX(max) });
+      slider.drag?.applyBounds({ minX:0, maxX:max });
+      slider.drag?.update(true);
+      setDragProgress(track, thumb);
+      track.classList.remove("armed");
+    };
+    slider.cancel = () => {
+      // A submitted operation must reconcile with the server; cancel only gestures.
+      if (slider.phase === "pending" || slider.phase === "disposed") return;
+      slider.generation += 1;
+      slider.phase = "idle";
+      gsap.killTweensOf(thumb);
+      slider.drag?.endDrag();
+      const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+      gsap.set(thumb, { x:visible() ? restX(max) : 0 });
+      setDragProgress(track, thumb);
+      track.classList.remove("armed");
+      slider.refresh();
+    };
+    const finish = () => {
+      if (slider.phase === "animating" || slider.phase === "pending" || slider.phase === "disposed") return;
+      if (!visible() || !canCommit()) { slider.cancel(); return; }
+      const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+      const generation = ++slider.generation;
+      slider.phase = "animating";
       track.classList.add("armed");
-      gsap.to(thumb, { x:max, duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : .42, ease:"power2.out", onUpdate:() => setDragProgress(track, thumb), onComplete:() => canCommit() ? commit(track, thumb) : resetCommitSlider(track, thumb) });
+      gsap.killTweensOf(thumb);
+      gsap.to(thumb, { x:max, duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : .42, ease:"power2.out", onUpdate:() => setDragProgress(track, thumb), onComplete:() => {
+        if (slider.phase !== "animating" || slider.generation !== generation) return;
+        if (!visible() || !canCommit()) { slider.cancel(); return; }
+        slider.phase = "pending";
+        Promise.resolve().then(() => commit(track, thumb)).catch((error) => showToast(error.message || "操作未完成，请重试。")).finally(() => {
+          if (slider.phase === "disposed") return;
+          slider.phase = "idle";
+          resetCommitSlider(track, thumb);
+        });
+      } });
     };
     const drag = Draggable.create(thumb, {
       type: "x",
-      bounds: track,
-      onPress() { if (!canCommit()) this.endDrag?.(); },
-      onDrag() { setDragProgress(track, thumb); },
-      onRelease() {
+      bounds:{ minX:0, maxX:Math.max(1, track.clientWidth - thumb.offsetWidth - 4) },
+      onPress() {
+        // Draggable kills target tweens before onPress. A second touch during
+        // snapping must release our phase even though its completion was killed.
+        if (slider.phase === "animating") { slider.cancel(); return; }
+        if (slider.phase !== "idle" || !visible() || !canCommit()) { this.endDrag?.(); return; }
+        gsap.killTweensOf(thumb);
+        this.applyBounds({ minX:0, maxX:Math.max(1, track.clientWidth - thumb.offsetWidth - 4) });
+        slider.phase = "dragging";
+      },
+      onDrag() { if (slider.phase === "dragging") setDragProgress(track, thumb); },
+      onRelease(event) {
+        if (slider.phase !== "dragging") return;
+        if (event?.type === "pointercancel" || event?.type === "touchcancel") { slider.cancel(); return; }
         if (setDragProgress(track, thumb).ratio >= .82) finish();
-        else resetCommitSlider(track, thumb);
+        else { slider.phase = "idle"; resetCommitSlider(track, thumb); }
       },
     })[0];
-    thumb.addEventListener("keydown", (event) => {
+    slider.drag = drag;
+    slider.keydown = (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       finish();
-    });
-    drag.update();
+    };
+    thumb.addEventListener("keydown", slider.keydown);
+    if (window.ResizeObserver) {
+      let width = track.clientWidth;
+      slider.observer = new ResizeObserver(() => {
+        if (track.clientWidth === width) return;
+        width = track.clientWidth;
+        slider.cancel();
+      });
+      slider.observer.observe(track);
+    }
+    slider.refresh();
   }
 
   function initDragSettlement() {
@@ -2092,49 +2211,21 @@
 
   function initDragLock() {
     const track = $("#lock-focus");
-    if (!track || !window.gsap || !window.Draggable || track.dataset.bound) return;
-    const thumb = track.querySelector(".drag-thumb");
-    track.dataset.bound = "1";
-    const drag = Draggable.create(thumb, {
-      type: "x",
-      bounds: track,
-      onPress() { if (state.locking || state.dashboard?.focus?.active?.focus_locked) this.endDrag?.(); },
-      onDrag() { setDragProgress(track, thumb); },
-      onRelease() {
-        const { max, ratio } = setDragProgress(track, thumb);
-        if (ratio >= .82 && !state.dashboard?.focus?.active?.focus_locked) {
-          track.classList.add("armed");
-          gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onComplete: () => commitFocusLock(track, thumb) });
-        } else if (!state.dashboard?.focus?.active?.focus_locked) {
-          gsap.to(thumb, { x: 0, duration: .58, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
-        }
-      }
-    })[0];
-    thumb.addEventListener("keydown", (event) => {
-      if ((event.key === "Enter" || event.key === " ") && !state.dashboard?.focus?.active?.focus_locked) {
-        event.preventDefault();
-        const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
-        gsap.to(thumb, { x: max, duration: .48, ease: "elastic.out(1, .55)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => commitFocusLock(track, thumb) });
-      }
-    });
-    drag.update();
+    bindCommitSlider(track, () => canManageOwnFocus() && Boolean(state.dashboard?.focus?.active) && !state.dashboard.focus.active.focus_locked && !state.locking && !state.settling, commitFocusLock, (max) => state.dashboard?.focus?.active?.focus_locked ? max : 0);
   }
 
   async function commitFocusLock(track, thumb) {
     const active = state.dashboard?.focus?.active;
     if (!active || state.locking || state.settling || active.focus_locked) return;
-    const confirmed = await requestConfirmation({ title: "锁定本段专注", message: "锁定后本段记录将标记为非受信，且不能恢复受信状态。确定继续？", label: "锁定专注", tone: "danger" });
-    if (!confirmed) {
-      gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
-      return;
-    }
     state.locking = true;
     try {
+      const confirmed = await requestConfirmation({ title: "锁定本段专注", message: "锁定后本段记录将标记为非受信，且不能恢复受信状态。确定继续？", label: "锁定专注", tone: "danger" });
+      if (!confirmed || state.dashboard?.focus?.active?.id !== active.id) { resetCommitSlider(track, thumb); return; }
       await api("/api/focus/lock", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
       await loadDashboard();
       showToast("本段专注已锁定");
     } catch (error) {
-      gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
+      resetCommitSlider(track, thumb);
       showToast(error.message);
     } finally {
       state.locking = false;
@@ -2639,6 +2730,7 @@
 
   document.addEventListener("DOMContentLoaded", async () => {
     initializeFocusIdentity();
+    bindSliderLifecycle();
     loadQuickFocus();
     try {
       const savedRest = canManageOwnFocus() ? Number(window.localStorage.getItem(restStorageKey())) : 0;

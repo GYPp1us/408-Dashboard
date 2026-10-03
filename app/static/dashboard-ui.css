@@ -44,6 +44,7 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .artwork-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .artwork-message { min-height: 1.6em; }
 .current-time-card > .sr-only { position: absolute; }
+.current-time-card .current-time-motto { margin: 12px 0 0; color: var(--accent-deep); font: 500 14px/1.4 var(--font-serif); }
 [data-tooltip], [data-tooltip-target] { cursor: help; }
 .hover-popover { position: fixed; z-index: 150; inset: auto; margin: 0; max-width: min(340px, calc(100vw - 24px)); padding: 10px 13px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); box-shadow: 0 8px 28px rgba(25, 33, 39, .18); font: 14px/1.5 var(--font-serif); white-space: pre-line; pointer-events: none; }
 .hover-popover[hidden] { display: none; }
@@ -88,6 +89,26 @@ button, input, select, textarea { font-family: var(--font-ui); }
 #focus-challenge-state b { overflow: hidden; text-overflow: ellipsis; }
 #settle-overlay-today { margin-top: 24px; cursor: default; }
 .focus-state-overlay-card #settle-overlay-today .drag-label { color: var(--accent-deep); font-size: 11px; letter-spacing: 0; }
+/* Pause belongs to the whole focus panel; rest retains the full-page overlay. */
+#dashboard-controls > .focus-state-overlay.is-panel-overlay {
+  position: absolute; inset: 0; z-index: 20; width: 100%; height: 100%;
+  padding: 14px; overflow: auto; border-radius: inherit;
+  background: color-mix(in srgb, var(--surface) 42%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(1.05); backdrop-filter: blur(10px) saturate(1.05);
+}
+#dashboard-controls > .focus-state-overlay.is-panel-overlay .focus-state-overlay-card {
+  width: 100%; max-width: 100%; padding: 20px 4px;
+  border: 0; border-radius: 0; background: transparent; color: var(--ink); box-shadow: none;
+  font-family: var(--font-serif);
+}
+#dashboard-controls .is-panel-overlay #focus-state-overlay-kicker { color: var(--accent-deep); font-size: 11px; font-weight: 700; }
+#dashboard-controls .is-panel-overlay #focus-state-overlay-title { margin-top: 12px; font-size: 21px; font-weight: 500; line-height: 1.45; overflow-wrap: anywhere; }
+#dashboard-controls .is-panel-overlay .focus-state-overlay-timer-label { display: block; margin-top: 20px; color: var(--muted); font-size: 12px; font-weight: 500; letter-spacing: 0; }
+.focus-state-overlay-timer-label[hidden] { display: none; }
+#dashboard-controls .is-panel-overlay #focus-state-overlay-timer { margin-top: 6px; color: var(--accent-deep); font-size: 40px; line-height: 1.1; }
+#dashboard-controls .is-panel-overlay #focus-state-overlay-note { margin-top: 16px; color: var(--accent-deep); font-size: 13px; line-height: 1.6; }
+#dashboard-controls .is-panel-overlay #settle-overlay-today { width: min(260px, 100%); height: 32px; margin: 24px auto 0; }
+#dashboard-controls > .focus-state-overlay.is-panel-overlay:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .focus-leaderboard-row.is-today.is-podium { position: relative; border-bottom-color: transparent; border-radius: 5px; background: var(--accent-soft); }
 .focus-leaderboard-row.is-podium > :not(.focus-podium-outline) { position: relative; z-index: 1; }
 .focus-podium-outline { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; color: var(--accent-deep); }
