@@ -186,14 +186,23 @@ def test_dashboard_runtime_keeps_awake_syncs_and_uses_one_second_clock(authentic
 def test_browser_keeps_horizontal_dashboard_while_native_portrait_is_scoped():
     from pathlib import Path
 
-    css = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    static = Path(__file__).resolve().parents[1] / "app" / "static"
+    css = (static / "app.css").read_text(encoding="utf-8")
+    header_css = (static / "status-bar.css").read_text(encoding="utf-8")
+    template = (static.parent / "templates" / "base.html").read_text(encoding="utf-8")
 
     assert "@media (orientation:portrait)" in css
     assert "@media (max-width:1099px)" not in css
     assert "@media (max-width:720px)" not in css
     assert 'html.native-app:not([data-viewport-mode="wide"]) .time-grid,html.native-app:not([data-viewport-mode="wide"]) .dashboard-grid' in css
-    assert 'html.native-app:not([data-viewport-mode="wide"]) .score-board,html.native-app:not([data-viewport-mode="wide"]) .exam-countdown' in css
+    assert ".score-board," not in css and ".exam-countdown" not in css
     assert ".dashboard-grid { display:grid; grid-template-columns:minmax(300px,1.5fr) minmax(330px,3fr) minmax(440px,2fr)" in css
+    assert 'html[data-viewport-mode="portrait"] .score-board' in header_css
+    assert 'html[data-viewport-mode="portrait"] .exam-countdown' in header_css
+    assert 'html.native-app:not([data-viewport-mode="wide"]) .score-board' not in header_css
+    assert 'html.native-app:not([data-viewport-mode="wide"]) .exam-countdown' not in header_css
+    assert '.page-site .status-bar .exam-countdown,' in header_css
+    assert template.rfind('rel="stylesheet"') == template.index('rel="stylesheet" href="{{ static_asset(\'status-bar.css\') }}"')
 
 
 def test_android_user_agent_marks_only_the_native_shell(authenticated_client):

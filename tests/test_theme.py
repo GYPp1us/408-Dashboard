@@ -55,23 +55,36 @@ def test_heatmap_scale_and_current_time_art_assets():
     assert ".activity-switch { position:relative; z-index:2" in css
 
 
-def test_status_bar_uses_stacked_date_and_tall_score_billboard():
-    css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+def test_status_bar_uses_shared_responsive_stylesheet_and_preserves_type_sizes():
+    css = (ROOT / "app" / "static" / "status-bar.css").read_text(encoding="utf-8")
+    app_css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
     ui_css = (ROOT / "app" / "static" / "dashboard-ui.css").read_text(encoding="utf-8")
+    viewport_css = (ROOT / "app" / "static" / "viewport-scale.css").read_text(encoding="utf-8")
     template = (ROOT / "app" / "templates" / "base.html").read_text(encoding="utf-8")
 
-    assert ".status-bar { display:grid; grid-template-columns:minmax(220px,1fr) max-content minmax(250px,320px) max-content;" in css
+    assert ".status-bar {" not in app_css
+    assert ".status-bar {" not in ui_css
+    assert ".status-bar {" not in viewport_css
+    assert template.rfind('rel="stylesheet"') == template.index('rel="stylesheet" href="{{ static_asset(\'status-bar.css\') }}"')
+    assert template.index("app.css") < template.index("status-bar.css")
+    assert '<header class="status-bar">' in template
+    assert 'class="status-title"' in template
+    assert 'class="exam-countdown"' in template
+    assert 'class="score-board"' in template
+    assert 'class="current-state"' in template
+    assert 'class="status-actions"' in template
     assert "today-study" not in template
     assert "today-progress" not in template
-    assert ".status-title { text-align: right; }" in ui_css
-    assert ".score-board { text-align: right; }" in ui_css
-    assert ".status-title { display:grid" in css
-    assert ".status-title { display:grid; grid-template-columns:9px minmax(0,1fr); grid-template-rows:auto auto; align-items:center; gap:2px 8px; min-width:0; text-align:left" in css
-    assert ".status-title i { grid-row:1 / 3" in css
-    assert ".exam-countdown { display:flex; align-items:baseline; gap:7px" in css
-    assert ".score-window { flex:1; height:38px" in css
-    assert ".score-row { display:flex; align-items:center; gap:10px" in css
-    assert ".current-state { display:flex; align-items:center; gap:6px" in css
+    assert "minmax(250px" not in css and "min-width: 250px" not in css
+    assert ".status-title {" in css and "text-align: left" in css
+    assert 'html.native-app:not([data-viewport-mode="wide"]) .score-board' not in css
+    assert 'html.native-app:not([data-viewport-mode="wide"]) .exam-countdown' not in css
+    assert "font-size: 17px" in css
+    assert ".exam-countdown strong { font-size: 21px; }" in css
+    assert ".score-row {" in css and "font-size: 15px" in css
+    assert ".score-row b { color: var(--ink); font-size: 16px; }" in css
+    assert ".score-row em { color: var(--muted); font-size: 13px;" in css
+    assert ".score-window { flex: 1; height: 38px" in css
     assert "translateY(-152px)" in css
 
 
@@ -100,6 +113,7 @@ def test_time_cards_use_window_duration_widths_and_compact_titles():
 
 def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     css = (ROOT / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    status_css = (ROOT / "app" / "static" / "status-bar.css").read_text(encoding="utf-8")
 
     assert ".investment-charts { display:grid" in css
     assert "grid-template-rows:auto auto auto" in css
@@ -116,8 +130,8 @@ def test_focus_investment_uses_stacked_linear_charts_and_state_colors():
     assert ".focus-comparison-view.behind .focus-compare-trend { background:#faebe8; color:var(--score-negative)" in css
     assert ".focus-diff-track" not in css
     assert ".focus-diff-scale" not in css
-    assert ".score-row em.good { color:var(--score-positive)" in css
-    assert ".score-row em.bad { color:var(--score-negative)" in css
+    assert ".score-row em.good { color: var(--score-positive);" in status_css
+    assert ".score-row em.bad { color: var(--score-negative);" in status_css
     assert ".focus-compare-trend { width:100%; padding:0 10px" in css
     assert ".focus-leaderboard { display:grid; grid-template-columns:minmax(0,4fr) minmax(108px,1fr)" in css
     assert ".score-paper-bands { position:relative; display:grid; gap:5px; padding:5px 8px; border:1px solid var(--line)" in css
