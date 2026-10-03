@@ -375,7 +375,9 @@
       $("#guest-today-target")?.replaceChildren(document.createTextNode(`7 小时目标 · ${Math.min(100, Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 100))}%`));
     };
     setSecondTask("status", tick);
-    $("#current-state").textContent = active ? `${active.paused_at ? "已暂停" : "专注中"} · ${active.subject}` : "准备学习";
+    const statusText = active ? `${active.paused_at ? "已暂停" : "专注中"} · ${active.subject}` : "准备学习";
+    $("#current-state").textContent = statusText;
+    $("#current-state").dataset.tooltip = statusText;
     $("#state-dot").classList.toggle("state-dot-active", Boolean(active));
   }
 
@@ -519,7 +521,7 @@
     if (!track) return;
     const rows = scores.length ? scores : [{ subject: "暂无成绩", score: "--", target: "--", gap: 0 }];
     const billboardRows = Array.from({ length: 4 }, (_, index) => rows[index % rows.length]);
-    track.innerHTML = [...billboardRows, billboardRows[0]].map((item) => `<div class="score-row"><span>${escapeHtml(item.subject)}</span><b>${item.score} / ${item.target}</b><em class="${item.gap > 0 ? "bad" : item.gap < 0 ? "good" : ""}">${item.gap > 0 ? `-${item.gap}` : item.gap < 0 ? `+${Math.abs(item.gap)}` : "--"}</em></div>`).join("");
+    track.innerHTML = [...billboardRows, billboardRows[0]].map((item) => `<div class="score-row"><span data-tooltip="${escapeHtml(item.subject)}">${escapeHtml(item.subject)}</span><b>${item.score} / ${item.target}</b><em class="${item.gap > 0 ? "bad" : item.gap < 0 ? "good" : ""}">${item.gap > 0 ? `-${item.gap}` : item.gap < 0 ? `+${Math.abs(item.gap)}` : "--"}</em></div>`).join("");
   }
 
   function renderHeatmap(heatmap, visibleHours) {

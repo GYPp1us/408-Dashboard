@@ -12,6 +12,7 @@
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<link rel="stylesheet" href="{{ static_asset('index-challenge.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ static_asset('viewport-scale.css') }}">
   {% if page_name == 'home' %}<link rel="stylesheet" href="{{ static_asset('daily-report.css') }}">{% endif %}
+  <link rel="stylesheet" href="{{ static_asset('status-bar.css') }}">
 </head>
 <body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}" data-role="{{ 'guest' if is_guest else 'admin' }}" data-settings-tab="{{ settings_tab|default('system') }}" data-viewer-id="{{ ui_preferences.viewer_id if ui_preferences.viewer_id is not none else 'public' }}" data-quick-focus-count="{{ ui_preferences.quick_focus_count }}">
   <div class="app-shell">
@@ -19,7 +20,12 @@
       <div class="status-title"><i></i><strong>408 Focus Console</strong><span id="today-date" class="console-date">读取中</span></div>
       <div class="exam-countdown"><small>距考研</small><strong id="exam-days">-- 天</strong><span id="exam-clock">--:--:--</span></div>
       <div class="score-board"><div class="score-window"><div id="score-track" class="score-track"><div class="score-row"><span>正在读取成绩</span><b>-- / --</b><em>--</em></div></div></div></div>
-      <div class="current-state"><span id="state-dot" class="state-dot" role="status" aria-label="正在检测连接" title="正在检测连接"></span><span id="current-state">准备学习</span>{% if is_guest %}<span class="guest-badge">访客</span><a class="role-switch ui-button ui-button--secondary ui-button--sm" href="{{ url_for('switch_admin') }}" title="切换到管理员">管理员</a>{% elif auth_user %}<a class="account-link" href="{{ url_for('user_dashboard', username=auth_user.username) }}">{{ auth_user.username }}</a><button id="open-quick-score" class="ui-button ui-button--secondary ui-button--sm quick-score-trigger" type="button" title="快速录入模拟成绩（Ctrl+N）">＋ 成绩</button><a class="settings-link ui-button ui-button--quiet ui-button--sm" href="{{ url_for('settings_page') }}" title="打开设置">设置</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">登录</a><a class="settings-link ui-button ui-button--secondary ui-button--sm" href="{{ url_for('register') }}">注册</a>{% endif %}</div>
+      <div class="current-state">
+        <div class="status-session"><span id="state-dot" class="state-dot" role="status" aria-label="正在检测连接" title="正在检测连接"></span><span id="current-state" tabindex="0" data-tooltip="准备学习">准备学习</span></div>
+        <nav class="status-actions" aria-label="账户与操作">
+          {% if is_guest %}<span class="guest-badge">访客</span><a class="role-switch ui-button ui-button--secondary ui-button--sm" href="{{ url_for('switch_admin') }}" title="切换到管理员">管理员</a>{% elif auth_user %}<a class="account-link" data-tooltip="{{ auth_user.username }}" href="{{ url_for('user_dashboard', username=auth_user.username) }}">{{ auth_user.username }}</a><button id="open-quick-score" class="ui-button ui-button--secondary ui-button--sm quick-score-trigger" type="button" title="快速录入模拟成绩（Ctrl+N）">＋ 成绩</button><a class="settings-link ui-button ui-button--quiet ui-button--sm" href="{{ url_for('settings_page') }}" title="打开设置">设置</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">登录</a><a class="settings-link ui-button ui-button--secondary ui-button--sm" href="{{ url_for('register') }}">注册</a>{% endif %}
+        </nav>
+      </div>
     </header>
     <main class="app-main">{% block content %}{% endblock %}</main>
   </div>

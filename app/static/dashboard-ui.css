@@ -31,13 +31,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { background: var(--canvas); font-family: var(--font-ui); }
 button, input, select, textarea { font-family: var(--font-ui); }
 .app-shell { border-color: var(--line); background: var(--paper); }
-.status-bar { background: var(--surface); border-color: var(--line); }
-.page-site .status-bar { grid-template-columns: minmax(0, 1fr) max-content; }
-.status-title { text-align: right; }
-.status-title strong, .status-title .console-date { justify-self: end; }
-.status-title i { justify-self: start; }
-.exam-countdown, .score-row, .current-state { justify-content: flex-end; }
-.score-board { text-align: right; }
 .panel { border-color: var(--line); background: var(--surface); }
 .current-time-card > .current-time-art { position: absolute; z-index: 0; top: 0; right: 8px; width: auto; max-width: none; height: 100%; opacity: .8; pointer-events: none; user-select: none; }
 .artwork-editor { display: grid; gap: 20px; }
@@ -130,9 +123,9 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .heat-detail-row .ui-button { padding: 0 6px; font-size: 10px; white-space: nowrap; }
 .heatmap { min-height: 0; }
 .detail-note, .chart-detail, .section-heading h2, .linear-scale { color: var(--muted); }
-.ui-button, .primary, .outline-button, .settings-link, .role-switch, .quick-score-trigger, .guest-badge { border-color: var(--line); background: var(--surface); color: var(--ink); }
+.ui-button, .primary, .outline-button { border-color: var(--line); background: var(--surface); color: var(--ink); }
 .ui-button--primary, .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-.ui-button--secondary, .quick-score-trigger { color: var(--accent-deep); border-color: var(--accent-border); background: var(--accent-soft); }
+.ui-button--secondary { color: var(--accent-deep); border-color: var(--accent-border); background: var(--accent-soft); }
 .ui-button--quiet { color: var(--muted); background: transparent; }
 .ui-button:focus-visible, button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .settings-tab, .settings-panel, .account-panel { background: var(--surface); border-color: var(--line); }
@@ -174,21 +167,6 @@ body.page-focus-kline { background: var(--canvas); }
 @media (prefers-color-scheme: dark) {
   :root[data-theme-mode="system"]:not([data-theme]) { --canvas: #13181e; --ink: #e2e8ee; --muted: #9aa8b5; --line: #323d48; --paper: #191f27; --surface: #202832; --subtle: #283340; }
 }
-/* Keep the original portrait spacing; only place the added grid columns. */
-@media (orientation: landscape) and (max-width: 1089px) {
-  html.native-app:not([data-viewport-mode="wide"]) .status-bar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content; }
-  html.native-app:not([data-viewport-mode="wide"]) .status-title { grid-column: 1 / 3; grid-row: 1; }
-  html.native-app:not([data-viewport-mode="wide"]) .current-state { grid-column: 3; grid-row: 1; }
-  html.native-app:not([data-viewport-mode="wide"]) .exam-countdown { grid-column: 1; grid-row: 2; }
-  html.native-app:not([data-viewport-mode="wide"]) .score-board { grid-column: 2; grid-row: 2; }
-}
-@media (orientation: landscape) and (max-width: 760px) {
-  html.native-app:not([data-viewport-mode="wide"]) .status-bar { grid-template-columns: minmax(0, 1fr) max-content; }
-  html.native-app:not([data-viewport-mode="wide"]) .status-title { grid-column: 1; }
-  html.native-app:not([data-viewport-mode="wide"]) .current-state { grid-column: 2; }
-  html.native-app:not([data-viewport-mode="wide"]) .exam-countdown { grid-column: 1; }
-  html.native-app:not([data-viewport-mode="wide"]) .score-board { grid-column: 1 / -1; grid-row: 3; }
-}
 @media (orientation: portrait) {
   html.native-app:not([data-viewport-mode="wide"]) .dashboard-grid, html.native-app:not([data-viewport-mode="wide"]) .dashboard-grid[data-layout="stacked"] { grid-template-columns: minmax(0, 1fr); gap: 7px; }
   html.native-app:not([data-viewport-mode="wide"]) .dashboard-grid .mode-panel { grid-column: 1; grid-row: 1; height: auto; min-height: 0; max-height: none; }
@@ -202,11 +180,6 @@ body.page-focus-kline { background: var(--canvas); }
   html:not(.native-app):not([data-viewport-mode="wide"]) .app-shell { min-width: 0; }
 }
 @media (max-width: 1169px) {
-  html:not(.native-app):not([data-viewport-mode="wide"]) .status-bar { grid-template-columns: minmax(0, 1fr) auto; gap: 7px 10px; padding: 10px 12px; }
-  html:not(.native-app):not([data-viewport-mode="wide"]) .status-title { grid-column: 1 / -1; grid-row: 1; }
-  html:not(.native-app):not([data-viewport-mode="wide"]) .current-state { grid-column: 1 / -1; grid-row: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: none; min-width: 0; padding: 0; border: 0; }
-  html:not(.native-app):not([data-viewport-mode="wide"]) .exam-countdown { grid-column: 1; grid-row: 3; padding: 0; border: 0; }
-  html:not(.native-app):not([data-viewport-mode="wide"]) .score-board { grid-column: 2; grid-row: 3; padding: 0; border: 0; }
   html:not(.native-app):not([data-viewport-mode="wide"]) .time-grid { grid-template-columns: minmax(0, 1fr); }
   html:not(.native-app):not([data-viewport-mode="wide"]) .dashboard-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   html:not(.native-app):not([data-viewport-mode="wide"]) .dashboard-grid .mode-panel,
