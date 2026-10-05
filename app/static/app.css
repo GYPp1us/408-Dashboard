@@ -82,6 +82,7 @@ button { cursor:pointer; }
 .settlement-banner-copy strong { color:var(--accent-deep); font-size:13px; }
 .settlement-banner-copy span { color:var(--muted); font-size:10px; }
 .daily-settlement-action { margin-top:9px; }
+.daily-achievement-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .daily-achievement { min-height:284px; animation:focus-enter .36s ease both; }
 .achievement-total { padding:15px 0 13px; border-bottom:1px solid var(--line); }
 .achievement-total span { display:block; color:var(--muted); font-size:11px; }

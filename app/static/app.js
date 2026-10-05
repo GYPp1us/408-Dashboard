@@ -217,7 +217,7 @@
       })();
       return await Promise.race([request, deadline]);
     } catch (error) {
-      const focusWrite = String(options.method || "GET").toUpperCase() === "POST"
+      const focusWrite = ["POST", "DELETE"].includes(String(options.method || "GET").toUpperCase())
         && /^\/api\/(?:focus\/(?:start|end|pause|lock)|daily-settlement)$/.test(url);
       if (!options.signal?.aborted && focusWrite && (timedOut || error instanceof TypeError)) {
         showToast("操作结果暂未确认，将刷新页面核对；请勿重复提交。");
@@ -345,11 +345,9 @@
     if (!overlay || overlay.dataset.focusOverlayBound) return;
     overlay.dataset.focusOverlayBound = "1";
     overlay?.addEventListener("click", (event) => {
-      if (event.target.closest?.("[data-settle-today]")) return;
       exitFocusStateOverlay();
     });
     overlay?.addEventListener("keydown", (event) => {
-      if (event.target.closest?.("[data-settle-today]")) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         exitFocusStateOverlay();
@@ -1462,6 +1460,10 @@
     const guestReport = $("#guest-open-daily-report");
     if (guestReport) guestReport.hidden = !settlement;
     window.DailyReport?.acceptSettlement(settlement);
+    document.querySelectorAll("[data-cancel-daily-settlement]").forEach((button) => {
+      button.disabled = state.settling;
+      button.textContent = state.settling ? "处理中…" : "取消结算";
+    });
     initDragSettlement();
     if (modes) modes.hidden = Boolean(settlement);
     if (actions) actions.hidden = Boolean(settlement);
@@ -1480,7 +1482,38 @@
     const subject = settlement.top_subject ? `${escapeHtml(settlement.top_subject)} · ${formatSeconds(settlement.top_subject_seconds || 0)}` : "今天还没有专注记录";
     const rank = settlement.report || data.focus_leaderboard?.today;
     const rankText = rank?.rank ? rank.rank === 1 ? `第 1 名 · ${Number(rank.percentile || 100)}% 分位` : `第 ${rank.rank} 名 · 距上一名 ${formatSeconds(Number(rank.gap_to_previous_seconds || 0))}` : "今天暂无有效专注排名";
-    achievement.innerHTML = `<div class="section-heading"><h2>当日成就</h2><span>已结算 · ${escapeHtml(settlement.settlement_date)}</span></div><div class="achievement-total"><span>今日有效专注</span><strong>${formatSeconds(total)}</strong><b>${completion}% · ${evaluation}</b></div><div class="achievement-list"><div><span>昨日差值</span><b class="${delta >= 0 ? "good" : "bad"}">${escapeHtml(deltaText)}</b></div><div><span>历日排名</span><b>${escapeHtml(rankText)}</b></div><div><span>专注次数</span><b>${Number(settlement.session_count || 0)} 次</b></div><div><span>主要投入</span><b>${subject}</b></div></div><button type="button" class="ui-button ui-button--secondary daily-report-reopen" data-open-daily-report>查看今日纪念卡 ↗</button>`;
+    achievement.innerHTML = `<div class="section-heading"><h2>当日成就</h2><span>已结算 · ${escapeHtml(settlement.settlement_date)}</span></div><div class="achievement-total"><span>今日有效专注</span><strong>${formatSeconds(total)}</strong><b>${completion}% · ${evaluation}</b></div><div class="achievement-list"><div><span>昨日差值</span><b class="${delta >= 0 ? "good" : "bad"}">${escapeHtml(deltaText)}</b></div><div><span>历日排名</span><b>${escapeHtml(rankText)}</b></div><div><span>专注次数</span><b>${Number(settlement.session_count || 0)} 次</b></div><div><span>主要投入</span><b>${subject}</b></div></div><div class="daily-achievement-actions"><button type="button" class="ui-button ui-button--secondary daily-report-reopen" data-open-daily-report>查看今日纪念卡 ↗</button>${canCancelSettlement() ? `<button type="button" class="ui-button ui-button--quiet" data-cancel-daily-settlement data-settlement-date="${escapeHtml(settlement.settlement_date)}" data-settlement-id="${Number(settlement.id)}" ${state.settling ? "disabled" : ""}>取消结算</button>` : ""}</div>`;
+  }
+
+  function canCancelSettlement(date = state.dashboard?.daily_settlement?.settlement_date) {
+    const settlement = state.dashboard?.daily_settlement;
+    return Boolean(canManageOwnFocus() && settlement?.id && settlement.settlement_date === date && date === accountDateKey());
+  }
+
+  async function cancelDailySettlement(trigger) {
+    if (state.settling) return;
+    const settlement = state.dashboard?.daily_settlement;
+    const date = trigger?.dataset?.settlementDate || settlement?.settlement_date;
+    const id = Number(trigger?.dataset?.settlementId || settlement?.id);
+    if (!canCancelSettlement(date) || id !== settlement.id) return;
+    state.settling = true;
+    renderDailySettlement(state.dashboard);
+    try {
+      // Paint the pending action before sending the write.
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await api("/api/daily-settlement", { method:"DELETE", body:JSON.stringify({ expected_date:date, settlement_id:id }) });
+      window.DailyReport?.close();
+      state.dashboard = { ...state.dashboard, daily_settlement:null, can_settle_today:true };
+      document.body.classList.remove("is-settled");
+      renderDailySettlement(state.dashboard);
+      showToast("已取消结算，可以继续专注");
+    } catch (error) {
+      showToast(error.message === "settlement_changed" ? "结算已更新，请重试" : error.message === "settlement_date_changed" ? "日期已改变，正在刷新" : "取消未确认，正在刷新");
+    } finally {
+      state.settling = false;
+      try { await loadDashboard(); }
+      catch (_error) { showToast("同步失败，将刷新页面核对"); window.setTimeout(() => window.location.reload(), 1800); }
+    }
   }
 
   function renderFocusChallenge() {
@@ -2763,6 +2796,9 @@
     document.querySelectorAll("[data-insight-view]").forEach((button) => button.addEventListener("click", () => selectInsightView(button.dataset.insightView)));
     window.DashboardController = {
       getData: () => state.dashboard,
+      isSettlementBusy: () => state.settling,
+      canCancelSettlement,
+      cancelDailySettlement,
       isPinned: (id) => state.quickFocus.pinned.includes(Number(id)),
       togglePin: toggleQuickPin,
       replaceQuickItem(oldId, newId) {
@@ -2778,6 +2814,10 @@
         updateFocusLaunchPreview();
       },
     };
+    document.addEventListener("click", (event) => {
+      const trigger = event.target.closest?.("[data-cancel-daily-settlement]");
+      if (trigger) cancelDailySettlement(trigger);
+    });
     initDragSettlement();
     initDragChallenge();
     document.addEventListener("dashboard:challenge-updated", renderFocusChallenge);

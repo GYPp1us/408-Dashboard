@@ -944,6 +944,50 @@ def register_routes(app):
         finally:
             connection.close()
 
+    @app.delete("/api/daily-settlement")
+    @user_required
+    def cancel_daily_settlement():
+        requested = request.get_json(silent=True)
+        if not isinstance(requested, dict):
+            return jsonify(error="json_object_required"), 400
+        expected_date = requested.get("expected_date")
+        try:
+            if not isinstance(expected_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expected_date):
+                raise ValueError
+            datetime.strptime(expected_date, "%Y-%m-%d")
+        except ValueError:
+            return jsonify(error="invalid_settlement_date"), 400
+        settlement_id = requested.get("settlement_id")
+        if type(settlement_id) is not int or settlement_id <= 0:
+            return jsonify(error="invalid_settlement_id"), 400
+        connection = connect(app.config["DATABASE"])
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            user_id = current_user_id()
+            settings = get_settings(connection, user_id)
+            today = _now(settings.get("timezone", "Asia/Shanghai")).date().isoformat()
+            if expected_date != today:
+                connection.rollback()
+                return jsonify(error="settlement_date_changed", current_date=today), 409
+            existing = get_daily_settlement(connection, user_id, today)
+            if existing and existing["id"] != settlement_id:
+                connection.rollback()
+                return jsonify(error="settlement_changed"), 409
+            if existing:
+                # Reopen the day without changing any completed focus records.
+                # The id guard prevents a delayed retry deleting a newer report.
+                connection.execute(
+                    "DELETE FROM daily_settlements WHERE id = ? AND user_id = ?",
+                    (settlement_id, user_id),
+                )
+            connection.commit()
+            return jsonify(settlement=None, current_date=today, idempotent=existing is None)
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     @app.get("/api/daily-settlement/report")
     @login_required
     def daily_settlement_report():
