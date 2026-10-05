@@ -21,7 +21,7 @@
     try { return new Intl.DateTimeFormat("zh-CN", { timeZone:timezone || "Asia/Shanghai", hour:"2-digit", minute:"2-digit", hour12:false }).format(new Date(value)); }
     catch (_error) { return "—"; }
   };
-  const metric = (label, value, note = "", extra = "") => `<div class="daily-report-metric ${extra}"><span>${escape(label)}</span><strong>${escape(value)}</strong>${note ? `<small>${escape(note)}</small>` : ""}</div>`;
+  const metric = (label, value, extra = "") => `<div class="daily-report-metric ${extra}"><span>${escape(label)}</span><strong>${escape(value)}</strong></div>`;
   const historyKey = "mutsumiDailyReport";
   let settlement = null, currentDate = null, returnFocus = null, request = 0, controller = null, historyToken = null, closing = false;
 
@@ -71,7 +71,7 @@
   function status(title, message, error = false) {
     content.setAttribute("aria-busy", String(!error));
     content.classList.remove("is-ready");
-    content.innerHTML = `<div class="daily-report-status" role="${error ? "alert" : "status"}"><span class="daily-report-eyebrow">408 FOCUS CONSOLE · ${escape(dateLabel(currentDate))}</span>${error ? '<span class="daily-report-status-mark" aria-hidden="true">!</span>' : '<span class="daily-report-loading-mark" aria-hidden="true"></span>'}<h2 id="daily-report-title">${escape(title)}</h2><p id="daily-report-caption">${escape(message)}</p>${error ? '<button type="button" class="ui-button ui-button--secondary" data-daily-report-retry>重新读取纪念卡</button>' : '<span class="daily-report-status-note">结束本段专注 · 固定当日快照</span>'}</div>`;
+    content.innerHTML = `<div class="daily-report-status" role="${error ? "alert" : "status"}">${error ? '<span class="daily-report-status-mark" aria-hidden="true">!</span>' : '<span class="daily-report-loading-mark" aria-hidden="true"></span>'}<h2 id="daily-report-title">${escape(title)}</h2><p id="daily-report-caption">${escape(message)}</p>${error ? '<button type="button" class="ui-button ui-button--secondary" data-daily-report-retry>重试</button>' : ""}</div>`;
   }
 
   function reportHtml(report) {
@@ -83,9 +83,7 @@
     const completion = known(report.completion_percent) ? Number(report.completion_percent) : known(report.completion) ? Number(report.completion) * 100 : null;
     const target = known(report.target_seconds) ? Number(report.target_seconds) : null;
     const rank = known(report.rank) && Number(report.rank) > 0 ? `#${Number(report.rank)}` : "—";
-    const rankNote = rank === "—" ? "无已存排名" : `${known(report.day_count) ? `${Number(report.day_count)} 个记录日` : "历日排名"}${known(report.percentile) ? ` · ${percent(report.percentile)} 分位` : ""}`;
     const delta = Number(report.delta_seconds);
-    const deltaNote = !known(report.delta_seconds) ? "无已存比较" : delta > 0 ? "比昨日多投入" : delta < 0 ? "比昨日少投入" : "与昨日持平";
     const subjectRows = subjects.map((item, position) => {
       const ratio = known(item.percent) ? Number(item.percent) : total > 0 ? Number(item.seconds) / total * 100 : 0;
       const width = Math.max(0, Math.min(100, ratio));
@@ -94,16 +92,19 @@
     const indexChange = index && known(index.return_percent) ? Number(index.return_percent) : null;
     const indexTone = indexChange > 0 ? "is-rise" : indexChange < 0 ? "is-fall" : "";
     const change = known(indexChange) ? `${indexChange > 0 ? "+" : indexChange < 0 ? "−" : "±"}${percent(Math.abs(indexChange), 2)}` : "—";
-    const indexHtml = index ? `<div class="daily-report-index-value ${indexTone}"><strong>${escape(point(index.current))}</strong><b>${escape(change)}</b></div><div class="daily-report-index-baseline"><span>开盘 <b>${escape(point(index.open))}</b></span><span>前收 <b>${escape(point(index.previous_close))}</b></span></div><p class="daily-report-note">${escape(index.note || "结算时的指数快照")}${index.is_market_closed ? " · 已收市" : ""}${index.as_of ? ` · ${escape(timeLabel(index.as_of, report.timezone))}` : ""}</p>` : '<p class="daily-report-empty">这份记录没有保存指数快照</p>';
-    const challengeHtml = challenge ? `<div class="daily-report-challenge"><span class="daily-report-challenge-mark" aria-hidden="true">${challenge.active_today ? "✦" : "○"}</span><div><strong>${challenge.active_today ? "连胜挑战" : "普通节奏"}</strong><span>当日涨跌限制 ±${Number(challenge.current_limit_percent) === 20 ? "20" : "10"}%${challenge.pending_disable ? " · 次日恢复 ±10%" : ""}</span></div></div>` : '<p class="daily-report-empty">未保存当日挑战状态</p>';
+    const indexNote = index ? `${index.note || "结算快照"}${index.is_market_closed ? " · 已收市" : ""}${index.as_of ? ` · ${timeLabel(index.as_of, report.timezone)}` : ""}` : "";
+    const indexHtml = index ? `<div class="daily-report-index-value ${indexTone}"><strong>${escape(point(index.current))}</strong><b>${escape(change)}</b></div><div class="daily-report-index-baseline"><span>开盘 <b>${escape(point(index.open))}</b></span><span>前收 <b>${escape(point(index.previous_close))}</b></span></div>` : '<p class="daily-report-empty">没有保存指数快照</p>';
+    const challengeHtml = challenge ? `<div class="daily-report-challenge"><span class="daily-report-challenge-mark" aria-hidden="true">${challenge.active_today ? "✦" : "○"}</span><div><strong>${challenge.active_today ? "连胜挑战" : "普通节奏"}</strong><span>±${Number(challenge.current_limit_percent) === 20 ? "20" : "10"}%${challenge.pending_disable ? " · 次日恢复 ±10%" : ""}</span></div></div>` : '<p class="daily-report-empty">未保存当日挑战状态</p>';
     const achievements = (Array.isArray(report.achievements) ? report.achievements : []).filter((item) => item?.label).map((item) => `<span class="daily-report-achievement" title="${escape(item.detail || item.label)}">${escape(item.label)}</span>`).join("");
     const trustCounts = known(report.trusted_seconds) ? `受信 ${seconds(report.trusted_seconds)}${known(report.untrusted_seconds) ? ` · 非受信 ${seconds(report.untrusted_seconds)}` : ""}` : "";
     const trustNote = trustCounts || report.trust_note || "本记录未保存受信明细";
-    return `<header class="daily-report-header"><div><span class="daily-report-eyebrow">408 FOCUS CONSOLE</span><h2 id="daily-report-title">今日投入，留作纪念</h2></div><div class="daily-report-date"><time datetime="${escape(report.date)}">${escape(dateLabel(report.date))}</time><span>${escape(report.username ? `@${report.username}` : "我的专注记录")}</span></div></header>
-      <section class="daily-report-hero" aria-label="本日总专注"><div class="daily-report-total"><span>今日有效专注</span><strong>${escape(seconds(total))}</strong><p id="daily-report-caption" title="${escape(report.trust_note || trustNote)}" data-tooltip="${escape(report.trust_note || trustNote)}">${escape(trustNote)}</p></div><div class="daily-report-goal"><div class="daily-report-goal-heading"><span>每日目标</span><strong>${escape(seconds(target))}</strong></div><div class="daily-report-goal-track" role="meter" aria-label="每日专注目标完成度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.max(0, Math.min(100, completion || 0))}" aria-valuetext="${escape(percent(completion))}"><span style="width:${Math.max(0, Math.min(100, completion || 0))}%"></span></div><div class="daily-report-goal-footer"><b>${escape(percent(completion))}</b><span>${target !== null ? total >= target ? "目标达成" : `距目标 ${escape(seconds(target - total))}` : "无已存目标"}</span></div></div></section>
-      <div class="daily-report-metrics">${metric("较昨日增量", signedDuration(report.delta_seconds), deltaNote, delta > 0 ? "is-positive" : "")}${metric("历日排名", rank, rankNote)}${metric("最长一段", seconds(report.longest_session_seconds), `${Number(report.session_count || 0)} 段专注`)}</div>
-      <div class="daily-report-columns"><section class="daily-report-subjects"><h3>${completeSubjects ? "时间去向" : "已存主要事项"}</h3>${subjects.length ? `<ul>${subjectRows}</ul>` : '<p class="daily-report-empty">这一天没有已存科目记录</p>'}${!completeSubjects && subjects.length ? '<p class="daily-report-note">早期记录仅保存主要事项，未保存完整科目比例。</p>' : ""}</section><aside class="daily-report-snapshot"><section><h3>专注指数 · 结算快照</h3>${indexHtml}</section><section class="daily-report-policy">${challengeHtml}</section></aside></div>
-      <footer class="daily-report-footer"><div class="daily-report-achievements">${achievements}</div><p class="daily-report-closing">${escape(report.closing_note || "这一天的投入已经留在记录里。")}</p><div class="daily-report-proof"><span>${legacy ? "早期已结算记录" : "当日已结算 · 固定快照"}${report.first_start && report.last_end ? ` · ${escape(timeLabel(report.first_start, report.timezone))} — ${escape(timeLabel(report.last_end, report.timezone))}` : ""}</span><span>${escape(report.timezone || "账户时区")}</span></div></footer>`;
+    const busy = window.DashboardController?.isSettlementBusy?.() === true;
+    const cancelHtml = window.DashboardController?.canCancelSettlement?.(report.date) ? `<button type="button" class="ui-button ui-button--quiet" data-cancel-daily-settlement data-settlement-date="${escape(report.date)}" data-settlement-id="${Number(settlement?.id)}" ${busy ? "disabled" : ""}>${busy ? "处理中…" : "取消结算"}</button>` : "";
+    return `<header class="daily-report-header"><div><h2 id="daily-report-title">当日总结</h2></div><div class="daily-report-date"><time datetime="${escape(report.date)}">${escape(dateLabel(report.date))}</time><span>${escape(report.username ? `@${report.username}` : "我的专注记录")}</span></div></header>
+      <section class="daily-report-hero" aria-label="本日总专注"><div class="daily-report-total"><span title="${escape(trustNote)}">今日有效专注</span><strong>${escape(seconds(total))}</strong><p id="daily-report-caption" class="sr-only">当日专注总结</p></div><div class="daily-report-goal"><div class="daily-report-goal-heading"><span>每日目标</span><strong>${escape(seconds(target))}</strong></div><div class="daily-report-goal-track" role="meter" aria-label="每日专注目标完成度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.max(0, Math.min(100, completion || 0))}" aria-valuetext="${escape(percent(completion))}"><span style="width:${Math.max(0, Math.min(100, completion || 0))}%"></span></div><div class="daily-report-goal-footer"><b>${escape(percent(completion))}</b><span>${target !== null ? total >= target ? "目标达成" : `距目标 ${escape(seconds(target - total))}` : "—"}</span></div></div></section>
+      <div class="daily-report-metrics">${metric("较昨日", signedDuration(report.delta_seconds), delta > 0 ? "is-positive" : "")}${metric("历日排名", rank)}${metric("最长一段", seconds(report.longest_session_seconds))}</div>
+      <div class="daily-report-columns"><section class="daily-report-subjects"><h3${!completeSubjects ? ' title="早期记录仅保存主要事项，未保存完整科目比例。"' : ""}>${completeSubjects ? "时间去向" : "已存主要事项"}</h3>${subjects.length ? `<ul>${subjectRows}</ul>` : '<p class="daily-report-empty">暂无科目记录</p>'}</section><aside class="daily-report-snapshot"><section><h3 title="${escape(indexNote)}">专注指数</h3>${indexHtml}</section><section class="daily-report-policy">${challengeHtml}</section></aside></div>
+      <footer class="daily-report-footer"><div class="daily-report-achievements">${achievements}</div><p class="daily-report-closing">${escape(report.closing_note || "今日努力，皆有回响。")}</p><div class="daily-report-proof"><span>${legacy ? "早期记录" : ""}${report.first_start && report.last_end ? `${legacy ? " · " : ""}${escape(timeLabel(report.first_start, report.timezone))} — ${escape(timeLabel(report.last_end, report.timezone))}` : ""}</span>${cancelHtml}</div></footer>`;
   }
 
   function render(report) {
@@ -115,13 +116,17 @@
     content.scrollTop = 0;
   }
 
-  function acceptSettlement(value) { settlement = value || null; }
+  function acceptSettlement(value) {
+    const changed = settlement && settlement.id !== value?.id;
+    settlement = value || null;
+    if (changed) close();
+  }
 
   function pending(date, trigger) {
     request += 1;
     controller?.abort();
     currentDate = date;
-    status("正在为今天收官", "正在确认结算并整理你的当日投入，请稍候。");
+    status("正在结算", "请稍候…");
     show(trigger);
   }
 
@@ -151,7 +156,7 @@
     controller = new AbortController();
     const signal = controller.signal, generation = ++request;
     currentDate = date;
-    status("正在读取纪念卡", "正在读取服务端保存的当日快照。");
+    status("正在读取", "请稍候…");
     show(trigger);
     try {
       const response = await fetch(`/api/daily-settlement/report?date=${encodeURIComponent(date)}`, { credentials:"same-origin", cache:"no-store", headers:{ Accept:"application/json" }, signal });

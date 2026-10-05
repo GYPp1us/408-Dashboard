@@ -114,3 +114,34 @@ test('an unconfirmed object cannot render a successful settlement card', () => {
   app.api.complete({ ...snapshot, snapshot_kind: 'live_preview' }, app.trigger);
   assert.match(app.content.innerHTML, /结算尚未确认/);
 });
+
+test('cancel action appears only when the controller allows this report date', () => {
+  const app = context();
+  app.api.acceptSettlement({ id: 7, settlement_date: snapshot.date, report: snapshot });
+  app.api.open(snapshot, app.trigger);
+  assert.doesNotMatch(app.content.innerHTML, /data-cancel-daily-settlement/);
+  app.window.DashboardController = { canCancelSettlement: date => date === snapshot.date };
+  app.api.open(snapshot, app.trigger);
+  assert.match(app.content.innerHTML, /data-cancel-daily-settlement/);
+  assert.match(app.content.innerHTML, /data-settlement-id="7"/);
+  app.api.open({ ...snapshot, date: '2026-10-01' }, app.trigger);
+  assert.doesNotMatch(app.content.innerHTML, /data-cancel-daily-settlement/);
+});
+
+test('removing a settlement invalidates and closes its open card', () => {
+  const app = context();
+  app.api.acceptSettlement({ id: 7, settlement_date: snapshot.date, report: snapshot });
+  app.api.open(snapshot, app.trigger);
+  app.api.acceptSettlement(null);
+  assert.equal(app.dialog.open, false);
+  app.api.complete(snapshot, app.trigger);
+  assert.equal(app.dialog.open, false);
+});
+
+test('a freshly rendered settlement card disables cancel until the transaction completes', () => {
+  const app = context();
+  app.api.acceptSettlement({ id: 7, settlement_date: snapshot.date, report: snapshot });
+  app.window.DashboardController = { canCancelSettlement: () => true, isSettlementBusy: () => true };
+  app.api.open(snapshot, app.trigger);
+  assert.match(app.content.innerHTML, /data-settlement-id="7" disabled>处理中/);
+});

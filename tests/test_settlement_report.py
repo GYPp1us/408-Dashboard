@@ -56,6 +56,111 @@ def seed_session(application, owner, start, end=None, *, subject="数学", trust
         connection.close()
 
 
+def test_cancel_settlement_reopens_day_without_reopening_completed_focus(settlement_app):
+    application, owner, _ = settlement_app
+    client = signed_client(application, owner)
+    active = seed_session(application, owner, "2026-10-02T14:00:00+08:00", locked=True,
+                          pause_start="2026-10-02T15:00:00+08:00")
+    settled = client.post("/api/daily-settlement", json={"session_id": active}).get_json()["settlement"]
+    request = {"expected_date": settled["settlement_date"], "settlement_id": settled["id"]}
+    connection = connect(application.config["DATABASE"])
+    before = [tuple(row) for row in connection.execute("SELECT * FROM focus_sessions ORDER BY id")]
+    pauses = [tuple(row) for row in connection.execute("SELECT * FROM focus_pauses ORDER BY id")]
+    connection.close()
+    response = client.delete("/api/daily-settlement", json=request)
+    assert response.status_code == 200
+    assert response.get_json()["settlement"] is None
+    assert response.get_json()["idempotent"] is False
+    assert client.delete("/api/daily-settlement", json=request).get_json()["idempotent"] is True
+    dashboard = client.get("/api/dashboard").get_json()
+    assert dashboard["daily_settlement"] is None and dashboard["can_settle_today"] is True
+    assert dashboard["focus"]["active"] is None
+    assert client.get("/api/daily-settlement/report?date=2026-10-02").status_code == 404
+    connection = connect(application.config["DATABASE"])
+    assert [tuple(row) for row in connection.execute("SELECT * FROM focus_sessions ORDER BY id")] == before
+    assert [tuple(row) for row in connection.execute("SELECT * FROM focus_pauses ORDER BY id")] == pauses
+    connection.close()
+    assert client.post("/api/focus/start", json={"subject": "数学二轮", "mode": "专注"}).status_code == 201
+
+
+def test_delayed_cancel_cannot_delete_a_new_settlement(settlement_app):
+    application, owner, current = settlement_app
+    client = signed_client(application, owner)
+    first = client.post("/api/daily-settlement", json={}).get_json()["settlement"]
+    request = {"expected_date": first["settlement_date"], "settlement_id": first["id"]}
+    assert client.delete("/api/daily-settlement", json=request).status_code == 200
+    current[0] += timedelta(minutes=5)
+    second = client.post("/api/daily-settlement", json={}).get_json()["settlement"]
+    assert second["id"] != first["id"]
+    stale = client.delete("/api/daily-settlement", json=request)
+    assert stale.status_code == 409 and stale.get_json()["error"] == "settlement_changed"
+    assert client.get("/api/dashboard").get_json()["daily_settlement"]["id"] == second["id"]
+
+
+def test_cancel_uses_account_date_and_rejects_yesterdays_request(settlement_app):
+    application, owner, current = settlement_app
+    client = signed_client(application, owner)
+    settled = client.post("/api/daily-settlement", json={}).get_json()["settlement"]
+    current[0] += timedelta(days=1)
+    response = client.delete("/api/daily-settlement", json={
+        "expected_date": settled["settlement_date"], "settlement_id": settled["id"],
+    })
+    assert response.status_code == 409 and response.get_json()["error"] == "settlement_date_changed"
+    assert client.get("/api/daily-settlement/report?date=2026-10-02").status_code == 200
+
+
+def test_cancel_follows_account_timezone_instead_of_server_date(settlement_app):
+    application, owner, current = settlement_app
+    connection = connect(application.config["DATABASE"])
+    connection.execute("UPDATE user_settings SET value='UTC' WHERE user_id=? AND key='timezone'", (owner,))
+    connection.commit()
+    connection.close()
+    current[0] = datetime.fromisoformat("2026-10-02T01:00:00+08:00")
+    client = signed_client(application, owner)
+    settled = client.post("/api/daily-settlement", json={}).get_json()["settlement"]
+    assert settled["settlement_date"] == "2026-10-01"
+    response = client.delete("/api/daily-settlement", json={
+        "expected_date": settled["settlement_date"], "settlement_id": settled["id"],
+    })
+    assert response.status_code == 200 and response.get_json()["current_date"] == "2026-10-01"
+
+
+@pytest.mark.parametrize("payload", [
+    None, [], True, {}, {"expected_date": "2026-02-30", "settlement_id": 1},
+    {"expected_date": "2026-10-02", "settlement_id": True},
+    {"expected_date": "2026-10-02", "settlement_id": 1.5},
+    {"expected_date": "2026-10-02", "settlement_id": "1"},
+    {"expected_date": "2026-10-02", "settlement_id": 0},
+])
+def test_invalid_cancel_preserves_settlement(settlement_app, payload):
+    application, owner, _ = settlement_app
+    client = signed_client(application, owner)
+    settled = client.post("/api/daily-settlement", json={}).get_json()["settlement"]
+    assert client.delete("/api/daily-settlement", json=payload).status_code == 400
+    assert client.get("/api/dashboard").get_json()["daily_settlement"]["id"] == settled["id"]
+
+
+def test_cancel_is_owner_only_and_guest_read_only(settlement_app):
+    application, owner, current = settlement_app
+    client = signed_client(application, owner)
+    settled = client.post("/api/daily-settlement", json={}).get_json()["settlement"]
+    request = {"expected_date": settled["settlement_date"], "settlement_id": settled["id"]}
+    connection = connect(application.config["DATABASE"])
+    other = create_user(connection, "cancel-other", "cancel-other@example.com", "hash", current[0].isoformat())
+    connection.commit()
+    connection.close()
+    other_client = signed_client(application, other)
+    other_settled = other_client.post("/api/daily-settlement", json={}).get_json()["settlement"]
+    assert other_client.delete("/api/daily-settlement", json=request).status_code == 409
+    assert other_client.get("/api/dashboard").get_json()["daily_settlement"]["id"] == other_settled["id"]
+    guest = application.test_client()
+    with guest.session_transaction() as session:
+        session.update(authenticated=True, role="guest", profile_user_id=owner)
+    assert guest.delete("/api/daily-settlement", json=request).status_code == 403
+    assert application.test_client().delete("/api/daily-settlement", json=request).status_code == 401
+    assert client.get("/api/dashboard").get_json()["daily_settlement"]["id"] == settled["id"]
+
+
 def test_active_settlement_freezes_rich_report_and_preserves_market_snapshot(settlement_app):
     application, owner, current = settlement_app
     client = signed_client(application, owner)
