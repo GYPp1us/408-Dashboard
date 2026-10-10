@@ -25,6 +25,7 @@ val dashboardUrl = providers.environmentVariable("MUTSUMI_FOCUS_URL").orNull
     ?: "https://platform.arcol.site/"
 val vivoAtomicScene = providers.environmentVariable("MUTSUMI_VIVO_ATOMIC_SCENE").orNull
     ?: "FOCUS_TIMER"
+val historicalIslandOnly = providers.environmentVariable("MUTSUMI_VIVO_ISLAND_ONLY").orNull == "1"
 
 android {
     namespace = "com.mutsumi.focus"
@@ -39,6 +40,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "DASHBOARD_URL", "\"$dashboardUrl\"")
         buildConfigField("String", "VIVO_ATOMIC_SCENE", "\"$vivoAtomicScene\"")
+        buildConfigField("boolean", "VIVO_HISTORICAL_ISLAND_ONLY", historicalIslandOnly.toString())
     }
 
     signingConfigs {

@@ -9,9 +9,12 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import com.mutsumi.focus.atomic.VivoAtomicPayload
+import java.util.Locale
 
 class OriginOsAtomicPublisher(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
+    private var atomicRecord = 0
 
     fun ensureChannels() {
         manager.createNotificationChannel(NotificationChannel(
@@ -136,20 +139,15 @@ class OriginOsAtomicPublisher(private val context: Context) {
         clickIntent: PendingIntent,
         operation: AtomicOperation,
     ) {
-        val baseInfos = Bundle().apply {
-            putInt("notification.superx.baseInfos.icon", R.drawable.ic_notification)
-            putString("notification.superx.baseInfos.title", title)
-            putString("notification.superx.baseInfos.content", content)
-        }
-        val extras = Bundle().apply {
-            putInt("notification.superx.operation", operation.value)
-            putBoolean("notification.superx.showNotify", true)
-            putInt("notification.superx.template", 1)
-            putParcelable("notification.superx.clickResp", clickIntent)
-            putString("notification.superx.scene", BuildConfig.VIVO_ATOMIC_SCENE)
-            putBundle("notification.superx.baseInfos", baseInfos)
-        }
-        builder.addExtras(extras)
+        if (operation == AtomicOperation.CREATE) atomicRecord = 0
+        val elapsed = state.elapsedNow()
+        val timer = String.format(Locale.ROOT, "%02d:%02d:%02d", elapsed / 3600, elapsed / 60 % 60, elapsed % 60)
+        builder.addExtras(VivoAtomicPayload.create(
+            context, R.drawable.ic_notification, operation.value,
+            BuildConfig.VIVO_ATOMIC_SCENE, title, content, timer, clickIntent,
+            BuildConfig.VIVO_HISTORICAL_ISLAND_ONLY, ++atomicRecord,
+            "focus:${state.sessionId}",
+        ))
     }
 
     @Suppress("NewApi")

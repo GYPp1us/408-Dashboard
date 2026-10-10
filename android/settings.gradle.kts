@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "MutsumiFocus"
 include(":app")
+include(":atomic-lab")
