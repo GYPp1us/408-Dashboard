@@ -1,0 +1,3054 @@
+(() => {
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, heatWindowStart: null, heatHistoryLength: 0, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "index", insightView: "investment", summaryReturnView: "investment", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
+  const DAILY_TARGET_SECONDS = 7 * 3600;
+  const chartColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const quickFocusCount = () => Number(window.DashboardUI?.preferences.quick_focus_count || 4);
+  const quickFocusStorageKey = () => `${QUICK_FOCUS_STORAGE}:${document.body.dataset.viewerId || 'public'}`;
+  const appFontFamily = '"Source Han Serif SC Medium", "Source Han Serif SC", "思源宋体 SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", serif';
+  const themePalettes = {
+    idle: ["#d66c58", "#b25647", "#dd9073", "#97483e", "#c27758", "#e4a994", "#835144", "#d28a72"],
+    focus: ["#8067b3", "#685295", "#9a86c3", "#59447f", "#8b77aa", "#b4a5d1", "#706186", "#9f8db8"],
+    settled: ["#6f8f78", "#557763", "#8aa891", "#486653", "#789c81", "#abc0ad", "#5d8068", "#94ae99"],
+  };
+  const $ = (selector) => document.querySelector(selector);
+
+  function nativeRuntime() {
+    try { return JSON.parse(window.MutsumiAndroid?.getFocusRuntime?.() || "{}"); }
+    catch (_error) { return {}; }
+  }
+
+  function nativeAction(action, reminder = false) {
+    const runtime = nativeRuntime();
+    if (runtime.busy) return;
+    window.MutsumiAndroid?.performFocusAction?.(action, Number(runtime.revision || 0), reminder ? runtime.reminderToken || "" : "");
+    if (["pause", "resume", "end"].includes(action)) showToast("正在处理…");
+    window.setTimeout(renderNativeRuntime, 80);
+  }
+
+  function adoptNativeRest() {
+    if (!canManageOwnFocus()) return;
+    const runtime = nativeRuntime();
+    state.restStartedAt = runtime.mode === "rest" ? Number(runtime.restStartedAtEpochMs) || null : null;
+    document.body.classList.toggle("is-resting", Boolean(state.restStartedAt));
+    try {
+      if (state.restStartedAt) localStorage.setItem(restStorageKey(), String(state.restStartedAt));
+      else localStorage.removeItem(restStorageKey());
+    } catch (_error) {}
+  }
+
+  function runtimeActions(runtime) {
+    if (runtime.busy) return [];
+    if (runtime.retryAction) return [{ label:"重试", action:runtime.retryAction.split(".").pop().toLowerCase() }];
+    if (runtime.mode === "paused") return [
+      { label:"继续专注", action:"resume" },
+      ...(runtime.reminder ? [{ label:"再等 5 分钟", action:"snooze", reminder:true }, { label:"收起提醒", action:"dismiss", reminder:true }] : []),
+      { label:"结束本段", action:"end" },
+    ];
+    if (runtime.mode === "rest") return [{ label:"结束休息", action:"endRest" }];
+    if (runtime.mode === "ended") return [
+      { label:"选择下一段", destination:"next" }, { label:"查看总结", destination:"summary" },
+      ...(runtime.reminder ? [{ label:"再等 5 分钟", action:"snooze", reminder:true }, { label:"收起提醒", action:"dismiss", reminder:true }] : []),
+    ];
+    if (runtime.mode === "focusing") return [{ label:"暂停", action:"pause" }, { label:"结束本段", action:"end" }];
+    return [{ label:runtime.mode === "settled" ? "查看今日总结" : "选择事项", destination:runtime.mode === "settled" ? "summary" : "next" }];
+  }
+
+  function renderRuntimeButtons(host, runtime) {
+    if (!host) return;
+    const actions = runtimeActions(runtime);
+    const signature = JSON.stringify(actions);
+    if (host.dataset.actions === signature) return;
+    host.dataset.actions = signature;
+    host.replaceChildren(...actions.map((item, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `ui-button ${index === 0 ? "ui-button--primary" : "ui-button--secondary"}`;
+      button.textContent = item.label;
+      button.onclick = () => item.destination ? navigateFocus(item.destination) : nativeAction(item.action, item.reminder);
+      return button;
+    }));
+  }
+
+  function renderNativeRuntime() {
+    if (!canManageOwnFocus()) return;
+    if (window.MutsumiWeb) {
+      const destination = window.MutsumiAndroid?.getFocusDestination?.();
+      if (destination && !state.nativeDestinationHandling) {
+        state.nativeDestinationHandling = true;
+        window.MutsumiAndroid?.clearFocusDestination?.();
+        navigateFocus(destination);
+        state.nativeDestinationHandling = false;
+      }
+    }
+    const runtime = nativeRuntime();
+    const card = $("#native-runtime-card");
+    if (card) {
+      card.hidden = !["paused", "rest", "ended", "settled"].includes(runtime.mode) && !runtime.busy && !runtime.retryAction;
+      $("#native-runtime-title").textContent = runtime.busy ? "正在处理…" : runtime.title || "专注状态";
+      $("#native-runtime-detail").textContent = runtime.detail || "";
+      $("#native-runtime-timer").hidden = !["rest", "ended"].includes(runtime.mode);
+      $("#native-runtime-timer").textContent = runtime.timer || "";
+      $("#native-runtime-message").textContent = runtime.message || "";
+      $("#native-runtime-reminder").hidden = !runtime.reminder;
+      $("#native-runtime-reminder").textContent = runtime.reminder === "PAUSED" ? "暂停满 5 分钟" : `离开专注满 ${runtime.reminder?.split("_")[1] || ""} 分钟`;
+      renderRuntimeButtons($("#native-runtime-actions"), runtime);
+    }
+    const paused = runtime.mode === "paused", rest = runtime.mode === "rest";
+    if (rest && $("#idle-mode-view")) $("#idle-mode-view").hidden = true;
+    if (!rest && !state.dashboard?.focus?.active && $("#idle-mode-view")) $("#idle-mode-view").hidden = false;
+    if ($("#focus-timer") && ["paused", "focusing"].includes(runtime.mode)) $("#focus-timer").textContent = runtime.timer;
+    const toggle = $("#toggle-focus-pause");
+    if (toggle) { toggle.disabled = Boolean(runtime.busy); toggle.title = paused ? "继续专注" : "暂停专注"; }
+    const dock = $("#native-focus-dock");
+    if (dock) {
+      $("#native-dock-title").textContent = runtime.subject || runtime.title || "准备开始专注";
+      $("#native-dock-timer").textContent = runtime.timer || "00:00:00";
+      $("#native-dock-toggle").textContent = runtime.busy ? "处理中…" : paused ? "继续" : rest ? "结束休息" : runtime.mode === "focusing" ? "暂停" : "开始";
+      $("#native-dock-toggle").disabled = Boolean(runtime.busy);
+    }
+    const progress = $("#native-focus-progress");
+    if (progress) {
+      progress.hidden = !runtime.plannedSeconds || !["focusing", "paused"].includes(runtime.mode);
+      progress.max = Math.max(1, Number(runtime.plannedSeconds || 1));
+      progress.value = Number(runtime.elapsedSeconds || 0);
+      progress.setAttribute("aria-label", `有效专注 ${runtime.timer}，目标 ${formatSeconds(runtime.plannedSeconds || 0)}`);
+    }
+    if ($("#native-runtime-details")?.open) {
+      $("#native-details-title").textContent = runtime.subject || runtime.title;
+      $("#native-details-timer").textContent = runtime.timer;
+      $("#native-details-note").textContent = runtime.detail;
+      renderRuntimeButtons($("#native-details-actions"), runtime);
+    }
+    const appearance = document.documentElement.dataset;
+    window.MutsumiAndroid?.setAppearance?.(appearance.themeMode || "system", appearance.themePalette || "clay");
+  }
+
+  function navigateFocus(destination) {
+    if (!canManageOwnFocus()) return false;
+    if (destination === "details") {
+      $("#native-runtime-details")?.showModal(); renderNativeRuntime(); return true;
+    }
+    if (document.body.dataset.page !== "home") {
+      sessionStorage.setItem("mutsumiFocusDestination", destination);
+      window.location.href = "/";
+      return true;
+    }
+    if (destination === "next") { openFocusLaunch(); return true; }
+    if (destination === "summary") {
+      const settlement = state.dashboard?.daily_settlement;
+      if (settlement?.report) window.DailyReport?.open?.(settlement.report);
+      else {
+        const runtime = nativeRuntime();
+        const session = state.dashboard?.focus?.recent?.find((item) => item.id === runtime.sessionId) || { effective_seconds:runtime.elapsedSeconds || 0 };
+        showFocusSummary(session);
+      }
+      $("#dashboard-insights")?.scrollIntoView({ block:"start", behavior:"auto" });
+      return true;
+    }
+    return false;
+  }
+
+  function initializeNativeExperience() {
+    document.documentElement.classList.add("native-app");
+    const brand = $(".status-title strong");
+    if (brand) { brand.textContent = "M · Focus Console"; brand.setAttribute("aria-label", "Mutsumi Focus Console"); }
+    if (!canManageOwnFocus()) return;
+    const settings = $("#settings-system-panel");
+    if (settings) {
+      const entry = document.createElement("article");
+      entry.className = "panel settings-panel native-settings-entry";
+      entry.innerHTML = '<h2>原子岛与提醒</h2><p>原子岛展示 · 提醒方式 · 后台计时</p><button type="button" class="ui-button ui-button--secondary">打开设置</button>';
+      entry.querySelector("button").onclick = () => window.MutsumiAndroid.openFocusSettings();
+      settings.prepend(entry);
+    }
+    const summaryClock = $(".rest-clock");
+    if (summaryClock) {
+      summaryClock.querySelector("span").textContent = "结束后经过";
+      summaryClock.dataset.tooltip = "15 分钟后收起本次总结";
+    }
+    const controls = $("#dashboard-controls");
+    if (controls) {
+      const card = document.createElement("section");
+      card.id = "native-runtime-card"; card.className = "native-glass-card"; card.hidden = true;
+      card.innerHTML = '<h3 id="native-runtime-title"></h3><strong id="native-runtime-timer"></strong><p id="native-runtime-detail"></p><strong id="native-runtime-reminder" hidden></strong><p id="native-runtime-message" role="status"></p><div id="native-runtime-actions" class="native-runtime-actions"></div>';
+      controls.append(card);
+      const advanced = document.createElement("details"); advanced.className = "native-advanced-controls";
+      const advancedSummary = document.createElement("summary"); advancedSummary.textContent = "本段记录与更多操作";
+      advanced.append(advancedSummary);
+      const lockRow = $(".focus-lock-row");
+      if (lockRow) { lockRow.before(advanced); advanced.append(lockRow); }
+      const updateAdvanced = () => {
+        advanced.open = window.MutsumiViewport?.wide ? true : advanced.dataset.portraitExpanded === "true";
+      };
+      advanced.addEventListener("toggle", () => {
+        if (!window.MutsumiViewport?.wide) advanced.dataset.portraitExpanded = String(advanced.open);
+      });
+      window.addEventListener("dashboard:viewport", updateAdvanced);
+      updateAdvanced();
+      const goal = document.createElement("label");
+      goal.className = "native-goal-choice";
+      goal.innerHTML = '本段目标<select id="native-focus-goal"><option value="0">自由计时</option><option value="25">25 分钟</option><option value="45">45 分钟</option><option value="60">60 分钟</option><option value="90">90 分钟</option></select>';
+      $("#idle-mode-view")?.prepend(goal);
+      const rest = document.createElement("label"); rest.className = "native-goal-choice";
+      rest.innerHTML = '休息目标<select id="native-rest-goal"><option value="0">自由休息</option><option value="5">5 分钟</option><option value="15">15 分钟</option><option value="30">30 分钟</option></select>';
+      $("#idle-mode-view")?.append(rest);
+      const settlementBanner = $("#daily-settlement-banner");
+      if (settlementBanner) $("#idle-mode-view").append(settlementBanner);
+      const progress = document.createElement("progress"); progress.id = "native-focus-progress"; progress.hidden = true;
+      $("#focus-timer")?.after(progress);
+      const dock = document.createElement("aside"); dock.id = "native-focus-dock"; dock.className = "native-glass-card";
+      dock.hidden = true;
+      dock.innerHTML = '<button type="button" id="native-dock-details"><span id="native-dock-title"></span><strong id="native-dock-timer"></strong></button><button type="button" id="native-dock-toggle" class="ui-button ui-button--primary">开始</button>';
+      document.body.append(dock);
+      $("#native-dock-details").onclick = () => navigateFocus("details");
+      $("#native-dock-toggle").onclick = () => {
+        const mode = nativeRuntime().mode;
+        if (mode === "paused") nativeAction("resume");
+        else if (mode === "focusing") nativeAction("pause");
+        else if (mode === "rest") nativeAction("endRest");
+        else navigateFocus("next");
+      };
+      const observer = new IntersectionObserver(([entry]) => {
+        const visible = entry.intersectionRatio < 0.5;
+        dock.hidden = !visible;
+        document.body.classList.toggle("native-dock-visible", visible);
+      }, { threshold:[0, 0.25, 0.5, 1] });
+      observer.observe(controls);
+      const insights = $("#dashboard-insights");
+      if (insights) {
+        insights.dataset.nativeExpanded = "false";
+        const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "native-stat-toggle ui-button ui-button--quiet";
+        toggle.textContent = "展开累计投入与详细统计"; toggle.setAttribute("aria-expanded", "false");
+        toggle.onclick = () => {
+          const expanded = insights.dataset.nativeExpanded !== "true";
+          insights.dataset.nativeExpanded = String(expanded); toggle.setAttribute("aria-expanded", String(expanded));
+          toggle.textContent = expanded ? "收起详细统计" : "展开累计投入与详细统计";
+        };
+        $("#focus-investment-view")?.append(toggle);
+      }
+      const chart = $("#dashboard-activity");
+      if (chart) {
+        chart.dataset.nativeExpanded = "false";
+        const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "native-chart-toggle ui-button ui-button--quiet";
+        toggle.textContent = "展开图表与详细统计"; toggle.setAttribute("aria-expanded", "false");
+        toggle.onclick = () => {
+          const expanded = chart.dataset.nativeExpanded !== "true";
+          chart.dataset.nativeExpanded = String(expanded); toggle.setAttribute("aria-expanded", String(expanded));
+          toggle.textContent = expanded ? "收起图表" : "展开图表与详细统计";
+          window.dispatchEvent(new Event("resize"));
+        };
+        chart.prepend(toggle);
+      }
+    }
+    const dialog = document.createElement("dialog"); dialog.id = "native-runtime-details"; dialog.className = "native-glass-card";
+    dialog.innerHTML = '<div class="native-details-head"><h2 id="native-details-title">专注详情</h2><button type="button" class="ui-button ui-button--quiet" aria-label="关闭详情">关闭</button></div><strong id="native-details-timer"></strong><p id="native-details-note"></p><div id="native-details-actions" class="native-runtime-actions"></div>';
+    dialog.querySelector("button").onclick = () => dialog.close();
+    document.body.append(dialog);
+    setSecondTask("nativeRuntime", renderNativeRuntime);
+    document.addEventListener("dashboard:updated", () => { adoptNativeRest(); renderNativeRuntime(); });
+    document.addEventListener("dashboard:theme", renderNativeRuntime);
+  }
+  const commitSliders = new Map();
+  let slidersLifecycleBound = false;
+  const elementScale = (element) => window.MutsumiViewport?.elementScale(element) || 1;
+  const getThemePalette = (active = Boolean(state.dashboard?.focus?.active)) => {
+    if (active) return themePalettes.focus;
+    if (state.dashboard?.daily_settlement) return themePalettes.settled;
+    const palette = document.documentElement.dataset.themePalette;
+    if (palette === "sage") return ["#638576", "#3e6656", "#91ad9d", "#406252", "#749886", "#b8cebf", "#4c7160", "#8cab9b"];
+    if (palette === "ocean") return ["#587eaa", "#3c608c", "#88a6cb", "#405a78", "#7495ba", "#aec4dd", "#4e6f94", "#90aecf"];
+    return themePalettes.idle;
+  };
+  if (window.Chart) {
+    Chart.defaults.font.family = appFontFamily;
+    Chart.defaults.font.size = 14;
+    Chart.defaults.font.weight = 500;
+  }
+  const formatSeconds = (total) => {
+    const value = Math.max(0, Math.floor(total));
+    return [Math.floor(value / 3600), Math.floor((value % 3600) / 60), value % 60].map((part) => String(part).padStart(2, "0")).join(":");
+  };
+  const formatMinutes = (minutes) => formatSeconds(Math.max(0, Math.round(minutes * 60)));
+  const formatSignedSeconds = (seconds) => `${seconds > 0 ? "+" : seconds < 0 ? "−" : "±"}${formatSeconds(Math.abs(seconds))}`;
+  const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+  const QUICK_FOCUS_STORAGE = "mutsumiQuickFocusV2";
+  const OWN_FOCUS_PAGES = new Set(["home", "settings", "account", "focus-kline", "focus_kline"]);
+  let focusIdentityRevoked = false;
+  const canManageOwnFocus = () => !focusIdentityRevoked && document.body.dataset.role !== "guest"
+    && OWN_FOCUS_PAGES.has(document.body.dataset.page)
+    && /^[1-9]\d*$/.test(document.body.dataset.viewerId || "");
+  const restStorageKey = () => `mutsumiRestStartedAt:${document.body.dataset.viewerId}`;
+
+  function syncServerClock(reference, receivedAt = Date.now()) {
+    const epoch = Date.parse(reference);
+    if (Number.isFinite(epoch)) state.serverClock = { epoch, receivedAt, reference:String(reference) };
+  }
+
+  function serverNow(now = Date.now()) {
+    const clock = state.serverClock;
+    if (clock) return clock.epoch + Math.max(0, now - clock.receivedAt);
+    const epoch = Date.parse(state.dashboard?.now);
+    return Number.isFinite(epoch) ? epoch + Math.max(0, now - (state.dashboardFetchedAt ?? now)) : now;
+  }
+
+  function accountOffset(reference = state.serverClock?.reference || state.dashboard?.now) {
+    if (/Z$/i.test(String(reference || ""))) return 0;
+    const match = String(reference || "").match(/([+-])(\d{2}):(\d{2})$/);
+    return match ? (Number(match[2]) * 60 + Number(match[3])) * (match[1] === "-" ? -1 : 1) : -new Date().getTimezoneOffset();
+  }
+
+  function accountDate(epoch, reference) {
+    // The API has already applied the account's configured timezone. Read its
+    // offset with UTC getters so the device timezone cannot reinterpret it.
+    return new Date(Number(epoch) + accountOffset(reference) * 60000);
+  }
+
+  function accountDateKey(epoch = serverNow(), reference) {
+    return accountDate(epoch, reference).toISOString().slice(0, 10);
+  }
+
+  function accountSeconds(epoch, reference) {
+    const date = accountDate(epoch, reference);
+    return date.getUTCHours() * 3600 + date.getUTCMinutes() * 60 + date.getUTCSeconds();
+  }
+
+  function accountClock(epoch, seconds = true, reference) {
+    return accountDate(epoch, reference).toISOString().slice(11, seconds ? 19 : 16);
+  }
+
+  function windowBounds(value, epoch = serverNow(), reference) {
+    const offset = accountOffset(reference), sign = offset < 0 ? "-" : "+", absolute = Math.abs(offset);
+    const zone = `${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
+    const day = accountDateKey(epoch, reference);
+    return { start:Date.parse(`${day}T${value.start}:00${zone}`), end:Date.parse(`${day}T${value.end}:00${zone}`) };
+  }
+
+  function clearNativeFocus() {
+    // Idle is a real ended transition in the native reducer, so identity reset
+    // needs its dedicated bridge method rather than a fabricated idle/rest state.
+    try { window.MutsumiAndroid?.clearFocusState?.(); }
+    catch (error) { console.warn("native_focus_clear_failed", error); }
+  }
+
+  function revokeFocusIdentity() {
+    focusIdentityRevoked = true;
+    window.clearInterval(state.heartbeatTimer);
+    window.clearInterval(state.syncTimer);
+    window.clearTimeout(state.heartbeatFailureTimer);
+    state.heartbeatFailureSince = null;
+    state.focusRecoverySessionId = null;
+    state.lastActiveSnapshot = null;
+    state.recentlyEnded = null;
+    state.restStartedAt = null;
+    state.nativeStateSignature = null;
+    try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
+    clearNativeFocus();
+    setSyncLost(false);
+    document.body.classList.remove("is-paused");
+    renderFocusStateOverlay(null);
+  }
+
+  function initializeFocusIdentity() {
+    if (document.body.dataset.role === "guest" || document.body.dataset.viewerId === "public") {
+      clearNativeFocus();
+      return;
+    }
+    if (!canManageOwnFocus()) return;
+    try {
+      const previous = window.localStorage.getItem("mutsumiNativeFocusViewer");
+      if (previous && previous !== document.body.dataset.viewerId) clearNativeFocus();
+      window.localStorage.setItem("mutsumiNativeFocusViewer", document.body.dataset.viewerId);
+    } catch (_error) {}
+  }
+
+  function focusElapsedSeconds(session, now = Date.now()) {
+    if (!session?.started_at) return 0;
+    const end = session.ended_at ? Date.parse(session.ended_at) : session.paused_at ? Date.parse(session.paused_at) : now;
+    return Math.max(0, Math.floor((end - Date.parse(session.started_at)) / 1000) - Number(session.paused_seconds || 0));
+  }
+
+  function activeExtraSeconds(active, fetchedAt, now) {
+    return active && !active.paused_at ? Math.max(0, Math.floor((now - fetchedAt) / 1000)) : 0;
+  }
+
+  function createClientToken() {
+    const cryptoApi = window.crypto || window.msCrypto;
+    if (cryptoApi && typeof cryptoApi.randomUUID === "function") return cryptoApi.randomUUID();
+    if (cryptoApi && typeof cryptoApi.getRandomValues === "function") {
+      const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    return `focus-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+
+  function runSecondTasks(now = Date.now()) {
+    state.secondTasks.forEach((task) => task(now));
+  }
+
+  function setSecondTask(name, task) {
+    state.secondTasks.set(name, task);
+    task(Date.now());
+  }
+
+  function removeSecondTask(name) {
+    state.secondTasks.delete(name);
+  }
+
+  function startAlignedSecondClock() {
+    const tick = () => {
+      runSecondTasks(Date.now());
+      state.secondTimer = window.setTimeout(tick, Math.max(20, 1000 - (Date.now() % 1000)));
+    };
+    window.clearTimeout(state.secondTimer);
+    state.secondTimer = window.setTimeout(tick, Math.max(20, 1000 - (Date.now() % 1000)));
+  }
+
+  function scheduleWakeLockRetry() {
+    window.clearTimeout(state.wakeRetry);
+    if (document.visibilityState === "visible") state.wakeRetry = window.setTimeout(ensureWakeLock, 2000);
+  }
+
+  async function ensureWakeLock() {
+    if (!("wakeLock" in navigator) || document.visibilityState !== "visible" || state.wakeLock) return;
+    try {
+      const lock = await navigator.wakeLock.request("screen");
+      state.wakeLock = lock;
+      lock.addEventListener("release", () => {
+        if (state.wakeLock === lock) state.wakeLock = null;
+        scheduleWakeLockRetry();
+      });
+    } catch (_error) {
+      scheduleWakeLockRetry();
+    }
+  }
+
+  async function api(url, options = {}) {
+    const nativeRevision = nativeRuntime().revision;
+    const controller = new AbortController();
+    let timedOut = false, timer;
+    const abort = () => controller.abort();
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once:true });
+    const deadline = new Promise((_, reject) => {
+      timer = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        reject(new Error("请求超时，请检查网络后重试。"));
+      }, 15000);
+    });
+    try {
+      const request = (async () => {
+        const response = await fetch(url, { ...options, headers:{ "Content-Type":"application/json", ...(options.headers || {}) }, signal:controller.signal });
+        if (controller.signal.aborted) throw new Error("request_aborted");
+        if (response.status === 401) {
+          revokeFocusIdentity();
+          window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
+          throw new Error("authentication_required");
+        }
+        const payload = await response.json();
+        if (url === "/api/dashboard") payload.nativeRevision = nativeRevision;
+        if (controller.signal.aborted) throw new Error("request_aborted");
+        if (!response.ok) throw new Error(payload.error || "请求失败");
+        return payload;
+      })();
+      return await Promise.race([request, deadline]);
+    } catch (error) {
+      const focusWrite = ["POST", "DELETE"].includes(String(options.method || "GET").toUpperCase())
+        && /^\/api\/(?:focus\/(?:start|end|pause|lock)|daily-settlement)$/.test(url);
+      if (!options.signal?.aborted && focusWrite && (timedOut || error instanceof TypeError)) {
+        showToast("操作结果暂未确认，将刷新页面核对；请勿重复提交。");
+        window.setTimeout(() => window.location.reload(), 1800);
+      }
+      if (timedOut) throw new Error("请求超时，将重新核对操作结果。");
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
+    }
+  }
+
+  function showToast(message) {
+    const toast = $("#toast");
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add("show");
+    window.clearTimeout(showToast.timer);
+    showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2400);
+  }
+
+  function notifyNativeFocusState(active = state.dashboard?.focus?.active) {
+    if (!canManageOwnFocus()) return;
+    if (active?.user_id != null && String(active.user_id) !== document.body.dataset.viewerId) {
+      revokeFocusIdentity();
+      return;
+    }
+    if (!window.MutsumiAndroid || typeof window.MutsumiAndroid.syncFocusState !== "function") return;
+    const mode = active?.paused_at ? "paused" : active ? "focusing" : state.dashboard?.daily_settlement ? "settled" : state.restStartedAt ? "rest" : state.recentlyEnded ? "ended" : "idle";
+    const payload = {
+      mode,
+      sessionId: Number(active?.id ?? state.recentlyEnded?.id ?? 0),
+      subject: active?.subject ?? state.recentlyEnded?.subject ?? "",
+      startedAtEpochMs: active?.started_at ? Date.parse(active.started_at) : 0,
+      pausedAtEpochMs: active?.paused_at ? Date.parse(active.paused_at) : 0,
+      endedAtEpochMs: mode === "settled" ? Date.parse(state.dashboard.daily_settlement.settled_at) || 0 : state.recentlyEnded?.endedAt ?? 0,
+      elapsedSeconds: active ? focusElapsedSeconds(active) : Number(state.recentlyEnded?.elapsedSeconds || 0),
+      plannedSeconds: active ? Number(active.planned_minutes || 0) * 60 : Number(nativeRuntime().plannedSeconds || 0),
+      focusItemId: Number(active?.focus_item_id || 0),
+      restStartedAtEpochMs: state.restStartedAt || 0,
+      restTargetSeconds: nativeRuntime().mode === "rest" && nativeRuntime().restStartedAtEpochMs === state.restStartedAt
+        ? Number(nativeRuntime().restTargetSeconds || 0) : Number($("#native-rest-goal")?.value || 0) * 60,
+      revision: nativeRuntime().revision,
+      pageUrl: window.location.href,
+      baseUrl: window.location.origin,
+    };
+    const signature = JSON.stringify(payload);
+    if (signature === state.nativeStateSignature) return;
+    state.nativeStateSignature = signature;
+    try { window.MutsumiAndroid.syncFocusState(signature); }
+    catch (error) { console.warn("native_focus_sync_failed", error); }
+  }
+
+  function renderFocusStateOverlay(active = state.dashboard?.focus?.active) {
+    const overlay = $("#focus-state-overlay");
+    if (!overlay) return;
+    overlay.hidden = true;
+    document.body.classList.toggle("is-resting", Boolean(state.restStartedAt));
+    [$("#idle-mode-view"), $("#active-mode-view")].filter(Boolean).forEach((view) => { view.inert = false; });
+    renderNativeRuntime();
+    return;
+  }
+
+  function startRest() {
+    if (!canManageOwnFocus() || state.dashboard?.focus?.active || state.restStartedAt) return;
+    state.restStartedAt = Date.now();
+    state.recentlyEnded = null;
+    try { window.localStorage.setItem(restStorageKey(), String(state.restStartedAt)); } catch (_error) {}
+    renderFocusStateOverlay(null);
+    notifyNativeFocusState(null);
+  }
+
+  function exitRest() {
+    nativeAction("endRest");
+    state.restStartedAt = null;
+    try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
+    renderFocusStateOverlay(null);
+    renderNativeRuntime();
+  }
+
+  async function exitFocusStateOverlay() {
+    if (state.restStartedAt) {
+      exitRest();
+      return;
+    }
+    if (state.dashboard?.focus?.active?.paused_at) await toggleFocusPause();
+  }
+
+  function bindFocusStateOverlay() {
+    document.querySelectorAll("[data-start-rest]").forEach((button) => {
+      if (button.dataset.restBound) return;
+      button.dataset.restBound = "1";
+      button.addEventListener("click", startRest);
+    });
+    const overlay = $("#focus-state-overlay");
+    if (!overlay || overlay.dataset.focusOverlayBound) return;
+    overlay.dataset.focusOverlayBound = "1";
+    overlay?.addEventListener("click", (event) => {
+      exitFocusStateOverlay();
+    });
+    overlay?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        exitFocusStateOverlay();
+      }
+    });
+  }
+
+  function requestConfirmation({ title = "请确认操作", message = "此操作无法撤销。", label = "确认", tone = "primary" } = {}) {
+    const modal = $("#confirm-action-modal");
+    if (!modal) return Promise.resolve(window.confirm(message));
+    if (state.confirmResolver) resolveConfirmation(false);
+    $("#confirm-action-title").textContent = title;
+    $("#confirm-action-message").textContent = message;
+    const submit = $("#confirm-action-submit");
+    submit.textContent = label;
+    submit.classList.remove("ui-button--primary", "ui-button--danger");
+    submit.classList.add(tone === "danger" ? "ui-button--danger" : "ui-button--primary");
+    modal.showModal();
+    return new Promise((resolve) => { state.confirmResolver = resolve; });
+  }
+
+  function resolveConfirmation(confirmed) {
+    const resolve = state.confirmResolver;
+    state.confirmResolver = null;
+    $("#confirm-action-modal")?.close();
+    resolve?.(confirmed);
+  }
+
+  function bindConfirmations() {
+    const modal = $("#confirm-action-modal");
+    if (modal) {
+      $("#confirm-action-cancel")?.addEventListener("click", () => resolveConfirmation(false));
+      $("#confirm-action-submit")?.addEventListener("click", () => resolveConfirmation(true));
+      modal.addEventListener("cancel", (event) => { event.preventDefault(); resolveConfirmation(false); });
+      modal.addEventListener("close", () => { if (state.confirmResolver) resolveConfirmation(false); });
+    }
+    document.querySelectorAll("form[data-confirm]").forEach((form) => form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const confirmed = await requestConfirmation({ title: form.dataset.confirmTitle, message: form.dataset.confirmMessage, label: form.dataset.confirmLabel, tone: form.dataset.confirmTone });
+      if (confirmed) {
+        if (new URL(form.action, window.location.href).pathname === "/logout") revokeFocusIdentity();
+        HTMLFormElement.prototype.submit.call(form);
+      }
+    }));
+  }
+
+  function bindButtonMotion() {
+    document.addEventListener("pointerdown", (event) => {
+      const button = event.target.closest("button, .ui-button");
+      if (!button || button.disabled) return;
+      button.classList.remove("button-pressed");
+      void button.offsetWidth;
+      button.classList.add("button-pressed");
+      window.setTimeout(() => button.classList.remove("button-pressed"), 260);
+    });
+  }
+
+  async function copyText(value) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.append(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
+  }
+
+  function renderStatus(data) {
+    const remaining = Number(data.exam?.remaining_seconds || 0);
+    state.examEndsAt = Date.now() + remaining * 1000;
+    const today = data.today_focus || { seconds: 0, count: 0 };
+    const active = data.focus?.active;
+    const todayFetchedAt = Date.now();
+    const tick = (now) => {
+      const value = Math.max(0, Math.floor((state.examEndsAt - now) / 1000));
+      $("#exam-days").textContent = `${Math.floor(value / 86400)} 天`;
+      $("#exam-clock").textContent = formatSeconds(value % 86400);
+      const todaySeconds = Number(today.seconds || 0) + activeExtraSeconds(active, todayFetchedAt, now);
+      $("#today-study")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 07:00`));
+      $("#today-progress")?.replaceChildren(document.createTextNode(`完成度 ${Math.min(100, Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 100))}%`));
+      $("#focus-today")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 07:00`));
+      $("#guest-today-total")?.replaceChildren(document.createTextNode(formatSeconds(todaySeconds)));
+      $("#guest-today-target")?.replaceChildren(document.createTextNode(`7 小时目标 · ${Math.min(100, Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 100))}%`));
+    };
+    setSecondTask("status", tick);
+    const statusText = active ? `${active.paused_at ? "已暂停" : "专注中"} · ${active.subject}` : "准备学习";
+    $("#current-state").textContent = statusText;
+    $("#current-state").dataset.tooltip = statusText;
+    $("#state-dot").classList.toggle("state-dot-active", Boolean(active));
+  }
+
+  function renderFriendDiffBoard(friends) {
+    const board = $("#friend-diff-board");
+    if (!board) return;
+    window.clearInterval(state.friendTickerTimer);
+    state.friendTickerTimer = null;
+    if (!friends?.length) {
+      board.hidden = true;
+      board.replaceChildren();
+      return;
+    }
+    board.hidden = false;
+    const rows = friends.map((friend) => {
+      const delta = Number(friend.delta_seconds || 0);
+      const relation = delta > 0 ? `领先 ${formatSignedSeconds(delta)}` : delta < 0 ? `落后 ${formatSignedSeconds(Math.abs(delta))}` : "持平 ±00:00:00";
+      const tone = delta > 0 ? "ahead" : delta < 0 ? "behind" : "";
+      return `<div class="friend-diff-row"><span>好友 · ${escapeHtml(friend.username)}</span><b>${formatSeconds(friend.today_seconds)}</b><em class="${tone}">${relation}</em></div>`;
+    }).join("");
+    board.innerHTML = `<div class="friend-diff-head"><span>好友 diff</span><small>今日累计 · 与你相比</small></div><div class="friend-diff-window"><div class="friend-diff-track">${rows}</div></div>`;
+    const track = board.querySelector(".friend-diff-track");
+    let index = 0;
+    state.friendTickerTimer = window.setInterval(() => {
+      index = (index + 1) % friends.length;
+      track.style.transform = `translateY(-${index * 38}px)`;
+    }, 4000);
+  }
+
+  function renderClock() {
+    setSecondTask("clock", (now) => {
+      const current = serverNow(now);
+      $("#current-time")?.replaceChildren(document.createTextNode(accountClock(current)));
+      $("#today-date")?.replaceChildren(document.createTextNode(accountDate(current).toLocaleDateString("zh-CN", { timeZone:"UTC", weekday:"long", year:"numeric", month:"2-digit", day:"2-digit" })));
+    });
+  }
+
+  function clockMinutes(value) {
+    const [hours, minutes] = String(value || "00:00").split(":").map(Number);
+    return hours * 60 + minutes;
+  }
+
+  function workWindowProgress(now, windows) {
+    const current = accountSeconds(now.getTime());
+    const periods = [windows?.morning, windows?.library].filter(Boolean).map((windowValue) => [clockMinutes(windowValue.start) * 60, clockMinutes(windowValue.end) * 60]);
+    const total = periods.reduce((sum, [start, end]) => sum + Math.max(0, end - start), 0);
+    const elapsed = periods.reduce((sum, [start, end]) => sum + Math.max(0, Math.min(current, end) - start), 0);
+    return total ? Math.max(0, Math.min(1, elapsed / total)) : 0;
+  }
+
+  function dateMinutes(value) {
+    const date = new Date(value);
+    const reference = accountDate(serverNow());
+    const dayStart = Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), reference.getUTCDate()) - accountOffset() * 60000;
+    return Math.max(0, Math.min(1440, (date.getTime() - dayStart) / 60000));
+  }
+
+  function renderWindowHistory(prefix, value, sessions) {
+    const target = $(`#${prefix}-history`);
+    if (!target) return;
+    const start = clockMinutes(value.start);
+    const end = clockMinutes(value.end);
+    const total = Math.max(1, end - start);
+    const segments = (sessions || []).flatMap((session) => (session.segments?.length ? session.segments : [session]).map((segment) => ({ ...segment, subject: session.subject })));
+    target.innerHTML = segments.map((segment) => {
+      const sessionStart = Math.max(start, dateMinutes(segment.started_at));
+      const sessionEnd = Math.min(end, segment.ended_at ? dateMinutes(segment.ended_at) : dateMinutes(serverNow()));
+      if (sessionEnd <= sessionStart) return "";
+      const left = ((sessionStart - start) / total) * 100;
+      const width = ((sessionEnd - sessionStart) / total) * 100;
+      const edgeClass = `${sessionStart <= start ? " at-start" : ""}${sessionEnd >= end ? " at-end" : ""}`;
+      return `<span class="${edgeClass.trim()}" style="left:${left}%;width:${width}%" title="${escapeHtml(segment.subject)} · ${Math.max(1, Math.round(sessionEnd - sessionStart))} 分钟"></span>`;
+    }).join("");
+  }
+
+  function renderHomeWindow(data, currentTime) {
+    const now = accountSeconds(currentTime.getTime(), data.now);
+    const morningStart = clockMinutes(data.windows.morning.start) * 60;
+    const lunchStart = clockMinutes(data.windows.morning.end) * 60;
+    const libraryStart = clockMinutes(data.windows.library.start) * 60;
+    const libraryEnd = clockMinutes(data.windows.library.end) * 60;
+    let label;
+    let action;
+    let remaining;
+    if (now < morningStart) {
+      label = "休息时间";
+      action = "距离上午开始";
+      remaining = morningStart - now;
+    } else if (now < lunchStart) {
+      label = "上午学习窗口";
+      action = "距离午休";
+      remaining = lunchStart - now;
+    } else if (now < libraryStart) {
+      label = "午间休息";
+      action = "距离下午开始";
+      remaining = libraryStart - now;
+    } else if (now < libraryEnd) {
+      label = "下午学习窗口";
+      action = "距离闭馆";
+      remaining = libraryEnd - now;
+    } else {
+      label = "休息时间";
+      action = "距离上午开始";
+      remaining = 86400 - now + morningStart;
+    }
+    $("#home-window-label").textContent = label;
+    $("#home-window-action").textContent = action;
+    $("#home-window-countdown").textContent = formatSeconds(remaining);
+  }
+
+  function renderWindows(data) {
+    const windows = [
+      ["lunch", data.windows.morning],
+      ["library", data.windows.library],
+    ];
+    const timeGrid = $(".time-grid");
+    timeGrid?.style.setProperty("--morning-window", `${Math.max(1, Number(data.windows.morning.total_seconds) || 1)}fr`);
+    timeGrid?.style.setProperty("--library-window", `${Math.max(1, Number(data.windows.library.total_seconds) || 1)}fr`);
+    window.DashboardUI?.reflow?.();
+    const setWindow = (prefix, value, now) => {
+      const { start:startAt, end:endAt } = windowBounds(value, now, data.now);
+      const progress = Math.min(1, Math.max(0, (now - startAt) / Math.max(1, endAt - startAt)));
+      const remaining = Math.max(0, Math.ceil((endAt - now) / 1000));
+      $(`#${prefix}-clock`).textContent = formatSeconds(remaining);
+      $(`#${prefix}-remaining`)?.replaceChildren(document.createTextNode(formatSeconds(remaining)));
+      $(`#${prefix}-percent`).textContent = `${Math.round(progress * 100)}%`;
+      $(`#${prefix}-progress`).style.width = `${Math.round(progress * 100)}%`;
+      $(`#${prefix}-start-label`).textContent = value.start;
+      $(`#${prefix}-end-label`).textContent = value.end;
+      renderWindowHistory(prefix, value, state.dashboard?.focus?.today || []);
+    };
+    setSecondTask("windows", (now) => {
+      const current = serverNow(now);
+      windows.forEach(([prefix, value]) => setWindow(prefix, value, current));
+      renderHomeWindow(data, new Date(current));
+    });
+  }
+
+  function renderTicker(scores) {
+    const track = $("#score-track");
+    if (!track) return;
+    const rows = scores.length ? scores : [{ subject: "暂无成绩", score: "--", target: "--", gap: 0 }];
+    const billboardRows = Array.from({ length: 4 }, (_, index) => rows[index % rows.length]);
+    track.innerHTML = [...billboardRows, billboardRows[0]].map((item) => `<div class="score-row"><span data-tooltip="${escapeHtml(item.subject)}">${escapeHtml(item.subject)}</span><b>${item.score} / ${item.target}</b><em class="${item.gap > 0 ? "bad" : item.gap < 0 ? "good" : ""}">${item.gap > 0 ? `-${item.gap}` : item.gap < 0 ? `+${Math.abs(item.gap)}` : "--"}</em></div>`).join("");
+  }
+
+  function renderHeatmap(heatmap, visibleHours) {
+    const hours = $("#heat-hours");
+    const grid = $("#heat-grid");
+    const days = $("#heat-days");
+    if (!hours || !grid || !days) return;
+    const signature = JSON.stringify([heatmap, visibleHours, String(state.dashboard?.now || "").slice(0, 10)]);
+    if (grid.dataset.signature === signature) { state.heatGeometryUpdate?.(); return; }
+    grid.dataset.signature = signature;
+    const configuredHours = [...new Set((visibleHours || []).map(Number))].filter((hour) => Number.isInteger(hour) && hour >= 0 && hour < 24 && hour % 2 === 0);
+    const shownHours = configuredHours.length ? configuredHours : Array.from({ length: 12 }, (_, index) => index * 2);
+    const buckets = shownHours.map((hour) => hour / 2);
+    const historyDays = (heatmap || []).length ? heatmap : Array.from({ length: 25 }, () => Array(12).fill(0));
+    const dayCount = Math.min(25, historyDays.length);
+    const maxStart = Math.max(0, historyDays.length - dayCount);
+    const previousMaxStart = Math.max(0, state.heatHistoryLength - dayCount);
+    const wasAtLatest = state.heatWindowStart === null || state.heatWindowStart >= previousMaxStart;
+    state.heatWindowStart = wasAtLatest ? maxStart : Math.min(maxStart, Math.max(0, state.heatWindowStart));
+    state.heatHistoryLength = historyDays.length;
+    hours.innerHTML = shownHours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("");
+    const max = Math.max(120, ...historyDays.flatMap((day) => buckets.map((bucket) => day[bucket] || 0)));
+    let suppressClickUntil = 0;
+    const formatDay = (absoluteIndex) => {
+      const daysAgo = historyDays.length - 1 - absoluteIndex;
+      return daysAgo === 0 ? "今天" : `${daysAgo} 天前`;
+    };
+    const fadeClass = (dayIndex) => {
+      const fades = [];
+      if (state.heatWindowStart > 0 && dayIndex < 3) fades.push(`fade-${25 + dayIndex * 25}`);
+      if (state.heatWindowStart < maxStart && dayIndex >= dayCount - 3) fades.push(`fade-${25 + (dayCount - 1 - dayIndex) * 25}`);
+      return fades.length ? ` ${fades.join(" ")}` : "";
+    };
+    const renderCell = (minutes, dayIndex, absoluteIndex, bucket) => {
+      const level = minutes === 0 ? 0 : Math.min(4, Math.ceil((minutes / max) * 4));
+      const startHour = bucket * 2;
+      const date = new Date(`${String(state.dashboard?.now || new Date().toISOString()).slice(0, 10)}T12:00:00Z`);
+      date.setUTCDate(date.getUTCDate() - (historyDays.length - 1 - absoluteIndex));
+      const dayKey = date.toISOString().slice(0, 10);
+      return `<button type="button" role="gridcell" tabindex="-1" aria-label="${dayKey} ${startHour} 至 ${startHour + 2} 点，${minutes} 分钟" data-detail-kind="heat" data-detail-date="${dayKey}" data-detail-hour="${startHour}" data-detail-key="${dayKey}:${startHour}" class="heat-cell${level ? ` l${level}` : ""}${fadeClass(dayIndex)}" data-detail="${formatDay(absoluteIndex)} ${String(startHour).padStart(2, "0")}:00-${String(startHour + 2).padStart(2, "0")}:00 · ${minutes} 分钟" title="${minutes} 分钟"></button>`;
+    };
+    const renderWindow = () => {
+      const displayDays = historyDays.slice(state.heatWindowStart, state.heatWindowStart + dayCount);
+      grid.innerHTML = buckets.map((bucket) => displayDays.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, state.heatWindowStart + dayIndex, bucket)).join("")).join("");
+      grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
+        if (Date.now() < suppressClickUntil) return;
+        $("#heat-detail").textContent = cell.dataset.detail;
+        state.heatSelection = { date: cell.dataset.detailDate, hour: cell.dataset.detailHour };
+        const button = $("#open-heat-detail");
+        if (button) {
+          button.disabled = false;
+          button.dataset.detailDate = cell.dataset.detailDate;
+          button.dataset.detailHour = cell.dataset.detailHour;
+          button.dataset.detailKey = cell.dataset.detailKey;
+        }
+        grid.querySelectorAll(".heat-cell").forEach((item) => { item.tabIndex = item === cell ? 0 : -1; });
+      }));
+      const selectedCell = [...grid.querySelectorAll(".heat-cell")].find((cell) => cell.dataset.detailDate === state.heatSelection?.date && cell.dataset.detailHour === state.heatSelection?.hour);
+      (selectedCell || grid.querySelector(".heat-cell"))?.setAttribute("tabindex", "0");
+      const labelIndexes = [0, 1, 2, 3].map((index) => Math.round((dayCount - 1) * index / 3));
+      days.innerHTML = labelIndexes.map((index) => `<span>${formatDay(state.heatWindowStart + index)}</span>`).join("");
+    };
+    const moveWindow = (nextStart) => {
+      const clamped = Math.min(maxStart, Math.max(0, nextStart));
+      if (clamped === state.heatWindowStart) return;
+      state.heatWindowStart = clamped;
+      renderWindow();
+    };
+    renderWindow();
+    const updateGeometry = () => {
+      const width = grid.clientWidth;
+      if (!width) return;
+      const gapRatio = .27;
+      const cell = width / (dayCount + (dayCount - 1) * gapRatio);
+      const gap = cell * gapRatio;
+      grid.style.gridTemplateColumns = `repeat(${dayCount},${cell}px)`;
+      grid.style.gridTemplateRows = `repeat(${buckets.length},${cell}px)`;
+      grid.style.gap = `${gap}px`;
+      hours.style.gridTemplateRows = `repeat(${buckets.length},${cell}px)`;
+      hours.style.gap = `${gap}px`;
+    };
+    state.heatGeometryUpdate = updateGeometry;
+    state.heatResizeObserver?.disconnect();
+    if (window.ResizeObserver) {
+      state.heatResizeObserver = new ResizeObserver(updateGeometry);
+      state.heatResizeObserver.observe(grid);
+    }
+    let drag = null;
+    grid.onpointerdown = (event) => {
+      if (maxStart === 0 || event.button !== 0 || !event.isPrimary) return;
+      drag = { pointerId: event.pointerId, startX: event.clientX, windowStart: state.heatWindowStart, moved: false };
+    };
+    grid.onpointermove = (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const delta = (event.clientX - drag.startX) / elementScale(grid);
+      if (!drag.moved && Math.abs(delta) > 4) {
+        drag.moved = true;
+        grid.setPointerCapture(event.pointerId);
+        grid.classList.add("is-dragging");
+      }
+      if (!drag.moved) return;
+      event.preventDefault();
+      const dayWidth = grid.clientWidth / dayCount;
+      moveWindow(drag.windowStart - Math.round(delta / Math.max(1, dayWidth)));
+    };
+    const endDrag = (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      if (drag.moved) suppressClickUntil = Date.now() + 250;
+      drag = null;
+      grid.classList.remove("is-dragging");
+      if (grid.hasPointerCapture(event.pointerId)) grid.releasePointerCapture(event.pointerId);
+    };
+    grid.onkeydown = (event) => {
+      const cell = event.target.closest(".heat-cell");
+      if (!cell) return;
+      const cells = [...grid.querySelectorAll(".heat-cell")];
+      const index = cells.indexOf(cell);
+      const steps = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -dayCount, ArrowDown: dayCount };
+      if (!(event.key in steps)) return;
+      event.preventDefault();
+      if (event.key === "ArrowLeft" && index % dayCount === 0 && state.heatWindowStart > 0) { moveWindow(state.heatWindowStart - 1); grid.querySelectorAll(".heat-cell")[index]?.focus(); return; }
+      if (event.key === "ArrowRight" && index % dayCount === dayCount - 1 && state.heatWindowStart < maxStart) { moveWindow(state.heatWindowStart + 1); grid.querySelectorAll(".heat-cell")[index]?.focus(); return; }
+      const next = cells[Math.max(0, Math.min(cells.length - 1, index + steps[event.key]))];
+      cells.forEach((item) => { item.tabIndex = item === next ? 0 : -1; });
+      next.focus();
+    };
+    grid.onpointerup = endDrag;
+    grid.onpointercancel = endDrag;
+    requestAnimationFrame(updateGeometry);
+  }
+
+  function renderFocusTrendChart(leaderboard) {
+    const canvas = $("#focus-trend-chart");
+    const empty = $("#focus-trend-empty");
+    if (!canvas || !empty || !window.Chart) return;
+    state.focusTrendChart?.destroy();
+    state.focusTrendChart = null;
+    const entries = (leaderboard?.entries || [])
+      .filter((entry) => Number(entry.seconds || 0) > 0)
+      .sort((left, right) => String(left.date).localeCompare(String(right.date)))
+      .slice(-14);
+    canvas.hidden = !entries.length;
+    empty.hidden = Boolean(entries.length);
+    if (!entries.length) return;
+    const palette = getThemePalette();
+    state.focusTrendChart = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: entries.map((entry) => String(entry.date).slice(5).replace("-", "/")),
+        datasets: [{
+          data: entries.map((entry) => Math.round(Number(entry.seconds) / 60)),
+          borderColor: palette[0],
+          backgroundColor: `${palette[0]}26`,
+          fill: true,
+          tension: .3,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => formatMinutes(context.raw) } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: chartColor("--muted"), maxRotation: 0, autoSkip: true } },
+          y: { beginAtZero: true, grid: { color: "rgba(117,128,121,.13)" }, ticks: { color: chartColor("--muted"), callback: (value) => `${Math.round(Number(value) / 60)}h` } },
+        },
+        animation: { duration: 320 },
+      },
+    });
+  }
+
+  function selectActivityView(name) {
+    state.activityView = ["index", "heat", "focus", "score"].includes(name) ? name : "index";
+    document.querySelectorAll("[data-activity-view-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.activityViewPanel !== state.activityView;
+    });
+    document.querySelectorAll("[data-activity-view]").forEach((button) => {
+      const selected = button.dataset.activityView === state.activityView;
+      button.classList.toggle("is-active", selected);
+      button.setAttribute("aria-selected", String(selected));
+    });
+    requestAnimationFrame(() => {
+      if (state.activityView === "focus") state.focusTrendChart?.resize();
+      if (state.activityView === "score") state.scoreChart?.resize();
+      if (state.activityView === "heat") state.heatGeometryUpdate?.();
+      if (state.activityView === "index") { window.DashboardIndex?.refresh(); window.DashboardIndex?.resize(); }
+    });
+  }
+
+  function bindActivitySwitch() {
+    const switcher = $(".activity-switch");
+    switcher?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-activity-view]");
+      if (button && switcher.contains(button)) selectActivityView(button.dataset.activityView);
+    });
+  }
+
+  function renderScores(scores, selector = "#score-table") {
+    const target = $(selector);
+    if (!target) return;
+    target.innerHTML = scores.map((item) => target.tagName === "TBODY"
+      ? `<tr><td>${escapeHtml(item.subject)}</td><td>${item.score} / ${item.target}</td><td class="${item.gap > 0 ? "bad" : "good"}">${item.gap > 0 ? `-${item.gap}` : `+${Math.abs(item.gap)}`}</td><td class="${item.completion >= .9 ? "good" : "bad"}">${Math.round(item.completion * 100)}%</td></tr>`
+      : `<div><span>${escapeHtml(item.subject)}</span><b>${item.score} / ${item.target} · ${Math.round(item.completion * 100)}%</b></div>`).join("");
+  }
+
+  function renderFocusInvestment(investment, active) {
+    if (!$("#focus-investment-view")) return;
+    const baseline = investment || {};
+    const fetchedAt = Date.now();
+    const renderTargetStack = (selector, seconds) => {
+      const target = $(selector);
+      if (!target) return;
+      const percent = Math.max(0, Math.min(100, (seconds / DAILY_TARGET_SECONDS) * 100));
+      target.innerHTML = `<span class="stack-primary" style="width:${percent}%"></span><span class="stack-rest" style="width:${100 - percent}%"></span>`;
+    };
+    const subjectsWithActiveTime = (items, extraSeconds) => {
+      const subjects = (items || []).map((item) => ({ ...item, seconds: Number(item.seconds || 0) }));
+      if (active && extraSeconds) {
+        const activeSubject = subjects.find((item) => item.subject === active.subject);
+        if (activeSubject) activeSubject.seconds += extraSeconds;
+        else subjects.push({ subject: active.subject, seconds: extraSeconds });
+      }
+      return subjects.sort((left, right) => right.seconds - left.seconds || left.subject.localeCompare(right.subject, "zh-CN"));
+    };
+    const renderSubjectStack = (stackSelector, legendSelector, subjects, totalSeconds) => {
+      const stack = $(stackSelector);
+      const legend = $(legendSelector);
+      const topSubjects = subjects.slice(0, 3);
+      if (!totalSeconds || !topSubjects.length) {
+        stack.innerHTML = "";
+        legend.innerHTML = "<span>暂无专注数据</span>";
+        return;
+      }
+      const palette = getThemePalette();
+      const topSeconds = topSubjects.reduce((sum, item) => sum + item.seconds, 0);
+      stack.innerHTML = topSubjects.map((item, index) => `<span style="width:${(item.seconds / totalSeconds) * 100}%;background:${palette[index]}"></span>`).join("") + `<span class="stack-other" style="width:${Math.max(0, ((totalSeconds - topSeconds) / totalSeconds) * 100)}%"></span>`;
+      legend.innerHTML = topSubjects.map((item, index) => `<span><i style="background:${palette[index]}"></i>${escapeHtml(item.subject)}<b>${Math.round((item.seconds / totalSeconds) * 1000) / 10}% · ${formatSeconds(item.seconds)}</b></span>`).join("");
+    };
+    const tick = (now) => {
+      const extraSeconds = activeExtraSeconds(active, fetchedAt, now);
+      const currentSeconds = Number(baseline.current_seconds || 0) + extraSeconds;
+      const recordedDayCount = Number(baseline.recorded_day_count || 0);
+      const previousRecordedDayCount = Number(baseline.previous_recorded_day_count || 0);
+      const dailyAverage = Math.floor(currentSeconds / Math.max(1, recordedDayCount));
+      const previousAverage = Number(baseline.previous_daily_average_seconds || 0);
+      const trendSeconds = dailyAverage - previousAverage;
+      const trend = $("#investment-trend");
+      $("#investment-daily-average").textContent = formatSeconds(dailyAverage);
+      trend.className = `investment-trend${trendSeconds > 0 ? " up" : trendSeconds < 0 ? " down" : ""}`;
+      trend.textContent = trendSeconds > 0 ? `↑ ${formatSeconds(trendSeconds)}` : trendSeconds < 0 ? `↓ ${formatSeconds(Math.abs(trendSeconds))}` : previousRecordedDayCount ? `较前 ${previousRecordedDayCount} 个记录日持平` : "暂无前序记录";
+      renderTargetStack("#investment-average-stack", dailyAverage);
+
+      const allTime = state.investmentRange === "all";
+      const rangeSeconds = Number(allTime ? baseline.all_time_seconds : baseline.current_seconds || 0) + extraSeconds;
+      const rangeSubjects = allTime ? baseline.all_time_subjects : baseline.subjects;
+      $("#investment-week-total").textContent = formatSeconds(rangeSeconds);
+      $("#investment-range-note").textContent = allTime ? "全部记录累计" : recordedDayCount ? `近 ${recordedDayCount} 个记录日累计` : "暂无记录日";
+      renderSubjectStack("#investment-subject-stack", "#investment-subject-legend", subjectsWithActiveTime(rangeSubjects, extraSeconds), rangeSeconds);
+
+      const todaySeconds = Number(baseline.today_seconds || 0) + extraSeconds;
+      $("#investment-today-total").textContent = formatSeconds(todaySeconds);
+      $("#investment-today-percent").textContent = `${Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 1000) / 10}%`;
+      renderSubjectStack("#investment-today-stack", "#investment-today-legend", subjectsWithActiveTime(baseline.today_subjects, extraSeconds), todaySeconds);
+    };
+    removeSecondTask("investment");
+    if (active) setSecondTask("investment", tick);
+    else tick(fetchedAt);
+  }
+
+  function renderFocusComparison(active) {
+    const view = $("#focus-comparison-view");
+    if (!view) {
+      removeSecondTask("focusComparison");
+      return;
+    }
+    const tick = (now) => {
+      const investment = state.dashboard?.focus_investment || {};
+      const fetchedAt = state.dashboardFetchedAt || now;
+      const extraSeconds = activeExtraSeconds(active, fetchedAt, now);
+      const todaySeconds = Number(investment.today_seconds || 0) + extraSeconds;
+      const yesterdayTotal = Number(investment.yesterday_seconds || 0);
+      const yesterdayBaseline = Math.round(yesterdayTotal * workWindowProgress(new Date(serverNow(now)), state.dashboard?.windows));
+      const delta = todaySeconds - yesterdayBaseline;
+      view.classList.toggle("ahead", delta > 0);
+      view.classList.toggle("behind", delta < 0);
+      $("#focus-compare-today").textContent = formatSeconds(todaySeconds);
+      $("#focus-compare-trend").textContent = delta > 0 ? `提前 +${formatSeconds(delta)}` : delta < 0 ? `落后 −${formatSeconds(Math.abs(delta))}` : "持平 ±00:00:00";
+      renderFocusLeaderboard(state.dashboard?.focus_leaderboard, extraSeconds);
+    };
+    if (active) setSecondTask("focusComparison", tick);
+    else { removeSecondTask("focusComparison"); tick(Date.now()); }
+  }
+
+  function visibleLeaderboardEntries(entries, today) {
+    if (today.rank <= 6) return entries.filter((entry) => entry.rank <= 6).slice(0, 6);
+    const first = entries.slice(0, 3);
+    const previous = [...entries].reverse().find((entry) => entry.rank < today.rank);
+    const result = [...first];
+    if (previous && !result.some((entry) => entry.date === previous.date)) result.push({ isGap: true }, previous);
+    if (!result.some((entry) => entry.date === today.date)) result.push(today);
+    return result;
+  }
+
+  function renderQuantileProfile(target, entries, today) {
+    if (!target) return;
+    const step = 20 * 60;
+    const historicalEntries = entries.filter((entry) => entry.date !== today.date && Number(entry.seconds || 0) >= step);
+    const maxSeconds = Math.max(Number(today.seconds || 0), 0, ...historicalEntries.map((entry) => Number(entry.seconds || 0)));
+    const binCount = Math.max(1, Math.floor(maxSeconds / step) + 1);
+    const bins = Array.from({ length: binCount }, (_value, index) => ({
+      count: historicalEntries.filter((entry) => entry.seconds >= index * step && entry.seconds < (index + 1) * step).length,
+      index,
+    }));
+    const current = Math.min(binCount - 1, Math.floor(today.seconds / step));
+    const widthUnits = Math.max(5, ...bins.map((bin) => bin.count));
+    const displayBins = [...bins].reverse();
+    target.style.gridTemplateRows = `repeat(${displayBins.length}, minmax(0, 1fr))`;
+    target.innerHTML = displayBins.map((bin) => {
+      const kind = bin.index < current ? " is-profitable" : bin.index > current ? " is-muted" : " is-current";
+      const width = (bin.count / widthUnits) * 100;
+      const currentMarker = bin.index === current ? '<b class="focus-profile-current-marker" aria-hidden="true"></b>' : '';
+      return `<div class="focus-profile-row${kind}"><b class="focus-profile-marker" aria-hidden="true"></b><i style="width:${width}%"></i>${currentMarker}</div>`;
+    }).join("");
+    const updateProfileGeometry = () => {
+      const styles = getComputedStyle(target);
+      const gap = parseFloat(styles.rowGap || styles.gap) || 0;
+      const padding = (parseFloat(styles.paddingTop) || 0) + (parseFloat(styles.paddingBottom) || 0);
+      const rowHeight = (target.clientHeight - padding - gap * Math.max(0, displayBins.length - 1)) / displayBins.length;
+      target.style.setProperty("--profile-row-height", `${Math.max(3, rowHeight)}px`);
+    };
+    requestAnimationFrame(updateProfileGeometry);
+  }
+
+  function renderLeaderboardRows(target, entries, today, animate = false) {
+    target.innerHTML = entries.map((entry) => {
+      if (entry.isGap) return '<div class="focus-leaderboard-gap" aria-hidden="true">···</div>';
+      const isToday = entry.date === today.date;
+      const podium = isToday && Number(entry.rank) >= 1 && Number(entry.rank) <= 3;
+      const gapText = entry.rank === 1 ? "榜首" : `−${formatSeconds(Number(entry.gap_to_previous_seconds || 0))}`;
+      const outline = podium ? '<svg class="focus-podium-outline" aria-hidden="true"><rect x="1" y="1" width="100%" height="100%" rx="6" pathLength="100"/></svg>' : "";
+      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}${podium ? ` is-podium podium-${Number(entry.rank)}` : ""}${animate ? " is-swapping" : ""}" data-leaderboard-date="${escapeHtml(entry.date)}">${outline}<div class="focus-leaderboard-identity"><time>${isToday ? "今天" : escapeHtml(String(entry.date).slice(5).replace("-", "/"))}</time><b>#${entry.rank}</b></div><div class="focus-leaderboard-metric"><strong>${formatSeconds(entry.seconds)}</strong></div><div class="focus-leaderboard-metric"><strong>${gapText}</strong></div></div>`;
+    }).join("");
+  }
+
+  function renderFocusLeaderboard(leaderboard, activeExtra = 0) {
+    const rowsTarget = $("#focus-leaderboard-rows");
+    if (!rowsTarget) return;
+    const sourceEntries = leaderboard?.entries || [];
+    const todayKey = leaderboard?.today?.date || accountDateKey();
+    const entries = sourceEntries.map((entry) => ({ ...entry, seconds: Number(entry.seconds || 0) }));
+    let today = entries.find((entry) => entry.date === todayKey);
+    if (today) today.seconds += activeExtra;
+    else if (activeExtra || Number(leaderboard?.today?.seconds || 0)) {
+      today = { date: todayKey, seconds: Number(leaderboard?.today?.seconds || 0) + activeExtra };
+      entries.push(today);
+    }
+    entries.sort((left, right) => right.seconds - left.seconds || String(right.date).localeCompare(String(left.date)));
+    entries.forEach((entry) => {
+      const higher = entries.filter((other) => other.seconds > entry.seconds).map((other) => other.seconds);
+      entry.rank = higher.length + 1;
+      const previous = higher.length ? Math.min(...higher) : null;
+      entry.gap_to_previous_seconds = previous === null ? null : previous - entry.seconds;
+    });
+    const dayCount = entries.length;
+    today = entries.find((entry) => entry.date === todayKey);
+    const summary = $("#focus-leaderboard-summary");
+    const percentile = $("#focus-leaderboard-percentile");
+    const dayCountTarget = $("#focus-leaderboard-day-count");
+    const profile = $("#focus-leaderboard-profile");
+    if (!today || !today.seconds) {
+      rowsTarget.innerHTML = '<div class="loading-row">今天产生有效专注后会进入榜单。</div>';
+      if (summary) summary.textContent = "今天尚未上榜";
+      if (percentile) percentile.textContent = "--";
+      if (dayCountTarget) dayCountTarget.textContent = `${dayCount} 个历史记录日`;
+      if (profile) profile.replaceChildren();
+      state.leaderboardRank = null;
+      return;
+    }
+    const percent = Math.round((dayCount - today.rank + 1) / dayCount * 100);
+    const gap = Number(today.gap_to_previous_seconds || 0);
+    if (summary) summary.textContent = today.rank === 1 ? "今日暂列第 1 名" : `今日第 ${today.rank} 名 · 距上一名 ${formatSeconds(gap)}`;
+    if (percentile) percentile.textContent = `${percent}%`;
+    if (dayCountTarget) dayCountTarget.textContent = `${entries.filter((entry) => entry.date !== today.date).length} 个历史记录日`;
+    renderQuantileProfile(profile, entries, today);
+    const finalEntries = visibleLeaderboardEntries(entries, today);
+    if (state.leaderboardTimer && state.leaderboardPendingRank === today.rank) return;
+    window.clearTimeout(state.leaderboardTimer);
+    const rankImproved = state.leaderboardRank != null && today.rank < state.leaderboardRank;
+    state.leaderboardRank = today.rank;
+    if (!rankImproved) {
+      state.leaderboardPendingRank = null;
+      renderLeaderboardRows(rowsTarget, finalEntries, today);
+      return;
+    }
+    const displaced = entries.find((entry) => entry.rank > today.rank && entry.date !== today.date);
+    const interim = [...entries.slice(0, 3), { isGap: true }, today];
+    if (displaced && !interim.some((entry) => entry.date === displaced.date)) interim.push(displaced);
+    renderLeaderboardRows(rowsTarget, interim, today, true);
+    state.leaderboardPendingRank = today.rank;
+    state.leaderboardTimer = window.setTimeout(() => {
+      renderLeaderboardRows(rowsTarget, finalEntries, today);
+      state.leaderboardPendingRank = null;
+      state.leaderboardTimer = null;
+    }, 500);
+  }
+
+  function renderGuestSummary(data) {
+    const totalTarget = $("#guest-today-total");
+    if (!totalTarget) return;
+    const today = data.today_focus || { seconds: 0, count: 0 };
+    totalTarget.textContent = formatSeconds(today.seconds);
+    $("#guest-today-target").textContent = `7 小时目标 · ${Math.min(100, Math.round((today.seconds / DAILY_TARGET_SECONDS) * 100))}%`;
+    $("#guest-today-count").textContent = String(today.count || 0);
+    $("#guest-today-state").textContent = data.focus?.active ? (data.focus.active.paused_at ? "已暂停" : "专注中") : "空闲";
+    const totals = new Map();
+    (data.focus?.today || []).forEach((item) => {
+      totals.set(item.subject, (totals.get(item.subject) || 0) + Number(item.effective_seconds || 0));
+    });
+    const target = $("#guest-subject-list");
+    target.innerHTML = totals.size
+      ? [...totals.entries()].sort((left, right) => right[1] - left[1]).map(([subject, seconds]) => `<div><span>${escapeHtml(subject)}</span><b>${formatSeconds(seconds)}</b></div>`).join("")
+      : '<div class="loading-row">今日暂无专注记录。</div>';
+  }
+
+  function selectInsightView(name) {
+    const summaryAvailable = state.summaryCharts.length > 0;
+    state.insightView = ["investment", "comparison", "summary"].includes(name) && (name !== "summary" || summaryAvailable) ? name : "investment";
+    ["investment", "comparison", "summary"].forEach((view) => {
+      const target = $(view === "investment" ? "#focus-investment-view" : view === "comparison" ? "#focus-comparison-view" : "#focus-summary");
+      if (target) target.hidden = state.insightView !== view;
+    });
+    document.querySelectorAll("[data-insight-view]").forEach((button) => {
+      button.hidden = button.dataset.insightView === "summary" && !summaryAvailable;
+      const selected = button.dataset.insightView === state.insightView;
+      button.classList.toggle("is-active", selected);
+      button.setAttribute("aria-selected", String(selected));
+    });
+    requestAnimationFrame(() => state.summaryCharts.forEach((chart) => chart.resize()));
+  }
+
+  function closeFocusSummary() {
+    removeSecondTask("summary");
+    state.summaryCharts.forEach((chart) => chart.destroy());
+    state.summaryCharts = [];
+    selectInsightView(state.insightView === "summary" ? state.summaryReturnView : state.insightView);
+  }
+
+  function showFocusSummary(session) {
+    const overview = $("#focus-investment-view");
+    const comparison = $("#focus-comparison-view");
+    const summary = $("#focus-summary");
+    if (!overview || !summary || !window.Chart) return;
+    state.summaryReturnView = state.insightView === "summary" ? state.summaryReturnView : state.insightView;
+    closeFocusSummary();
+    overview.hidden = true;
+    if (comparison) comparison.hidden = true;
+    summary.hidden = false;
+    const duration = Number(session.effective_seconds ?? focusElapsedSeconds(session));
+    $("#summary-session-time").textContent = formatSeconds(duration);
+    const target = Number(session.planned_minutes || 0) * 60 || Number(nativeRuntime().plannedSeconds || 0) || 3600;
+    const targetLabel = target % 3600 === 0 ? `${target / 3600} 小时` : `${target / 60} 分钟`;
+    const gap = target - duration;
+    $("#summary-goal-gap").textContent = gap > 0 ? `距 ${targetLabel}还差 ${Math.ceil(gap / 60)} 分钟` : gap < 0 ? `已达标 · 超出 ${Math.floor(Math.abs(gap) / 60)} 分钟` : `已达成 ${targetLabel}目标`;
+    const palette = getThemePalette();
+    state.summaryCharts.push(new Chart($("#session-goal-chart"), {
+      type: "doughnut",
+      data: { datasets: [{ data: [Math.min(duration, target), Math.max(0, gap)], backgroundColor: [palette[0], chartColor("--subtle")], borderWidth: 0 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: "72%", plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 350 } },
+    }));
+    const summaryOpenedAt = Date.now();
+    const endedAt = Date.parse(session.ended_at) || nativeRuntime().endedAtEpochMs || summaryOpenedAt;
+    const tick = (now) => {
+      const elapsed = Math.floor((now - endedAt) / 1000);
+      $("#rest-timer").textContent = formatSeconds(elapsed);
+      if (now - summaryOpenedAt >= 900_000) closeFocusSummary();
+    };
+    setSecondTask("summary", tick);
+    selectInsightView("summary");
+  }
+
+  function formatScoreDate(value) {
+    const date = new Date(`${value}T00:00:00`);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+  }
+
+  function renderScoreChart(history) {
+    const canvas = $("#score-chart");
+    const empty = $("#score-chart-empty");
+    const detail = $("#score-chart-detail");
+    if (!canvas || !empty || !detail || !window.Chart) return;
+    state.scoreChart?.destroy();
+    state.scoreChart = null;
+    const grouped = new Map();
+    (history || []).forEach((item) => {
+      const date = String(item.exam_date || "").slice(0, 10);
+      if (!date || !item.subject || Number(item.target) <= 0) return;
+      if (!grouped.has(date)) grouped.set(date, new Map());
+      grouped.get(date).set(item.subject, item);
+    });
+    const dates = [...grouped.keys()].sort().slice(-10);
+    if (!dates.length) {
+      canvas.hidden = true;
+      empty.hidden = false;
+      detail.textContent = "";
+      detail.hidden = true;
+      return;
+    }
+    canvas.hidden = false;
+    empty.hidden = true;
+    const subjects = [...new Set(dates.flatMap((date) => [...grouped.get(date).keys()]))];
+    const palette = getThemePalette();
+    const datasets = subjects.map((subject, index) => ({
+      label: subject,
+      data: dates.map((date) => {
+        const item = grouped.get(date).get(subject);
+        return item ? Math.round((Number(item.score) / Number(item.target)) * 1000) / 10 : null;
+      }),
+      borderColor: palette[index % palette.length],
+      backgroundColor: palette[index % palette.length],
+      pointBackgroundColor: chartColor("--surface"),
+      pointBorderWidth: 2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      borderWidth: 2,
+      tension: 0.28,
+      spanGaps: false,
+    }));
+    const maxValue = Math.max(100, ...datasets.flatMap((dataset) => dataset.data.filter((value) => value !== null)));
+    const crosshairPlugin = {
+      id: "scoreCrosshair",
+      afterDraw(chart) {
+        const active = chart.tooltip?.getActiveElements?.() || [];
+        if (!active.length) return;
+        const index = active[0].index;
+        const x = chart.scales.x.getPixelForValue(index);
+        const context = chart.ctx;
+        context.save();
+        context.strokeStyle = "rgba(32, 39, 47, .24)";
+        context.setLineDash([4, 4]);
+        context.beginPath();
+        context.moveTo(x, chart.chartArea.top);
+        context.lineTo(x, chart.chartArea.bottom);
+        context.stroke();
+        chart.data.datasets.forEach((dataset, datasetIndex) => {
+          if (dataset.data[index] === null) return;
+          const point = chart.getDatasetMeta(datasetIndex).data[index];
+          if (!point) return;
+          context.fillStyle = dataset.borderColor;
+          context.beginPath();
+          context.arc(point.x, point.y, 5, 0, Math.PI * 2);
+          context.fill();
+          context.fillStyle = chartColor("--surface");
+          context.beginPath();
+          context.arc(point.x, point.y, 2, 0, Math.PI * 2);
+          context.fill();
+        });
+        context.restore();
+      },
+    };
+    state.scoreChart = new Chart(canvas, {
+      type: "line",
+      data: { labels: dates.map(formatScoreDate), datasets },
+      plugins: [crosshairPlugin],
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: chartColor("--muted"), font: { size: 11 } } },
+          y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: chartColor("--line") }, ticks: { color: chartColor("--muted"), font: { size: 11 }, callback: (value) => `${value}%` } },
+        },
+        plugins: {
+          legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 7, color: chartColor("--muted"), font: { size: 11 } } },
+          tooltip: {
+            enabled: false,
+            external: ({ tooltip }) => {
+              if (!tooltip || tooltip.opacity === 0 || !tooltip.dataPoints?.length) {
+                detail.hidden = true;
+                return;
+              }
+              const date = dates[tooltip.dataPoints[0].dataIndex];
+              const items = [...grouped.get(date).values()];
+              detail.innerHTML = `<strong>${formatScoreDate(date)}</strong>${items.map((item) => `<span>${escapeHtml(item.subject)} ${Math.round((Number(item.score) / Number(item.target)) * 1000) / 10}% · ${item.score} / ${item.target}</span>`).join("")}`;
+              detail.hidden = false;
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function syncScoreChartTheme(active) {
+    const palette = getThemePalette(Boolean(active));
+    if (state.scoreChart) {
+      state.scoreChart.data.datasets.forEach((dataset, index) => {
+        dataset.borderColor = palette[index % palette.length];
+        dataset.backgroundColor = palette[index % palette.length];
+        dataset.pointBackgroundColor = chartColor("--surface");
+      });
+      state.scoreChart.update("none");
+    }
+    if (state.focusTrendChart) {
+      state.focusTrendChart.data.datasets.forEach((dataset) => {
+        dataset.borderColor = palette[0];
+        dataset.backgroundColor = `${palette[0]}26`;
+      });
+      state.focusTrendChart.update("none");
+    }
+  }
+
+  function loadQuickFocus() {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(quickFocusStorageKey()) || window.localStorage.getItem(QUICK_FOCUS_STORAGE) || "{}");
+      state.quickFocus.pinned = Array.isArray(saved.pinned) ? saved.pinned.map(Number).filter(Number.isInteger).slice(0, 8) : [];
+      state.quickFocus.recent = Array.isArray(saved.recent) ? saved.recent.map(Number).filter(Number.isInteger).slice(0, 12) : [];
+    } catch (_error) {
+      state.quickFocus = { pinned: [], recent: [] };
+    }
+  }
+
+  function saveQuickFocus() {
+    try { window.localStorage.setItem(quickFocusStorageKey(), JSON.stringify(state.quickFocus)); }
+    catch (_error) {}
+  }
+
+  function quickModeIds(modes) {
+    const valid = new Set(modes.map((item) => Number(item.id)));
+    const pinned = state.quickFocus.pinned.filter((id) => valid.has(id));
+    const recent = state.quickFocus.recent.filter((id) => valid.has(id) && !pinned.includes(id));
+    const remaining = modes.map((item) => Number(item.id)).filter((id) => !pinned.includes(id) && !recent.includes(id));
+    state.quickFocus.pinned = pinned;
+    state.quickFocus.recent = recent;
+    return [...pinned, ...recent, ...remaining].slice(0, quickFocusCount());
+  }
+
+  function rememberFocusItem(focusItemId) {
+    const id = Number(focusItemId);
+    state.quickFocus.recent = [id, ...state.quickFocus.recent.filter((item) => item !== id)].slice(0, 12);
+    saveQuickFocus();
+  }
+
+  function toggleQuickPin(focusItemId) {
+    const id = Number(focusItemId);
+    if (document.body.dataset.role === "guest" || !(state.dashboard?.focus_items || []).some((item) => Number(item.id) === id)) return;
+    if (state.quickFocus.pinned.includes(id)) {
+      state.quickFocus.pinned = state.quickFocus.pinned.filter((item) => item !== id);
+    } else {
+      state.quickFocus.pinned = [id, ...state.quickFocus.pinned.filter((item) => item !== id)].slice(0, quickFocusCount());
+    }
+    saveQuickFocus();
+    renderModes(state.dashboard?.focus_items || state.dashboard?.focus_modes || []);
+    updateFocusLaunchPreview();
+  }
+
+  function renderModes(modes = []) {
+    const target = $("#focus-modes");
+    if (!target) return;
+    const byId = new Map(modes.map((item) => [Number(item.id), item]));
+    const quickModes = quickModeIds(modes).map((id) => byId.get(id)).filter(Boolean);
+    const signature = JSON.stringify(quickModes.map((item) => [item.id, item.label, state.quickFocus.pinned.includes(Number(item.id))]));
+    if (target.dataset.signature === signature) return;
+    target.dataset.signature = signature;
+    target.querySelectorAll(".drag-launch").forEach(disposeCommitSlider);
+    target.innerHTML = quickModes.map((item) => {
+      const label = item.label || `${item.subject} · ${item.name}`;
+      const pinned = state.quickFocus.pinned.includes(Number(item.id));
+      return `<div class="mode" data-detail-kind="focus" data-detail-key="${Number(item.id)}"><div class="drag-launch" data-focus-item-id="${Number(item.id)}" data-focus-item="${escapeHtml(label)}" data-mode="专注" data-duration="0"><div class="drag-fill"></div><span class="drag-label">${escapeHtml(label)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${escapeHtml(label)}">→</span></div><button class="quick-pin${pinned ? " is-pinned" : ""}" type="button" data-quick-pin="${Number(item.id)}" title="${pinned ? "取消固定" : "固定到快捷启动"}" aria-label="${pinned ? "取消固定" : "固定"} ${escapeHtml(label)}">${pinned ? "★" : "☆"}</button><button class="quick-detail" type="button" data-detail-open aria-label="查看 ${escapeHtml(label)} 详情" title="事项详情（也可长按）">⋯</button></div>`;
+    }).join("");
+    target.querySelectorAll("[data-quick-pin]").forEach((button) => button.addEventListener("click", () => toggleQuickPin(button.dataset.quickPin)));
+    initDragLaunchers();
+  }
+
+  function focusLaunchItems() {
+    const items = state.dashboard?.focus_items || state.dashboard?.focus_modes || [];
+    return items.filter((item) => Number(item.subject_id) === Number(state.focusLaunch.subjectId));
+  }
+
+  function selectedFocusLaunchItem() {
+    return focusLaunchItems().find((item) => Number(item.id) === Number(state.focusLaunch.itemId)) || null;
+  }
+
+  function centerFocusStripOption(strip, value, behavior = "auto") {
+    const option = [...strip.querySelectorAll("[data-focus-option]")].find((item) => item.dataset.value === String(value));
+    if (!option) return;
+    strip.scrollTo({ left: Math.max(0, option.offsetLeft + option.offsetWidth / 2 - strip.clientWidth / 2), behavior });
+  }
+
+  function updateFocusLaunchPreview() {
+    const subjects = state.dashboard?.subjects || [];
+    const subject = subjects.find((item) => Number(item.id) === Number(state.focusLaunch.subjectId));
+    const item = selectedFocusLaunchItem();
+    $("#focus-selected-subject")?.replaceChildren(document.createTextNode(subject?.name || "--"));
+    $("#focus-selected-item")?.replaceChildren(document.createTextNode(item?.name || "--"));
+    $("#focus-entry-preview")?.replaceChildren(document.createTextNode(item ? (item.label || `${subject?.name || ""} · ${item.name}`) : "该科目暂无项目"));
+    const submit = $("#submit-focus-launch");
+    if (submit) submit.disabled = !item;
+    const pin = $("#toggle-focus-pin");
+    if (pin) {
+      const pinned = Boolean(item && state.quickFocus.pinned.includes(Number(item.id)));
+      pin.disabled = !item;
+      pin.classList.toggle("is-pinned", pinned);
+      pin.setAttribute("aria-pressed", String(pinned));
+      pin.textContent = pinned ? "★ 已固定到快捷启动" : "☆ 固定到快捷启动";
+    }
+  }
+
+  function selectFocusStripValue(type, value, behavior = "smooth") {
+    const numeric = Number(value);
+    if (type === "subject") {
+      if (numeric === Number(state.focusLaunch.subjectId)) return;
+      state.focusLaunch.subjectId = numeric;
+      const items = focusLaunchItems();
+      state.focusLaunch.itemId = items[0]?.id ?? null;
+      renderFocusStrip("item", items.map((item) => ({ value: item.id, label: item.name })));
+    } else {
+      state.focusLaunch.itemId = numeric;
+    }
+    const strip = $(`#focus-${type}-strip`);
+    strip?.querySelectorAll("[data-focus-option]").forEach((option) => {
+      const selected = option.dataset.value === String(numeric);
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-selected", String(selected));
+    });
+    if (strip) centerFocusStripOption(strip, numeric, behavior);
+    updateFocusLaunchPreview();
+  }
+
+  function syncFocusStripSelection(strip, snap = false) {
+    const options = [...strip.querySelectorAll("[data-focus-option]")];
+    if (!options.length) return;
+    const stripBounds = strip.getBoundingClientRect();
+    const center = stripBounds.left + stripBounds.width / 2;
+    const closest = options.reduce((best, option) => {
+      const bounds = option.getBoundingClientRect();
+      const distance = Math.abs(bounds.left + bounds.width / 2 - center);
+      return !best || distance < best.distance ? { option, distance } : best;
+    }, null)?.option;
+    if (closest) selectFocusStripValue(strip.dataset.focusStrip, closest.dataset.value, snap ? "smooth" : "auto");
+  }
+
+  function bindFocusStrip(strip) {
+    if (!strip || strip.dataset.bound) return;
+    strip.dataset.bound = "1";
+    let dragging = null;
+    let frame = null;
+    strip.addEventListener("scroll", () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = null; syncFocusStripSelection(strip); });
+    }, { passive: true });
+    strip.addEventListener("pointerdown", (event) => {
+      dragging = { pointerId: event.pointerId, startX: event.clientX, scrollLeft: strip.scrollLeft };
+      strip.setPointerCapture?.(event.pointerId);
+      strip.classList.add("is-dragging");
+    });
+    strip.addEventListener("pointermove", (event) => {
+      if (!dragging || dragging.pointerId !== event.pointerId) return;
+      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX) / elementScale(strip);
+    });
+    const finish = (event) => {
+      if (!dragging || dragging.pointerId !== event.pointerId) return;
+      strip.releasePointerCapture?.(event.pointerId);
+      dragging = null;
+      strip.classList.remove("is-dragging");
+      syncFocusStripSelection(strip, true);
+    };
+    strip.addEventListener("pointerup", finish);
+    strip.addEventListener("pointercancel", finish);
+    strip.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const options = [...strip.querySelectorAll("[data-focus-option]")];
+      const currentValue = strip.dataset.focusStrip === "subject" ? state.focusLaunch.subjectId : state.focusLaunch.itemId;
+      const current = options.findIndex((item) => item.dataset.value === String(currentValue));
+      const next = Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowRight" ? 1 : -1)));
+      if (options[next]) {
+        event.preventDefault();
+        selectFocusStripValue(strip.dataset.focusStrip, options[next].dataset.value);
+      }
+    });
+  }
+
+  function renderFocusStrip(type, options) {
+    const strip = $(`#focus-${type}-strip`);
+    if (!strip) return;
+    const selected = type === "subject" ? state.focusLaunch.subjectId : state.focusLaunch.itemId;
+    strip.innerHTML = options.map((option) => `<button class="score-strip-option${String(option.value) === String(selected) ? " is-selected" : ""}" type="button" data-focus-option data-value="${Number(option.value)}" role="option" aria-selected="${String(option.value) === String(selected)}">${escapeHtml(option.label)}</button>`).join("");
+    strip.querySelectorAll("[data-focus-option]").forEach((option) => option.addEventListener("click", () => selectFocusStripValue(type, option.dataset.value)));
+    bindFocusStrip(strip);
+    requestAnimationFrame(() => centerFocusStripOption(strip, selected));
+  }
+
+  function renderFocusLaunch() {
+    const subjects = state.dashboard?.subjects || [];
+    if (!subjects.some((item) => Number(item.id) === Number(state.focusLaunch.subjectId))) {
+      state.focusLaunch.subjectId = subjects[0]?.id ?? null;
+    }
+    let items = focusLaunchItems();
+    if (!items.some((item) => Number(item.id) === Number(state.focusLaunch.itemId))) {
+      state.focusLaunch.itemId = items[0]?.id ?? null;
+      items = focusLaunchItems();
+    }
+    renderFocusStrip("subject", subjects.map((subject) => ({ value: subject.id, label: subject.name })));
+    renderFocusStrip("item", items.map((item) => ({ value: item.id, label: item.name })));
+    updateFocusLaunchPreview();
+  }
+
+  function openFocusLaunch() {
+    const modal = $("#focus-launch-modal");
+    if (!modal || modal.open || state.dashboard?.focus?.active) return;
+    renderFocusLaunch();
+    modal.showModal();
+    requestAnimationFrame(() => {
+      modal.classList.add("is-open");
+      $("#focus-subject-strip")?.focus();
+    });
+  }
+
+  function closeFocusLaunch() {
+    const modal = $("#focus-launch-modal");
+    if (!modal?.open || modal.dataset.closing) return;
+    modal.dataset.closing = "1";
+    modal.classList.remove("is-open");
+    window.setTimeout(() => {
+      if (modal.open) modal.close();
+      delete modal.dataset.closing;
+    }, 180);
+  }
+
+  async function submitFocusLaunch(event) {
+    event.preventDefault();
+    const item = selectedFocusLaunchItem();
+    if (!item) return;
+    if (await startFocusItem(Number(item.id))) closeFocusLaunch();
+  }
+
+  function bindFocusLaunch() {
+    const modal = $("#focus-launch-modal");
+    if (!modal) return;
+    $("#open-focus-launch")?.addEventListener("click", openFocusLaunch);
+    $("#close-focus-launch")?.addEventListener("click", closeFocusLaunch);
+    $("#focus-launch-form")?.addEventListener("submit", submitFocusLaunch);
+    $("#toggle-focus-pin")?.addEventListener("click", () => {
+      const item = selectedFocusLaunchItem();
+      if (item) toggleQuickPin(item.id);
+    });
+    modal.addEventListener("cancel", (event) => { event.preventDefault(); closeFocusLaunch(); });
+  }
+
+  function renderDailySettlement(data) {
+    const banner = $("#daily-settlement-banner");
+    const achievement = $("#daily-achievement");
+    const modes = $("#focus-modes");
+    const actions = $(".focus-launch-actions");
+    const settlement = data.daily_settlement;
+    const canSettle = canManageOwnFocus() && Boolean(data.can_settle_today);
+    if (banner) banner.hidden = !canSettle;
+    document.querySelectorAll("[data-settle-today]").forEach((track) => {
+      track.hidden = !canSettle;
+      const active = data.focus?.active;
+      const day = String(data.now || "").slice(0, 10);
+      if (!state.settling && track.dataset.settlementDate !== day) {
+        track.dataset.settlementDate = day;
+        const thumb = track.querySelector(".drag-thumb");
+        if (thumb && window.gsap) { gsap.set(thumb, { x:0 }); setDragProgress(track, thumb); }
+        track.classList.remove("armed");
+      }
+      const label = track.querySelector(".drag-label");
+      if (label) label.textContent = state.settling ? "正在收官…" : "结算本日";
+      const note = active ? "滑动收官会结束当前专注并固定今日总结；本日不再开启专注。" : "滑动收官会固定今日总结；本日不再开启专注。";
+      track.setAttribute("data-tooltip", note);
+      track.querySelector(".drag-thumb")?.setAttribute("aria-label", note);
+      track.setAttribute("aria-disabled", String(!canSettle || state.settling));
+    });
+    const guestReport = $("#guest-open-daily-report");
+    if (guestReport) guestReport.hidden = !settlement;
+    window.DailyReport?.acceptSettlement(settlement);
+    document.querySelectorAll("[data-cancel-daily-settlement]").forEach((button) => {
+      button.disabled = state.settling;
+      button.textContent = state.settling ? "处理中…" : "取消结算";
+    });
+    initDragSettlement();
+    if (modes) modes.hidden = Boolean(settlement);
+    if (actions) actions.hidden = Boolean(settlement);
+    if (!achievement) return;
+    achievement.hidden = !settlement;
+    if (!settlement) {
+      achievement.replaceChildren();
+      return;
+    }
+    const total = Number(settlement.total_seconds || 0);
+    const target = Number(settlement.target_seconds || DAILY_TARGET_SECONDS);
+    const completion = Math.min(100, Math.round((total / target) * 100));
+    const delta = Number(settlement.delta_seconds || 0);
+    const evaluation = completion >= 100 ? "目标达成" : completion >= 80 ? "接近目标" : completion >= 50 ? "稳步推进" : "保留节奏";
+    const deltaText = delta > 0 ? `比昨天多 ${formatSeconds(delta)}` : delta < 0 ? `比昨天少 ${formatSeconds(Math.abs(delta))}` : "与昨天持平";
+    const subject = settlement.top_subject ? `${escapeHtml(settlement.top_subject)} · ${formatSeconds(settlement.top_subject_seconds || 0)}` : "今天还没有专注记录";
+    const rank = settlement.report || data.focus_leaderboard?.today;
+    const rankText = rank?.rank ? rank.rank === 1 ? `第 1 名 · ${Number(rank.percentile || 100)}% 分位` : `第 ${rank.rank} 名 · 距上一名 ${formatSeconds(Number(rank.gap_to_previous_seconds || 0))}` : "今天暂无有效专注排名";
+    achievement.innerHTML = `<div class="section-heading"><h2>当日成就</h2><span>已结算 · ${escapeHtml(settlement.settlement_date)}</span></div><div class="achievement-total"><span>今日有效专注</span><strong>${formatSeconds(total)}</strong><b>${completion}% · ${evaluation}</b></div><div class="achievement-list"><div><span>昨日差值</span><b class="${delta >= 0 ? "good" : "bad"}">${escapeHtml(deltaText)}</b></div><div><span>历日排名</span><b>${escapeHtml(rankText)}</b></div><div><span>专注次数</span><b>${Number(settlement.session_count || 0)} 次</b></div><div><span>主要投入</span><b>${subject}</b></div></div><div class="daily-achievement-actions"><button type="button" class="ui-button ui-button--secondary daily-report-reopen" data-open-daily-report>查看今日纪念卡 ↗</button>${canCancelSettlement() ? `<button type="button" class="ui-button ui-button--quiet" data-cancel-daily-settlement data-settlement-date="${escapeHtml(settlement.settlement_date)}" data-settlement-id="${Number(settlement.id)}" ${state.settling ? "disabled" : ""}>取消结算</button>` : ""}</div>`;
+  }
+
+  function canCancelSettlement(date = state.dashboard?.daily_settlement?.settlement_date) {
+    const settlement = state.dashboard?.daily_settlement;
+    return Boolean(canManageOwnFocus() && settlement?.id && settlement.settlement_date === date && date === accountDateKey());
+  }
+
+  async function cancelDailySettlement(trigger) {
+    if (state.settling) return;
+    const settlement = state.dashboard?.daily_settlement;
+    const date = trigger?.dataset?.settlementDate || settlement?.settlement_date;
+    const id = Number(trigger?.dataset?.settlementId || settlement?.id);
+    if (!canCancelSettlement(date) || id !== settlement.id) return;
+    state.settling = true;
+    renderDailySettlement(state.dashboard);
+    try {
+      // Paint the pending action before sending the write.
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await api("/api/daily-settlement", { method:"DELETE", body:JSON.stringify({ expected_date:date, settlement_id:id }) });
+      window.DailyReport?.close();
+      state.dashboard = { ...state.dashboard, daily_settlement:null, can_settle_today:true };
+      document.body.classList.remove("is-settled");
+      renderDailySettlement(state.dashboard);
+      showToast("已取消结算，可以继续专注");
+    } catch (error) {
+      showToast(error.message === "settlement_changed" ? "结算已更新，请重试" : error.message === "settlement_date_changed" ? "日期已改变，正在刷新" : "取消未确认，正在刷新");
+    } finally {
+      state.settling = false;
+      try { await loadDashboard(); }
+      catch (_error) { showToast("同步失败，将刷新页面核对"); window.setTimeout(() => window.location.reload(), 1800); }
+    }
+  }
+
+  function renderFocusChallenge() {
+    const row = $("#focus-challenge-row"), status = $("#focus-challenge-state"), track = $("#start-focus-challenge");
+    if (!row || !status || !track) return;
+    const challenge = window.IndexChallenge?.getState();
+    const readonly = !canManageOwnFocus() || !window.IndexChallenge?.canEdit();
+    row.hidden = readonly;
+    if (readonly) return;
+    const enabled = Boolean(challenge?.active_today);
+    if (!enabled && track.dataset.challengeActive === "1") {
+      const thumb = track.querySelector(".drag-thumb");
+      if (thumb && window.gsap) { gsap.set(thumb, { x:0 }); setDragProgress(track, thumb); }
+      track.classList.remove("armed");
+    }
+    track.dataset.challengeActive = enabled ? "1" : "0";
+    status.hidden = !enabled;
+    track.hidden = enabled;
+    const rule = "连胜挑战开启后今日及后续交易日涨跌限制为 ±20%；退出后今日仍为 ±20%，次日恢复普通 ±10%。";
+    status.querySelector("b").textContent = challenge?.pending_disable ? "明日恢复" : "±20%";
+    status.setAttribute("data-tooltip", rule);
+    const pendingDisable = Boolean(challenge?.pending_disable);
+    track.querySelector(".drag-label").textContent = state.challenging ? "正在开启…" : pendingDisable ? "继续连胜挑战" : "开始连胜挑战";
+    track.setAttribute("data-tooltip", pendingDisable ? `今日挑战仍为 ±20%，明日起恢复普通限制；滑动可继续挑战。${rule}` : rule);
+    const disabled = !challenge || state.challenging || state.settling;
+    track.setAttribute("aria-disabled", String(disabled));
+    track.querySelector(".drag-thumb").setAttribute("aria-disabled", String(disabled));
+  }
+
+  function bindInvestmentRange() {
+    document.querySelectorAll("[data-investment-range]").forEach((button) => button.addEventListener("click", () => {
+      state.investmentRange = button.dataset.investmentRange === "all" ? "all" : "week";
+      document.querySelectorAll("[data-investment-range]").forEach((item) => {
+        const selected = item.dataset.investmentRange === state.investmentRange;
+        item.classList.toggle("is-active", selected);
+        item.setAttribute("aria-pressed", String(selected));
+      });
+      if (state.dashboard) renderFocusInvestment(state.dashboard.focus_investment, state.dashboard.focus.active);
+    }));
+  }
+
+  function setDragProgress(track, thumb) {
+    const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+    const ratio = Math.max(0, Math.min(1, (Number(gsap.getProperty(thumb, "x")) || 0) / max));
+    track.querySelector(".drag-fill").style.width = `${Math.round(ratio * 100)}%`;
+    track.querySelector(".drag-label").classList.toggle("on-fill", ratio > .42);
+    track.classList.toggle("armed", ratio >= .72);
+    return { max, ratio };
+  }
+
+  function initDragLaunchers() {
+    document.querySelectorAll(".drag-launch").forEach((track) => {
+      bindCommitSlider(track, () => canManageOwnFocus() && !state.dashboard?.focus?.active && !state.starting && !state.settling, commitFocusStart);
+    });
+  }
+
+  async function startFocusItem(focusItemId) {
+    if (!canManageOwnFocus() || state.starting || state.settling || nativeRuntime().busy || state.dashboard?.focus?.active) return false;
+    state.starting = true;
+    try {
+      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(focusItemId), mode: "专注", planned_minutes: Number($("#native-focus-goal")?.value || 0), client_token: createClientToken() }) });
+      rememberFocusItem(focusItemId);
+      state.recentlyEnded = null;
+      const today = state.dashboard?.focus?.today || [];
+      state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session, today: [...today.filter((item) => item.id !== session.session.id), session.session] } };
+      state.dashboardFetchedAt = Date.now();
+      applyFocusState(session.session, true);
+      showToast("专注已启动");
+      return true;
+    } catch (error) {
+      showToast(error.message);
+      return false;
+    } finally {
+      state.starting = false;
+    }
+  }
+
+  async function commitFocusStart(track, thumb) {
+    track.classList.add("armed");
+    try { await startFocusItem(Number(track.dataset.focusItemId)); }
+    finally { resetCommitSlider(track, thumb); }
+  }
+
+  function animateLayout() {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!window.Flip) return;
+    const flipState = Flip.getState(".time-card, .activity-panel, .investment-panel, .mode-panel");
+    requestAnimationFrame(() => Flip.from(flipState, { duration: .42, ease: "power2.inOut", stagger: .015, absolute: false }));
+  }
+
+  function updatePauseControl(active) {
+    const button = $("#toggle-focus-pause");
+    if (!button) return;
+    const paused = Boolean(active?.paused_at);
+    button.classList.toggle("is-paused", paused);
+    button.title = paused ? "继续专注" : "暂停专注";
+    button.setAttribute("aria-label", button.title);
+    $("#focus-pause-icon").textContent = paused ? "继续" : "暂停";
+  }
+
+  function updateFocusSubjectOverflow() {
+    const viewport = $(".focus-subject-viewport");
+    const subject = $("#focus-subject");
+    if (!viewport || !subject) return;
+    const overflow = Math.max(0, subject.scrollWidth - viewport.clientWidth);
+    subject.style.setProperty("--focus-subject-overflow", `${overflow}px`);
+    subject.classList.toggle("is-overflowing", overflow > 1);
+  }
+
+  async function toggleFocusPause() {
+    nativeAction(state.dashboard?.focus?.active?.paused_at ? "resume" : "pause");
+  }
+
+  function updateFocusLockControl(active) {
+    const status = $("#focus-trust-state");
+    const track = $("#lock-focus");
+    if (!status || !track) return;
+    const trusted = active?.trusted !== false;
+    const locked = Boolean(active?.focus_locked);
+    status.classList.toggle("untrusted", !trusted && !state.syncLost);
+    status.classList.toggle("sync-lost", state.syncLost);
+    status.querySelector("b").textContent = state.syncLost ? "失去同步" : trusted ? "受信" : "非受信";
+    track.classList.toggle("locked", locked);
+    track.querySelector(".drag-label").textContent = locked ? "专注已锁定" : "锁定专注";
+    const thumb = track.querySelector(".drag-thumb");
+    if (!window.gsap || !thumb) return;
+    const slider = commitSliders.get(track), drag = window.Draggable?.get(thumb);
+    if (state.locking || (slider && slider.phase !== "idle") || drag?.isPressed || drag?.isDragging || gsap.isTweening?.(thumb)) return;
+    const x = locked ? Math.max(1, track.clientWidth - thumb.offsetWidth - 4) : 0;
+    gsap.set(thumb, { x });
+    setDragProgress(track, thumb);
+    track.classList.toggle("locked", locked);
+  }
+
+  function applyFocusState(active, animate = false) {
+    if (!canManageOwnFocus()) {
+      // Public profiles may show their focus theme, but never take ownership of
+      // that account's timer, recovery state, native service or pause overlay.
+      document.body.classList.toggle("is-focusing", Boolean(active));
+      document.body.classList.remove("is-paused");
+      renderFocusStateOverlay(null);
+      syncScoreChartTheme(active);
+      return;
+    }
+    if (active?.user_id != null && String(active.user_id) !== document.body.dataset.viewerId) {
+      revokeFocusIdentity();
+      return;
+    }
+    if (animate) animateLayout();
+    const previousActive = state.lastActiveSnapshot;
+    if (previousActive?.id !== active?.id) refreshCommitSliders(true);
+    if (active) {
+      state.recentlyEnded = null;
+      if (state.restStartedAt) exitRest();
+    } else if (previousActive && !state.restStartedAt) {
+      const completed = [...(state.dashboard?.focus?.recent || []), ...(state.dashboard?.focus?.today || [])]
+        .find((item) => item.id === previousActive.id && item.ended_at);
+      const runtime = nativeRuntime();
+      state.recentlyEnded = {
+        id: previousActive.id,
+        subject: previousActive.subject,
+        endedAt: Date.parse(completed?.ended_at) || (runtime.sessionId === previousActive.id ? runtime.endedAtEpochMs : 0) || Date.now(),
+        elapsedSeconds: completed?.effective_seconds ?? (runtime.mode === "ended" && runtime.sessionId === previousActive.id
+          ? runtime.elapsedSeconds : focusElapsedSeconds(previousActive)),
+      };
+    }
+    state.lastActiveSnapshot = active ? { ...active } : null;
+    if (active) {
+      state.focusRecoverySessionId = active.id;
+      closeFocusSummary();
+    } else if (!state.heartbeatFailureSince) {
+      state.focusRecoverySessionId = null;
+    }
+    document.body.classList.toggle("is-focusing", Boolean(active));
+    document.body.classList.toggle("is-paused", Boolean(active?.paused_at));
+    renderFocusStateOverlay(active);
+    notifyNativeFocusState(active);
+    syncScoreChartTheme(active);
+    const idleView = $("#idle-mode-view"), activeView = $("#active-mode-view");
+    if (document.body.dataset.page !== "home" || !idleView || !activeView
+      || ["#home-state-note", "#focus-timer", "#focus-subject", "#focus-start", "#focus-window"].some((selector) => !$(selector))) return;
+    idleView.hidden = Boolean(active);
+    activeView.hidden = !active;
+    selectInsightView(state.insightView);
+    renderFocusComparison(active);
+    $("#home-state-note").textContent = active ? "专注中，保持当前上下文" : "准备开始下一段专注";
+    if (!active) {
+      initDragLaunchers();
+      removeSecondTask("focus");
+      $("#focus-timer").textContent = "00:00:00";
+      updatePauseControl(null);
+      const track = $("#end-focus");
+      const thumb = track?.querySelector(".drag-thumb");
+      if (track && thumb && window.gsap) {
+        gsap.set(thumb, { x: 0 });
+        setDragProgress(track, thumb);
+        track.classList.remove("armed");
+      }
+      return;
+    }
+    updatePauseControl(active);
+    updateFocusLockControl(active);
+    renderFocusChallenge();
+    $("#focus-subject").textContent = active.subject;
+    requestAnimationFrame(updateFocusSubjectOverflow);
+    $("#focus-start").textContent = accountClock(Date.parse(active.started_at), false);
+    const tick = (now) => {
+      const elapsed = focusElapsedSeconds(active, now);
+      const runtime = nativeRuntime();
+      $("#focus-timer").textContent = runtime.sessionId === active.id ? runtime.timer : formatSeconds(elapsed);
+      $("#focus-window").textContent = "\u00a0";
+    };
+    setSecondTask("focus", tick);
+    initDragEnd();
+    initDragLock();
+    initDragChallenge();
+    initDragSettlement();
+  }
+
+  function dashboardSignature(data) {
+    const windowSignature = (value) => [value?.start, value?.end, value?.total_seconds];
+    const active = data.focus?.active;
+    return JSON.stringify({
+      active: active ? [active.id, active.subject, active.started_at, active.status, active.paused_at, active.paused_seconds, active.focus_locked, active.trusted] : null,
+      recent: (data.focus?.recent || []).map((item) => [item.id, item.status, item.ended_at]),
+      scores: (data.score_history || []).map((item) => [item.id, item.subject, item.exam_date, item.score, item.target]),
+      modes: (data.focus_items || data.focus_modes || []).map((item) => [item.id, item.label || item.subject, item.sort_order]),
+      messages: (data.focus_messages || []).map((item) => [item.category, item.text]),
+      settlement: data.daily_settlement ? [data.daily_settlement.id, data.daily_settlement.settlement_date, data.daily_settlement.total_seconds, data.daily_settlement.report_hash, data.daily_settlement.report] : null,
+      canSettle: Boolean(data.can_settle_today),
+      windows: [windowSignature(data.windows?.morning), windowSignature(data.windows?.library)],
+      exam: data.exam?.date,
+      day: String(data.now || "").slice(0, 10),
+      timezoneOffset: accountOffset(data.now),
+      heatmap: data.heatmap,
+      heatmapVisibleHours: data.heatmap_visible_hours,
+      preferences: data.preferences,
+      friends: (data.friends || []).map((friend) => [friend.id, friend.today_seconds, friend.delta_seconds]),
+    });
+  }
+
+  function applyDashboard(data) {
+    if (nativeRuntime().busy || (data.nativeRevision != null && data.nativeRevision !== nativeRuntime().revision)) return;
+    if (focusIdentityRevoked) return;
+    if (canManageOwnFocus() && String(data.preferences?.viewer_id ?? data.viewer?.id) !== document.body.dataset.viewerId) {
+      revokeFocusIdentity();
+      return;
+    }
+    state.dashboard = data;
+    window.DashboardUI?.applyPreferences(data.preferences);
+    state.dashboardFetchedAt = Date.now();
+    syncServerClock(data.now, state.dashboardFetchedAt);
+    state.dashboardSignature = dashboardSignature(data);
+    const settledInactive = canManageOwnFocus() && data.daily_settlement && !data.focus?.active;
+    if (settledInactive) {
+      state.focusRecoverySessionId = null;
+      state.restStartedAt = null;
+      try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
+      closeFocusSummary();
+    }
+    document.body.classList.toggle("is-settled", Boolean(data.daily_settlement));
+    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_items || data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderFocusTrendChart(data.focus_leaderboard); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderFriendDiffBoard(data.friends); renderGuestSummary(data);
+    renderDailySettlement(data);
+    selectActivityView(state.activityView);
+    applyFocusState(data.focus.active, false);
+    if (settledInactive) {
+      state.recentlyEnded = null;
+      state.nativeStateSignature = null;
+      notifyNativeFocusState(null);
+    }
+    document.dispatchEvent(new CustomEvent("dashboard:updated", { detail: data }));
+  }
+
+  async function loadDashboard() {
+    if (focusIdentityRevoked) return;
+    if (document.body.dataset.page !== "home") return refreshCurrentPage();
+    applyDashboard(await api("/api/dashboard"));
+  }
+
+  async function refreshCurrentPage() {
+    if (document.body.dataset.page === "home") return loadDashboard();
+    if (!canManageOwnFocus()) return;
+    const version = (state.focusRefreshVersion || 0) + 1;
+    state.focusRefreshVersion = version;
+    // Service broadcasts must not repopulate settings forms or account lists:
+    // refresh only the owner's focus state and retain the current route/inputs.
+    const data = await api("/api/dashboard");
+    if (!canManageOwnFocus() || version !== state.focusRefreshVersion) return;
+    if (String(data.preferences?.viewer_id ?? data.viewer?.id) !== document.body.dataset.viewerId) {
+      revokeFocusIdentity();
+      return;
+    }
+    const focus = data.focus;
+    if (nativeRuntime().busy || (data.nativeRevision != null && data.nativeRevision !== nativeRuntime().revision)) return;
+    state.dashboard = { ...(state.dashboard || {}), now:data.now, focus, daily_settlement:data.daily_settlement };
+    state.dashboardFetchedAt = Date.now();
+    syncServerClock(data.now, state.dashboardFetchedAt);
+    applyFocusState(focus.active);
+    if (canManageOwnFocus()) document.dispatchEvent(new CustomEvent("dashboard:focus-refreshed", { detail:focus }));
+  }
+
+  function bindNativePageBridge() {
+    window.MutsumiWeb = {
+      refresh: () => {
+        adoptNativeRest();
+        renderNativeRuntime();
+        if (!nativeRuntime().busy) refreshCurrentPage().catch((error) => console.warn("native_page_refresh_failed", error));
+      },
+      endRest: exitRest,
+      navigateFocus,
+    };
+    const destination = sessionStorage.getItem("mutsumiFocusDestination");
+    if (destination) { sessionStorage.removeItem("mutsumiFocusDestination"); navigateFocus(destination); }
+  }
+
+  function refreshVisiblePage() {
+    if (document.body.dataset.page === "home") return syncDashboard();
+    return refreshCurrentPage().catch((error) => console.warn("visible_page_refresh_failed", error));
+  }
+
+  async function syncDashboard() {
+    if (focusIdentityRevoked || document.body.dataset.page !== "home" || document.visibilityState !== "visible" || state.syncing) return;
+    state.syncing = true;
+    try {
+      const data = await api("/api/dashboard");
+      if (focusIdentityRevoked) return;
+      if (dashboardSignature(data) !== state.dashboardSignature) applyDashboard(data);
+      else {
+        state.dashboard.now = data.now;
+        state.dashboard.focus_investment = data.focus_investment;
+        state.dashboard.focus_leaderboard = data.focus_leaderboard;
+        state.dashboardFetchedAt = Date.now();
+        syncServerClock(data.now, state.dashboardFetchedAt);
+        document.dispatchEvent(new CustomEvent("dashboard:updated", { detail: data }));
+      }
+    } catch (error) {
+      console.warn("dashboard_sync_failed", error);
+    } finally {
+      state.syncing = false;
+    }
+  }
+
+  function startDashboardSync() {
+    window.clearInterval(state.syncTimer);
+    if (document.body.dataset.page === "home") state.syncTimer = window.setInterval(syncDashboard, 500);
+  }
+
+  function setSyncLost(lost) {
+    state.syncLost = lost;
+    const warning = $("#sync-warning");
+    if (warning) warning.hidden = !lost;
+    const dot = $("#state-dot");
+    dot?.classList.toggle("state-dot-offline", lost);
+    if (dot) {
+      const label = lost ? "连接异常，正在重连" : "连接正常";
+      dot.title = label;
+      dot.setAttribute("aria-label", label);
+    }
+    updateFocusLockControl(state.dashboard?.focus?.active);
+  }
+
+  function markHeartbeatFailure() {
+    if (state.heartbeatFailureSince) return;
+    state.heartbeatFailureSince = Date.now();
+    if (state.focusRecoverySessionId == null) state.focusRecoverySessionId = state.dashboard?.focus?.active?.id ?? null;
+    window.clearTimeout(state.heartbeatFailureTimer);
+    state.heartbeatFailureTimer = window.setTimeout(() => {
+      if (state.heartbeatFailureSince) setSyncLost(true);
+    }, 10000);
+  }
+
+  function markHeartbeatSuccess() {
+    state.heartbeatFailureSince = null;
+    window.clearTimeout(state.heartbeatFailureTimer);
+    setSyncLost(false);
+    state.foregroundContinuous = document.visibilityState === "visible";
+  }
+
+  async function sendForegroundHeartbeat(allowHidden = false) {
+    if (!canManageOwnFocus()) return;
+    if ((!allowHidden && document.visibilityState !== "visible") || state.heartbeatInFlight) return;
+    state.heartbeatInFlight = true;
+    const sessionId = state.focusRecoverySessionId ?? state.dashboard?.focus?.active?.id ?? null;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2000);
+    try {
+      const response = await fetch("/api/focus/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          allow_recovery: Boolean(sessionId) && document.visibilityState === "visible" && state.foregroundContinuous,
+        }),
+        keepalive: true,
+        signal: controller.signal,
+      });
+      if (response.status === 401 || response.status === 403) {
+        revokeFocusIdentity();
+        return;
+      }
+      if (!response.ok) throw new Error(`heartbeat_${response.status}`);
+      const result = await response.json();
+      if (!canManageOwnFocus()) return;
+      markHeartbeatSuccess();
+      if (result.recovered) {
+        await refreshCurrentPage();
+        showToast("连接已恢复，继续以受信模式专注");
+      } else if (sessionId && result.status === "completed") {
+        state.focusRecoverySessionId = null;
+        await refreshCurrentPage();
+      }
+    } catch (_error) {
+      if (canManageOwnFocus()) markHeartbeatFailure();
+    } finally {
+      window.clearTimeout(timeout);
+      state.heartbeatInFlight = false;
+    }
+  }
+
+  function startForegroundHeartbeat() {
+    window.clearInterval(state.heartbeatTimer);
+    if (!canManageOwnFocus()) return;
+    sendForegroundHeartbeat();
+    state.heartbeatTimer = window.setInterval(sendForegroundHeartbeat, 500);
+  }
+
+  async function endFocus() {
+    nativeAction("end");
+    return true;
+  }
+
+  function initDragEnd() {
+    bindCommitSlider($("#end-focus"), () => canManageOwnFocus() && Boolean(state.dashboard?.focus?.active) && !state.ending && !state.settling, commitFocusEnd);
+  }
+
+  async function commitFocusEnd(track, thumb) {
+    if (state.ending) return;
+    state.ending = true;
+    track.classList.add("armed");
+    const success = await endFocus();
+    if (!success) {
+      gsap.to(thumb, { x: 0, duration: .62, ease: "elastic.out(1, .58)", onUpdate: () => setDragProgress(track, thumb), onComplete: () => track.classList.remove("armed") });
+    }
+    state.ending = false;
+  }
+
+  async function commitDailySettlement(track, thumb) {
+    if (!canManageOwnFocus() || state.settling || state.ending || state.pausing || state.locking || !state.dashboard?.can_settle_today) return;
+    state.settling = true;
+    track.classList.add("armed");
+    const active = state.dashboard?.focus?.active;
+    const date = String(state.dashboard?.now || "").slice(0, 10) || accountDateKey();
+    window.DailyReport?.pending(date, thumb);
+    renderDailySettlement(state.dashboard);
+    try {
+      const result = await api("/api/daily-settlement", { method: "POST", body: JSON.stringify({ expected_date:date, session_id:active?.id ?? null }) });
+      if (!result.settlement || !result.report) throw new Error("当日报告尚未确认，请刷新后重试。");
+      // This response is the transaction's authoritative ended transition. Clear
+      // recovery before a dashboard read so a slow read cannot revive the timer.
+      const ended = result.ended_session;
+      if (ended || (result.report.date === accountDateKey() && result.focus_state?.is_focusing === false && result.focus_state?.is_paused !== true)) {
+        state.focusRecoverySessionId = null;
+        state.heartbeatFailureSince = null;
+        window.clearTimeout(state.heartbeatFailureTimer);
+        setSyncLost(false);
+        state.lastActiveSnapshot = null;
+        closeFocusSummary();
+        state.restStartedAt = null;
+        try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
+        state.recentlyEnded = ended ? { id:ended.id, subject:ended.subject, endedAt:Date.parse(ended.ended_at) || Date.now(), elapsedSeconds:Number(ended.effective_seconds ?? ended.duration_seconds ?? focusElapsedSeconds(ended)) } : null;
+        state.dashboard = { ...state.dashboard, daily_settlement:result.settlement, focus:{ ...(state.dashboard?.focus || {}), active:null } };
+        applyFocusState(null);
+        state.recentlyEnded = null;
+        state.nativeStateSignature = null;
+        notifyNativeFocusState(null);
+      }
+      if (result.report.date === accountDateKey()) {
+        state.dashboard = { ...state.dashboard, daily_settlement:result.settlement, can_settle_today:false, focus_leaderboard:result.leaderboard || state.dashboard?.focus_leaderboard };
+        document.body.classList.add("is-settled");
+      }
+      renderDailySettlement(state.dashboard);
+      window.DailyReport?.complete(result.report, thumb);
+      showToast("今日已结算");
+      try { await loadDashboard(); }
+      catch (_error) { showToast("今日已结算，控制台同步稍有延迟。"); }
+    } catch (error) {
+      resetCommitSlider(track, thumb);
+      const message = error.message === "settlement_date_changed" ? "账户日期已改变，已刷新；请确认新一天后重新滑动。" : error.message === "focus_session_changed" ? "当前专注已改变，已刷新；请确认后重新滑动。" : "结算未能确认，正在重新读取服务端状态，请稍后重试。";
+      showToast(message);
+      window.DailyReport?.fail(message);
+      try {
+        await loadDashboard();
+        // A response can be lost after the server commits. Only a fresh server
+        // snapshot can reconcile that case; the client never invents success.
+        if (state.dashboard?.daily_settlement?.report) window.DailyReport?.complete(state.dashboard.daily_settlement.report, thumb);
+      } catch (_error) { /* Keep the explicit failure and the retry entry. */ }
+    } finally {
+      state.settling = false;
+      if (state.dashboard) renderDailySettlement(state.dashboard);
+    }
+  }
+
+  function resetCommitSlider(track, thumb) {
+    if (!window.gsap) return;
+    const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+    const x = commitSliders.get(track)?.restX(max) || 0;
+    gsap.killTweensOf(thumb);
+    gsap.to(thumb, { x, duration:!track.getClientRects().length || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : .42, ease:"power2.out", onUpdate:() => setDragProgress(track, thumb), onComplete:() => { setDragProgress(track, thumb); track.classList.remove("armed"); } });
+  }
+
+  function disposeCommitSlider(track) {
+    const slider = commitSliders.get(track);
+    if (slider) {
+      slider.phase = "disposed";
+      gsap.killTweensOf(slider.thumb);
+      slider.drag.kill();
+      slider.observer?.disconnect();
+      slider.thumb.removeEventListener("keydown", slider.keydown);
+      commitSliders.delete(track);
+    }
+    delete track.dataset.bound;
+  }
+
+  function refreshCommitSliders(cancel = false) {
+    commitSliders.forEach((slider, track) => {
+      if (!track.isConnected) { disposeCommitSlider(track); return; }
+      if (cancel) slider.cancel();
+      else slider.refresh();
+    });
+  }
+
+  function bindSliderLifecycle() {
+    if (slidersLifecycleBound) return;
+    slidersLifecycleBound = true;
+    const cancel = () => refreshCommitSliders(true);
+    document.addEventListener("pointercancel", cancel, true);
+    document.addEventListener("touchcancel", cancel, true);
+    document.addEventListener("visibilitychange", cancel);
+    window.addEventListener("pagehide", cancel);
+    window.addEventListener("pageshow", cancel);
+    window.addEventListener("blur", cancel);
+    window.addEventListener("dashboard:viewport", cancel);
+  }
+
+  function bindCommitSlider(track, canCommit, commit, restX = () => 0) {
+    if (!track || !window.gsap || !window.Draggable) return;
+    const thumb = track.querySelector(".drag-thumb");
+    if (!thumb) return;
+    const existing = commitSliders.get(track);
+    if (existing) { existing.refresh(); return; }
+    const visible = () => track.isConnected && !track.hidden && track.getClientRects().length > 0 && track.clientWidth > thumb.offsetWidth + 4;
+    // Hidden controls have no usable geometry. Bind when their view becomes visible.
+    if (!visible()) return;
+    const slider = { thumb, phase:"idle", generation:0, restX, drag:null, observer:null, keydown:null, refresh:null, cancel:null };
+    track.dataset.bound = "1";
+    commitSliders.set(track, slider);
+    slider.refresh = () => {
+      if (slider.phase !== "idle" || !visible()) return;
+      const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+      gsap.killTweensOf(thumb);
+      gsap.set(thumb, { x:restX(max) });
+      slider.drag?.applyBounds({ minX:0, maxX:max });
+      slider.drag?.update(true);
+      setDragProgress(track, thumb);
+      track.classList.remove("armed");
+    };
+    slider.cancel = () => {
+      // A submitted operation must reconcile with the server; cancel only gestures.
+      if (slider.phase === "pending" || slider.phase === "disposed") return;
+      slider.generation += 1;
+      slider.phase = "idle";
+      gsap.killTweensOf(thumb);
+      slider.drag?.endDrag();
+      const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+      gsap.set(thumb, { x:visible() ? restX(max) : 0 });
+      setDragProgress(track, thumb);
+      track.classList.remove("armed");
+      slider.refresh();
+    };
+    const finish = () => {
+      if (slider.phase === "animating" || slider.phase === "pending" || slider.phase === "disposed") return;
+      if (!visible() || !canCommit()) { slider.cancel(); return; }
+      const max = Math.max(1, track.clientWidth - thumb.offsetWidth - 4);
+      const generation = ++slider.generation;
+      slider.phase = "animating";
+      track.classList.add("armed");
+      gsap.killTweensOf(thumb);
+      gsap.to(thumb, { x:max, duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : .42, ease:"power2.out", onUpdate:() => setDragProgress(track, thumb), onComplete:() => {
+        if (slider.phase !== "animating" || slider.generation !== generation) return;
+        if (!visible() || !canCommit()) { slider.cancel(); return; }
+        slider.phase = "pending";
+        Promise.resolve().then(() => commit(track, thumb)).catch((error) => showToast(error.message || "操作未完成，请重试。")).finally(() => {
+          if (slider.phase === "disposed") return;
+          slider.phase = "idle";
+          resetCommitSlider(track, thumb);
+        });
+      } });
+    };
+    const drag = Draggable.create(thumb, {
+      type: "x",
+      bounds:{ minX:0, maxX:Math.max(1, track.clientWidth - thumb.offsetWidth - 4) },
+      onPress() {
+        // Draggable kills target tweens before onPress. A second touch during
+        // snapping must release our phase even though its completion was killed.
+        if (slider.phase === "animating") { slider.cancel(); return; }
+        if (slider.phase !== "idle" || !visible() || !canCommit()) { this.endDrag?.(); return; }
+        gsap.killTweensOf(thumb);
+        this.applyBounds({ minX:0, maxX:Math.max(1, track.clientWidth - thumb.offsetWidth - 4) });
+        slider.phase = "dragging";
+      },
+      onDrag() { if (slider.phase === "dragging") setDragProgress(track, thumb); },
+      onRelease(event) {
+        if (slider.phase !== "dragging") return;
+        if (event?.type === "pointercancel" || event?.type === "touchcancel") { slider.cancel(); return; }
+        if (setDragProgress(track, thumb).ratio >= .82) finish();
+        else { slider.phase = "idle"; resetCommitSlider(track, thumb); }
+      },
+    })[0];
+    slider.drag = drag;
+    slider.keydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      finish();
+    };
+    thumb.addEventListener("keydown", slider.keydown);
+    if (window.ResizeObserver) {
+      let width = track.clientWidth;
+      slider.observer = new ResizeObserver(() => {
+        if (track.clientWidth === width) return;
+        width = track.clientWidth;
+        slider.cancel();
+      });
+      slider.observer.observe(track);
+    }
+    slider.refresh();
+  }
+
+  function initDragSettlement() {
+    document.querySelectorAll("[data-settle-today]").forEach((track) => bindCommitSlider(track, () => canManageOwnFocus() && state.dashboard?.can_settle_today && !state.settling && !state.ending && !state.locking && !state.pausing, commitDailySettlement));
+  }
+
+  function initDragChallenge() {
+    bindCommitSlider($("#start-focus-challenge"), () => canManageOwnFocus() && window.IndexChallenge?.canEdit() && window.IndexChallenge?.getState() && !window.IndexChallenge.getState().active_today && !state.challenging && !state.settling, async (track, thumb) => {
+      if (state.challenging) return;
+      state.challenging = true;
+      renderFocusChallenge();
+      try {
+        if (!await window.IndexChallenge.setEnabled(true)) {
+          showToast("挑战未能开启，已重新读取服务端状态，请重试。");
+          resetCommitSlider(track, thumb);
+          await window.IndexChallenge.refresh(true);
+          try { await loadDashboard(); } catch (_error) {}
+        } else showToast("连胜挑战已开启 · 今日涨跌限制 ±20%");
+      } finally {
+        state.challenging = false;
+        renderFocusChallenge();
+      }
+    });
+  }
+
+  function playSettlementFireworks() {
+    const canvas = $("#settlement-fireworks");
+    if (!canvas || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    let width;
+    let height;
+    const resize = () => {
+      width = window.MutsumiViewport?.logicalWidth || window.innerWidth;
+      height = window.MutsumiViewport?.logicalHeight || window.innerHeight;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      const renderRatio = ratio * elementScale(canvas);
+      canvas.width = Math.floor(width * renderRatio);
+      canvas.height = Math.floor(height * renderRatio);
+      context.setTransform(renderRatio, 0, 0, renderRatio, 0, 0);
+    };
+    resize();
+    const colors = ["#6f8f78", "#b88b63", "#9a86c3", "#d7a45c"];
+    const particles = [];
+    const bursts = [
+      { x: width * .28, y: height * .28, color: colors[0], at: 120 },
+      { x: width * .58, y: height * .2, color: colors[1], at: 280 },
+      { x: width * .78, y: height * .38, color: colors[2], at: 430 },
+    ];
+    let startedAt = performance.now();
+    let frame;
+    const launch = (burst) => {
+      for (let index = 0; index < 28; index += 1) {
+        const angle = (Math.PI * 2 * index) / 28 + Math.random() * .08;
+        const speed = 1.8 + Math.random() * 2.8;
+        particles.push({ x: burst.x, y: burst.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1, color: burst.color, size: 1 + Math.random() * 1.5 });
+      }
+    };
+    const draw = (now) => {
+      const elapsed = now - startedAt;
+      context.clearRect(0, 0, width, height);
+      bursts.filter((burst) => !burst.launched && elapsed >= burst.at).forEach((burst) => { burst.launched = true; launch(burst); });
+      particles.forEach((particle) => {
+        particle.x += particle.vx;
+        particle.y += particle.vy;
+        particle.vy += .035;
+        particle.vx *= .988;
+        particle.vy *= .988;
+        particle.life -= .018;
+        context.globalAlpha = Math.max(0, particle.life);
+        context.fillStyle = particle.color;
+        context.fillRect(particle.x, particle.y, particle.size, particle.size);
+      });
+      context.globalAlpha = 1;
+      if (elapsed < 1800) frame = requestAnimationFrame(draw);
+      else { context.clearRect(0, 0, width, height); window.removeEventListener("resize", resize); }
+    };
+    frame = requestAnimationFrame(draw);
+    window.setTimeout(() => { if (frame) cancelAnimationFrame(frame); }, 2200);
+  }
+
+  function initDragLock() {
+    const track = $("#lock-focus");
+    bindCommitSlider(track, () => canManageOwnFocus() && Boolean(state.dashboard?.focus?.active) && !state.dashboard.focus.active.focus_locked && !state.locking && !state.settling, commitFocusLock, (max) => state.dashboard?.focus?.active?.focus_locked ? max : 0);
+  }
+
+  async function commitFocusLock(track, thumb) {
+    const active = state.dashboard?.focus?.active;
+    if (!active || state.locking || state.settling || active.focus_locked) return;
+    state.locking = true;
+    try {
+      const confirmed = await requestConfirmation({ title: "锁定本段专注", message: "锁定后本段记录将标记为非受信，且不能恢复受信状态。确定继续？", label: "锁定专注", tone: "danger" });
+      if (!confirmed || state.dashboard?.focus?.active?.id !== active.id) { resetCommitSlider(track, thumb); return; }
+      await api("/api/focus/lock", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
+      await loadDashboard();
+      showToast("本段专注已锁定");
+    } catch (error) {
+      resetCommitSlider(track, thumb);
+      showToast(error.message);
+    } finally {
+      state.locking = false;
+    }
+  }
+
+  async function loadSettings() {
+    if (!$("#settings-form")) return;
+    const [settings, scores] = await Promise.all([api("/api/settings"), api("/api/scores")]);
+    window.DashboardUI?.applyPreferences(settings.settings);
+    Object.entries(settings.settings).forEach(([key, value]) => { const input = document.querySelector(`[name="${key}"]`); if (input) input.value = value; });
+    const visibleHours = new Set(String(settings.settings.heatmap_visible_hours || "").split(","));
+    document.querySelectorAll("[data-heat-hour]").forEach((input) => { input.checked = visibleHours.has(input.dataset.heatHour); });
+    renderSubjectSettings(settings.subjects || []);
+    renderFocusItemSettings(settings.focus_items || [], settings.subjects || []);
+    renderScores(scores.scores.map((item) => ({ ...item, gap: item.target - item.score, completion: item.score / item.target })), "#settings-scores");
+  }
+
+  function renderFriends(friends) {
+    const target = $("#friend-list");
+    if (!target) return;
+    target.innerHTML = friends.length ? friends.map((friend) => `<div class="friend-row"><div><b>@${escapeHtml(friend.username)}</b><small>${escapeHtml(friend.email || "已建立好友关系")}</small></div><button class="ui-button ui-button--danger ui-button--sm" type="button" data-remove-friend="${escapeHtml(friend.username)}">移除</button></div>`).join("") : '<div class="loading-row">暂无好友，先搜索一个用户名。</div>';
+    target.querySelectorAll("[data-remove-friend]").forEach((button) => button.addEventListener("click", async () => {
+      const confirmed = await requestConfirmation({ title: "移除好友", message: `确定移除好友 @${button.dataset.removeFriend}？双方的好友差值板将不再显示对方。`, label: "移除好友", tone: "danger" });
+      if (!confirmed) return;
+      try { await api(`/api/friends/${encodeURIComponent(button.dataset.removeFriend)}`, { method: "DELETE" }); await loadFriends(); showToast("好友已移除"); } catch (error) { showToast(error.message); }
+    }));
+  }
+
+  async function loadFriends() {
+    if (!$("#friend-list")) return;
+    const data = await api("/api/friends");
+    renderFriends(data.friends || []);
+  }
+
+  async function searchFriends(event) {
+    event.preventDefault();
+    const query = $("#friend-search-input")?.value.trim();
+    const target = $("#friend-search-results");
+    if (!query || !target) return;
+    try {
+      const data = await api(`/api/friends/search?q=${encodeURIComponent(query)}`);
+      target.innerHTML = (data.users || []).map((user) => `<div class="friend-result"><div><b>@${escapeHtml(user.username)}</b><small>${user.is_friend ? "已是好友" : "可添加"}</small></div>${user.is_friend ? "" : `<button class="ui-button ui-button--secondary ui-button--sm" type="button" data-add-friend="${escapeHtml(user.username)}">添加</button>`}</div>`).join("") || '<div class="loading-row">没有匹配的用户名。</div>';
+      target.querySelectorAll("[data-add-friend]").forEach((button) => button.addEventListener("click", async () => {
+        try { await api("/api/friends", { method: "POST", body: JSON.stringify({ username: button.dataset.addFriend }) }); await loadFriends(); await searchFriends({ preventDefault() {} }); showToast("好友已添加"); } catch (error) { showToast(error.message); }
+      }));
+    } catch (error) { showToast(error.message); }
+  }
+
+  async function loadInvitations() {
+    const target = $("#invitation-list");
+    if (!target) return;
+    const data = await api("/api/invitations");
+    target.innerHTML = data.invitations.length ? data.invitations.map((item) => `<div class="invitation-row ${item.used_by ? "is-used" : ""}"><div><code>${escapeHtml(item.code)}</code><small>${item.used_by ? "已使用" : "可注册"}</small></div>${item.used_by ? "" : `<button class="ui-button ui-button--quiet ui-button--sm" type="button" data-copy-invite="${escapeHtml(item.url)}">复制注册链接</button>`}</div>`).join("") : '<div class="loading-row">还没有邀请码。</div>';
+    target.querySelectorAll("[data-copy-invite]").forEach((button) => button.addEventListener("click", async () => { await navigator.clipboard?.writeText(button.dataset.copyInvite); showToast("注册链接已复制"); }));
+  }
+
+  async function loadAccount() {
+    if (!$("#friend-list") && !$("#invitation-list")) return;
+    await loadFriends();
+    await loadInvitations();
+  }
+
+  function bindAccountForms() {
+    $("#friend-search-form")?.addEventListener("submit", searchFriends);
+    $("#create-invitation")?.addEventListener("click", async () => { try { await api("/api/invitations", { method: "POST", body: "{}" }); await loadInvitations(); showToast("邀请码已生成"); } catch (error) { showToast(error.message); } });
+  }
+
+  async function generateMigrationCode() {
+    const button = $("#generate-migration-code");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      const result = await api("/api/migration/code", { method: "POST", body: "{}" });
+      $("#migration-code").textContent = result.code;
+      $("#migration-code-expiry").textContent = `有效期至 ${new Date(result.expires_at).toLocaleTimeString("zh-CN")}`;
+      $("#migration-code-box").hidden = false;
+      try {
+        await copyText(result.code);
+        showToast("迁移码已生成并复制");
+      } catch (_error) {
+        showToast("迁移码已生成，请手动复制");
+      }
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function loadReporterConnection(rotate = false) {
+    const url = rotate ? "/api/focus-reporter/connection/rotate" : "/api/focus-reporter/connection";
+    const details = await api(url, { method: "POST", body: "{}" });
+    const box = $("#reporter-link-box");
+    const link = $("#reporter-link");
+    if (link) link.textContent = details.report_url;
+    if (box) box.hidden = false;
+    return details;
+  }
+
+  function reporterPrompt(details) {
+    return [
+      "请为当前学习软件接入 408 Dashboard 专注上报。",
+      `先 GET ${details.catalog_url} 获取科目 subjects 和事项 focus_items，按其数字 id 选择 subject_id、focus_item_id。`,
+      `每 10–30 秒向 ${details.report_url} POST 一次 JSON（Content-Type: application/json）：`,
+      '{"source":"app_name","state":"focus","subject_id":1,"focus_item_id":1}',
+      '其中 source 是本软件固定的英文标识；两个 id 必须换成目录中对应且匹配的实际 id。停止专注时立即发送 {"source":"app_name","state":"idle"}。',
+      "重复的 focus 帧是心跳，只形成一段连续专注；断联 45 秒后自动结束。使用服务端接收时间。409 表示另一处专注正在进行或当日已经结算。",
+      "上报 key 不会自动过期；45 秒仅是专注会话断联超时。只有在设置页手动更换 key 时，旧链接才会失效。",
+      "链接里的 key 等同密码，不要放进公开仓库、日志或截图。",
+    ].join("\n");
+  }
+
+  function scoreEntryValue() {
+    const selection = state.scoreEntry.selection;
+    return Number(selection.hundreds) * 100 + Number(selection.tens) * 10 + Number(selection.ones);
+  }
+
+  function selectedScoreSubject() {
+    return state.scoreEntry.subjects.find((subject) => Number(subject.id) === Number(state.scoreEntry.selection.subject)) || null;
+  }
+
+  function updateScoreEntryPreview() {
+    const subject = selectedScoreSubject();
+    const score = scoreEntryValue();
+    $("#score-selected-subject")?.replaceChildren(document.createTextNode(subject?.name || "--"));
+    $("#score-hundreds-value")?.replaceChildren(document.createTextNode(String(state.scoreEntry.selection.hundreds)));
+    $("#score-tens-value")?.replaceChildren(document.createTextNode(String(state.scoreEntry.selection.tens)));
+    $("#score-ones-value")?.replaceChildren(document.createTextNode(String(state.scoreEntry.selection.ones)));
+    $("#score-entry-preview")?.replaceChildren(document.createTextNode(subject ? `${subject.name} · ${String(score).padStart(3, "0")} 分` : "请选择科目"));
+    $("#score-entry-target")?.replaceChildren(document.createTextNode(subject ? `目标分 ${Number(subject.target)} · 在设置中维护` : "先在设置中添加科目和目标分"));
+    const submit = $("#submit-tape-score");
+    if (submit) submit.disabled = !subject;
+  }
+
+  function centerScoreStripOption(strip, value, behavior = "auto") {
+    const option = [...strip.querySelectorAll("[data-score-option]")].find((item) => item.dataset.value === String(value));
+    if (!option) return;
+    strip.scrollTo({ left: Math.max(0, option.offsetLeft + option.offsetWidth / 2 - strip.clientWidth / 2), behavior });
+  }
+
+  function setScoreStripSelection(strip, option) {
+    if (!strip || !option) return;
+    const key = strip.dataset.scoreStrip;
+    state.scoreEntry.selection[key] = Number(option.dataset.value);
+    strip.querySelectorAll("[data-score-option]").forEach((item) => {
+      const selected = item === option;
+      item.classList.toggle("is-selected", selected);
+      item.setAttribute("aria-selected", String(selected));
+    });
+    updateScoreEntryPreview();
+  }
+
+  function selectScoreStripOption(strip, option, behavior = "smooth") {
+    setScoreStripSelection(strip, option);
+    centerScoreStripOption(strip, option.dataset.value, behavior);
+  }
+
+  function syncScoreStripSelection(strip, snapToSelection = false) {
+    const options = [...strip.querySelectorAll("[data-score-option]")];
+    if (!options.length) return;
+    const stripBounds = strip.getBoundingClientRect();
+    const center = stripBounds.left + stripBounds.width / 2;
+    const closest = options.reduce((best, option) => {
+      const bounds = option.getBoundingClientRect();
+      const distance = Math.abs(bounds.left + bounds.width / 2 - center);
+      return !best || distance < best.distance ? { option, distance } : best;
+    }, null)?.option;
+    if (!closest) return;
+    setScoreStripSelection(strip, closest);
+    if (snapToSelection) centerScoreStripOption(strip, closest.dataset.value, "smooth");
+  }
+
+  function bindScoreStrip(strip) {
+    if (!strip || strip.dataset.bound) return;
+    strip.dataset.bound = "1";
+    let dragging = null;
+    let frame = null;
+    strip.addEventListener("scroll", () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = null; syncScoreStripSelection(strip); });
+    }, { passive: true });
+    strip.addEventListener("pointerdown", (event) => {
+      dragging = { pointerId: event.pointerId, startX: event.clientX, scrollLeft: strip.scrollLeft };
+      strip.setPointerCapture?.(event.pointerId);
+      strip.classList.add("is-dragging");
+    });
+    strip.addEventListener("pointermove", (event) => {
+      if (!dragging || dragging.pointerId !== event.pointerId) return;
+      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX) / elementScale(strip);
+    });
+    const finishDrag = (event) => {
+      if (!dragging || dragging.pointerId !== event.pointerId) return;
+      strip.releasePointerCapture?.(event.pointerId);
+      dragging = null;
+      strip.classList.remove("is-dragging");
+      syncScoreStripSelection(strip, true);
+    };
+    strip.addEventListener("pointerup", finishDrag);
+    strip.addEventListener("pointercancel", finishDrag);
+    strip.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const options = [...strip.querySelectorAll("[data-score-option]")];
+      const current = options.findIndex((item) => item.dataset.value === String(state.scoreEntry.selection[strip.dataset.scoreStrip]));
+      const next = Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowRight" ? 1 : -1)));
+      if (options[next]) {
+        event.preventDefault();
+        selectScoreStripOption(strip, options[next]);
+      }
+    });
+  }
+
+  function renderScoreStrip(key, options) {
+    const strip = $(`#score-${key}-strip`);
+    if (!strip) return;
+    const selectedValue = state.scoreEntry.selection[key];
+    strip.innerHTML = options.map((option) => `<button class="score-strip-option${String(option.value) === String(selectedValue) ? " is-selected" : ""}" type="button" data-score-option data-value="${escapeHtml(option.value)}" role="option" aria-selected="${String(option.value) === String(selectedValue)}">${escapeHtml(option.label)}</button>`).join("");
+    strip.querySelectorAll("[data-score-option]").forEach((option) => option.addEventListener("click", () => selectScoreStripOption(strip, option)));
+    bindScoreStrip(strip);
+    requestAnimationFrame(() => centerScoreStripOption(strip, selectedValue));
+  }
+
+  function renderScoreEntry() {
+    const subjects = state.scoreEntry.subjects;
+    if (!subjects.some((subject) => Number(subject.id) === Number(state.scoreEntry.selection.subject))) {
+      state.scoreEntry.selection.subject = subjects[0]?.id ?? null;
+    }
+    renderScoreStrip("subject", subjects.map((subject) => ({ value: subject.id, label: subject.name })));
+    renderScoreStrip("hundreds", [0, 1].map((value) => ({ value, label: value })));
+    renderScoreStrip("tens", Array.from({ length: 10 }, (_value, value) => ({ value, label: value })));
+    renderScoreStrip("ones", Array.from({ length: 10 }, (_value, value) => ({ value, label: value })));
+    updateScoreEntryPreview();
+  }
+
+  async function loadScoreSubjects() {
+    const payload = await api("/api/subjects");
+    state.scoreEntry.subjects = payload.subjects || [];
+    renderScoreEntry();
+  }
+
+  async function openQuickScore() {
+    const modal = $("#quick-score-modal");
+    if (!modal || modal.open) return;
+    state.quickScoreReturnFocus = document.activeElement;
+    try {
+      await loadScoreSubjects();
+      modal.showModal();
+      requestAnimationFrame(() => {
+        modal.classList.add("is-open");
+        $("#score-subject-strip")?.focus();
+      });
+    } catch (error) { showToast(error.message); }
+  }
+
+  function closeQuickScore() {
+    const modal = $("#quick-score-modal");
+    if (!modal?.open || modal.dataset.closing) return;
+    modal.dataset.closing = "1";
+    modal.classList.remove("is-open");
+    window.setTimeout(() => {
+      if (modal.open) modal.close();
+      delete modal.dataset.closing;
+    }, 180);
+  }
+
+  async function submitScoreForm(event) {
+    event.preventDefault();
+    const subject = selectedScoreSubject();
+    if (!subject) {
+      showToast("请先在设置中添加科目");
+      return;
+    }
+    const button = $("#submit-tape-score");
+    if (button) button.disabled = true;
+    try {
+      await api("/api/scores", { method: "POST", body: JSON.stringify({ subject_id: subject.id, score: scoreEntryValue() }) });
+      closeQuickScore();
+      if (document.body.dataset.page === "settings") await loadSettings();
+      else await loadDashboard();
+      showToast("成绩已添加");
+    } catch (error) { showToast(error.message); }
+    finally { if (button) button.disabled = false; }
+  }
+
+  function bindQuickScore() {
+    const modal = $("#quick-score-modal");
+    if (!modal) return;
+    $("#open-quick-score")?.addEventListener("click", openQuickScore);
+    $("#close-quick-score")?.addEventListener("click", closeQuickScore);
+    $("#quick-score-form")?.addEventListener("submit", submitScoreForm);
+    modal.addEventListener("cancel", (event) => { event.preventDefault(); closeQuickScore(); });
+    modal.addEventListener("close", () => { modal.classList.remove("is-open"); state.quickScoreReturnFocus?.focus?.(); });
+    modal.addEventListener("click", (event) => {
+      const bounds = modal.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeQuickScore();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        openQuickScore();
+      }
+    });
+  }
+
+  function renderSubjectSettings(subjects) {
+    state.scoreEntry.subjects = subjects;
+    const target = $("#settings-subjects");
+    if (!target) return;
+    target.innerHTML = subjects.length ? subjects.map((subject) => `<form class="subject-settings-row" data-subject-id="${Number(subject.id)}"><input name="name" maxlength="24" value="${escapeHtml(subject.name)}" aria-label="科目名称"><input name="target" type="number" min="1" max="199" step="1" value="${Number(subject.target)}" aria-label="目标分"><button class="ui-button ui-button--secondary ui-button--sm" type="submit">保存</button><button class="ui-button ui-button--danger ui-button--sm" type="button" data-delete-subject>删除</button></form>`).join("") : '<div class="loading-row">还没有科目，请先添加一个。</div>';
+    target.querySelectorAll(".subject-settings-row").forEach((form) => {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        try {
+          await api(`/api/subjects/${form.dataset.subjectId}`, { method: "PATCH", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+          await loadSettings();
+          showToast("科目已保存");
+        } catch (error) { showToast(error.message); }
+      });
+      form.querySelector("[data-delete-subject]")?.addEventListener("click", async () => {
+        const name = new FormData(form).get("name");
+        const confirmed = await requestConfirmation({ title: "删除科目", message: `删除“${name}”会同时删除其专注事项；历史记录会保留。`, label: "删除科目", tone: "danger" });
+        if (!confirmed) return;
+        try {
+          await api(`/api/subjects/${form.dataset.subjectId}`, { method: "DELETE" });
+          await loadSettings();
+          showToast("科目已删除");
+        } catch (error) { showToast(error.message); }
+      });
+    });
+  }
+
+  function focusItemSubjectOptions(subjects, selectedId) {
+    return subjects.map((subject) => `<option value="${Number(subject.id)}"${Number(subject.id) === Number(selectedId) ? " selected" : ""}>${escapeHtml(subject.name)}</option>`).join("");
+  }
+
+  function renderFocusItemSettings(items, subjects) {
+    const target = $("#settings-focus-items");
+    const createSubject = $("#new-focus-item-subject");
+    const createForm = $("#focus-item-create-form");
+    if (createSubject) createSubject.innerHTML = focusItemSubjectOptions(subjects, subjects[0]?.id);
+    if (createForm) {
+      createForm.querySelectorAll("input, select, button").forEach((field) => {
+        field.disabled = !subjects.length;
+      });
+    }
+    if (!target) return;
+    if (!items.length) {
+      target.innerHTML = '<div class="loading-row">还没有专注事项，请先选择科目并添加。</div>';
+      return;
+    }
+    const rankOptions = (selectedRank) => items.map((_item, index) => `<option value="${index + 1}"${index + 1 === selectedRank ? " selected" : ""}>${index + 1}</option>`).join("");
+    target.innerHTML = items.map((item, index) => `<form class="focus-item-settings-row" data-focus-item-id="${Number(item.id)}"><select name="subject_id" aria-label="所属科目">${focusItemSubjectOptions(subjects, item.subject_id)}</select><input name="name" maxlength="24" value="${escapeHtml(item.name)}" aria-label="事项名称"><label class="focus-item-rank">顺序<select data-focus-item-rank aria-label="${escapeHtml(item.label)} 的顺序">${rankOptions(index + 1)}</select></label><button class="ui-button ui-button--secondary ui-button--sm" type="submit">保存</button><button class="ui-button ui-button--danger ui-button--sm" type="button" data-delete-focus-item>删除</button></form>`).join("");
+    target.querySelectorAll(".focus-item-settings-row").forEach((form) => {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        try {
+          await api(`/api/focus-items/${form.dataset.focusItemId}`, { method: "PATCH", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+          await loadSettings();
+          showToast("专注事项已保存");
+        } catch (error) { showToast(error.message); }
+      });
+      form.querySelector("[data-delete-focus-item]")?.addEventListener("click", async () => {
+        const name = new FormData(form).get("name");
+        const confirmed = await requestConfirmation({ title: "删除专注事项", message: `删除“${name}”后不能再启动新的专注，历史记录会保留。`, label: "删除事项", tone: "danger" });
+        if (!confirmed) return;
+        try {
+          await api(`/api/focus-items/${form.dataset.focusItemId}`, { method: "DELETE" });
+          await loadSettings();
+          showToast("专注事项已删除");
+        } catch (error) { showToast(error.message); }
+      });
+      form.querySelector("[data-focus-item-rank]")?.addEventListener("change", async (event) => {
+        const currentIndex = items.findIndex((item) => Number(item.id) === Number(form.dataset.focusItemId));
+        const destination = Number(event.currentTarget.value) - 1;
+        if (currentIndex < 0 || destination === currentIndex) return;
+        const ordered = [...items];
+        const [moved] = ordered.splice(currentIndex, 1);
+        ordered.splice(destination, 0, moved);
+        try {
+          await api("/api/focus-items/order", { method: "PUT", body: JSON.stringify({ focus_item_ids: ordered.map((item) => Number(item.id)) }) });
+          await loadSettings();
+          showToast("专注列表顺序已调整");
+        } catch (error) {
+          await loadSettings();
+          showToast(error.message);
+        }
+      });
+    });
+  }
+
+  function bindSettingsForms() {
+    $("#settings-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const selectedHours = [...document.querySelectorAll("[data-heat-hour]:checked")].map((input) => input.dataset.heatHour);
+      if (!selectedHours.length) {
+        showToast("热度图至少保留一个时段");
+        return;
+      }
+      $("#heatmap-visible-hours").value = selectedHours.join(",");
+      try {
+        const payload = Object.fromEntries(new FormData(event.currentTarget));
+        payload.quick_focus_count = Number(payload.quick_focus_count);
+        await api("/api/settings", { method: "PATCH", body: JSON.stringify(payload) });
+        await loadSettings();
+        showToast("设置已保存");
+      } catch (error) { showToast(error.message); }
+    });
+    $("#subject-create-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      try {
+        await api("/api/subjects", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+        form.reset();
+        await loadSettings();
+        showToast("科目已添加");
+      } catch (error) { showToast(error.message); }
+    });
+    $("#focus-item-create-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      try {
+        await api("/api/focus-items", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+        form.reset();
+        await loadSettings();
+        showToast("专注事项已添加");
+      } catch (error) { showToast(error.message); }
+    });
+    $("#generate-migration-code")?.addEventListener("click", generateMigrationCode);
+    $("#copy-migration-code")?.addEventListener("click", async () => {
+      try {
+        await copyText($("#migration-code")?.textContent || "");
+        showToast("迁移码已复制");
+      } catch (_error) {
+        showToast("复制失败，请手动选择迁移码");
+      }
+    });
+    $("#copy-reporter-link")?.addEventListener("click", async () => {
+      try {
+        const details = await loadReporterConnection();
+        await copyText(details.report_url);
+        showToast("上报链接已复制");
+      } catch (error) { showToast(error.message); }
+    });
+    $("#copy-reporter-prompt")?.addEventListener("click", async () => {
+      try {
+        const details = await loadReporterConnection();
+        await copyText(reporterPrompt(details));
+        showToast("接入提示已复制");
+      } catch (error) { showToast(error.message); }
+    });
+    $("#rotate-reporter-key")?.addEventListener("click", async () => {
+      const confirmed = await requestConfirmation({ title: "更换上报 key", message: "旧链接将立即失效，其他软件需要更新为新链接。", label: "更换 key", tone: "danger" });
+      if (!confirmed) return;
+      try {
+        await loadReporterConnection(true);
+        $("#reporter-note").textContent = "key 已更换；请复制新链接并更新其他软件。";
+        showToast("上报 key 已更换");
+      } catch (error) { showToast(error.message); }
+    });
+  }
+
+  function bindSettingsTabs() {
+    const tabs = document.querySelectorAll(".settings-tabs [data-settings-tab]");
+    const panels = document.querySelectorAll("[data-settings-panel]");
+    if (!tabs.length || !panels.length) return;
+    const selectTab = (name) => {
+      tabs.forEach((tab) => {
+        const selected = tab.dataset.settingsTab === name;
+        tab.classList.toggle("is-active", selected);
+        tab.setAttribute("aria-selected", String(selected));
+      });
+      panels.forEach((panel) => panel.classList.toggle("is-hidden", panel.dataset.settingsPanel !== name));
+      document.body.dataset.settingsTab = name;
+      const url = new URL(window.location.href);
+      url.pathname = "/settings";
+      url.search = `?tab=${encodeURIComponent(name)}`;
+      window.history.replaceState({}, "", url);
+    };
+    tabs.forEach((tab) => tab.addEventListener("click", async () => {
+      selectTab(tab.dataset.settingsTab);
+      if (tab.dataset.settingsTab === "account") await loadAccount();
+      else await loadSettings();
+    }));
+  }
+
+  document.addEventListener("dashboard:appearance", () => {
+    if (state.dashboard) {
+      renderFocusInvestment(state.dashboard.focus_investment, state.dashboard.focus?.active);
+      renderModes(state.dashboard.focus_items || state.dashboard.focus_modes || []);
+    }
+    syncScoreChartTheme(state.dashboard?.focus?.active);
+    state.summaryCharts.forEach((chart) => { chart.data.datasets[0].backgroundColor = [getThemePalette()[0], chartColor("--subtle")]; });
+    [state.scoreChart, state.focusTrendChart, ...state.summaryCharts].filter(Boolean).forEach((chart) => {
+      Object.values(chart.options.scales || {}).forEach((scale) => {
+        if (scale.ticks) scale.ticks.color = chartColor("--muted");
+        if (scale.grid && scale.grid.display !== false) scale.grid.color = chartColor("--line");
+      });
+      if (chart.options.plugins?.legend?.labels) chart.options.plugins.legend.labels.color = chartColor("--muted");
+      chart.update("none");
+    });
+  });
+
+  document.addEventListener("DOMContentLoaded", async () => {
+    initializeFocusIdentity();
+    initializeNativeExperience();
+    bindSliderLifecycle();
+    loadQuickFocus();
+    try {
+      const runtime = nativeRuntime();
+      const savedRest = canManageOwnFocus() ? Number(runtime.restStartedAtEpochMs ||
+        (runtime.mode === "rest" ? window.localStorage.getItem(restStorageKey()) : 0)) : 0;
+      state.restStartedAt = Number.isFinite(savedRest) && savedRest > 0 ? savedRest : null;
+    } catch (_error) {}
+    startAlignedSecondClock();
+    ensureWakeLock();
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") {
+        state.foregroundContinuous = false;
+        sendForegroundHeartbeat(true);
+        return;
+      }
+      ensureWakeLock();
+      sendForegroundHeartbeat();
+      runSecondTasks(Date.now());
+      refreshVisiblePage();
+    });
+    window.addEventListener("pageshow", (event) => {
+      if (event.persisted && document.visibilityState === "visible") refreshVisiblePage();
+    });
+    window.addEventListener("pagehide", () => sendForegroundHeartbeat(true));
+    $("#close-focus-summary")?.addEventListener("click", closeFocusSummary);
+    $("#toggle-focus-pause")?.addEventListener("click", toggleFocusPause);
+    bindFocusStateOverlay();
+    bindFocusLaunch();
+    bindActivitySwitch();
+    bindQuickScore();
+    bindInvestmentRange();
+    document.querySelectorAll("[data-insight-view]").forEach((button) => button.addEventListener("click", () => selectInsightView(button.dataset.insightView)));
+    window.DashboardController = {
+      getData: () => state.dashboard,
+      isSettlementBusy: () => state.settling,
+      canCancelSettlement,
+      cancelDailySettlement,
+      isPinned: (id) => state.quickFocus.pinned.includes(Number(id)),
+      togglePin: toggleQuickPin,
+      replaceQuickItem(oldId, newId) {
+        const items = state.dashboard?.focus_items || [];
+        const oldKey = Number(oldId), nextKey = Number(newId);
+        if (document.body.dataset.role === "guest" || !items.some((item) => Number(item.id) === nextKey)) throw new Error("该事项不可用。");
+        const current = quickModeIds(items);
+        if (!current.includes(oldKey)) throw new Error("该快捷位置已更新，请重新打开详情。");
+        state.quickFocus.pinned = state.quickFocus.pinned.map((id) => id === oldKey ? nextKey : id).filter((id, index, values) => values.indexOf(id) === index);
+        state.quickFocus.recent = [...current.map((id) => id === oldKey ? nextKey : id), ...state.quickFocus.recent.filter((id) => id !== oldKey && id !== nextKey)].filter((id, index, values) => values.indexOf(id) === index).slice(0, 12);
+        saveQuickFocus();
+        renderModes(items);
+        updateFocusLaunchPreview();
+      },
+    };
+    document.addEventListener("click", (event) => {
+      const trigger = event.target.closest?.("[data-cancel-daily-settlement]");
+      if (trigger) cancelDailySettlement(trigger);
+    });
+    initDragSettlement();
+    initDragChallenge();
+    document.addEventListener("dashboard:challenge-updated", renderFocusChallenge);
+    window.IndexChallenge?.refresh()?.then(renderFocusChallenge);
+    bindSettingsForms();
+    bindSettingsTabs();
+    bindAccountForms();
+    bindConfirmations();
+    document.querySelectorAll('form[action="/logout"]').forEach((form) => form.addEventListener("submit", (event) => {
+      if (!event.defaultPrevented) revokeFocusIdentity();
+    }));
+    bindButtonMotion();
+    window.addEventListener("resize", updateFocusSubjectOverflow);
+    window.addEventListener("dashboard:viewport", () => { initDragSettlement(); initDragChallenge(); });
+    try {
+      if (document.body.dataset.page === "settings") {
+        await loadSettings();
+        await loadAccount();
+      } else if (document.body.dataset.page === "account") await loadAccount();
+      else if (document.body.dataset.page === "home") await loadDashboard();
+      if (document.body.dataset.page !== "home" && canManageOwnFocus()) await refreshCurrentPage();
+    } catch (error) { showToast(error.message); }
+    startDashboardSync();
+    startForegroundHeartbeat();
+    bindNativePageBridge();
+  });
+})();

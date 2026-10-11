@@ -1,9 +1,10 @@
 package com.mutsumi.focus
 
 import android.content.Context
+import android.content.SharedPreferences
 
-class FocusStateStore(context: Context) {
-    private val preferences = context.getSharedPreferences("focus_runtime", Context.MODE_PRIVATE)
+class FocusStateStore internal constructor(private val preferences: SharedPreferences) {
+    constructor(context: Context) : this(context.getSharedPreferences("focus_runtime", Context.MODE_PRIVATE))
 
     fun read(): FocusRuntimeState = FocusRuntimeState(
         mode = FocusMode.fromWire(preferences.getString("mode", null)),
@@ -13,9 +14,12 @@ class FocusStateStore(context: Context) {
         pausedAtEpochMs = preferences.getLong("paused_at", 0),
         endedAtEpochMs = preferences.getLong("ended_at", 0),
         elapsedSeconds = preferences.getLong("elapsed_seconds", 0),
+        plannedSeconds = preferences.getLong("planned_seconds", 0),
+        focusItemId = preferences.getLong("focus_item_id", 0),
+        restStartedAtEpochMs = preferences.getLong("rest_started_at", 0),
+        restTargetSeconds = preferences.getLong("rest_target_seconds", 0),
         observedAtEpochMs = preferences.getLong("observed_at", System.currentTimeMillis()),
-        baseUrl = preferences.getString("base_url", BuildConfig.DASHBOARD_URL)?.trimEnd('/')
-            ?: BuildConfig.DASHBOARD_URL.trimEnd('/'),
+        baseUrl = BuildConfig.DASHBOARD_URL.trimEnd('/'),
     )
 
     fun write(state: FocusRuntimeState) {
@@ -28,15 +32,24 @@ class FocusStateStore(context: Context) {
             .putLong("paused_at", state.pausedAtEpochMs)
             .putLong("ended_at", state.endedAtEpochMs)
             .putLong("elapsed_seconds", state.elapsedSeconds)
+            .putLong("planned_seconds", state.plannedSeconds)
+            .putLong("focus_item_id", state.focusItemId)
+            .putLong("rest_started_at", state.restStartedAtEpochMs)
+            .putLong("rest_target_seconds", state.restTargetSeconds)
             .putLong("observed_at", state.observedAtEpochMs)
             .putString("base_url", state.baseUrl)
             .also { editor ->
                 if (!FocusStateReducer.canApplyResponse(previous, state)) {
                     editor.putLong("transition_revision", transitionRevision() + 1)
                 }
-                if (previous.sessionId != state.sessionId || previous.mode != state.mode) {
+                if (previous.sessionId != state.sessionId || previous.mode != state.mode ||
+                    previous.pausedAtEpochMs != state.pausedAtEpochMs || previous.endedAtEpochMs != state.endedAtEpochMs) {
                     editor.putLong("paused_snooze_until", 0)
-                    if (previous.sessionId != state.sessionId) editor.putInt("ended_acknowledged", 0)
+                    editor.putBoolean("paused_dismissed", false)
+                    editor.putString("presented_reminder", "")
+                    editor.putLong("ended_snooze_until", 0)
+                    if (previous.sessionId != state.sessionId || previous.mode != state.mode)
+                        editor.putInt("ended_acknowledged", 0)
                 }
                 if (state.mode != FocusMode.ENDED) editor.putInt("ended_acknowledged", 0)
             }
@@ -48,8 +61,30 @@ class FocusStateStore(context: Context) {
     fun pausedSnoozeUntil(): Long = preferences.getLong("paused_snooze_until", 0)
 
     fun snoozePaused(nowEpochMs: Long) {
-        preferences.edit().putLong("paused_snooze_until", nowEpochMs + ReminderPolicy.PAUSED_DELAY_MS).apply()
+        preferences.edit().putLong("paused_snooze_until", nowEpochMs + ReminderPolicy.PAUSED_DELAY_MS)
+            .putBoolean("paused_dismissed", false).apply()
     }
+
+    fun pausedDismissed(): Boolean = preferences.getBoolean("paused_dismissed", false)
+    fun dismissPaused() { preferences.edit().putBoolean("paused_dismissed", true).apply() }
+    fun endedSnoozeUntil(): Long = preferences.getLong("ended_snooze_until", 0)
+    fun snoozeEnded(nowEpochMs: Long) {
+        preferences.edit().putLong("ended_snooze_until", nowEpochMs + ReminderPolicy.PAUSED_DELAY_MS).apply()
+    }
+    fun nextReminderAt(state: FocusRuntimeState = read()): Long = ReminderPolicy.nextAt(
+        state, pausedSnoozeUntil(), endedAcknowledgedCount(), pausedDismissed(), endedSnoozeUntil())
+    fun due(now: Long = System.currentTimeMillis()): DueReminder? = ReminderPolicy.due(
+        read(), now, pausedSnoozeUntil(), endedAcknowledgedCount(), pausedDismissed(), endedSnoozeUntil())
+    fun reminderToken(kind: ReminderKind): String {
+        val state = read()
+        return "${state.sessionId}:${state.pausedAtEpochMs}:${state.endedAtEpochMs}:${kind.name}:${nextReminderAt(state)}"
+    }
+    fun wasPresented(token: String): Boolean = preferences.getString("presented_reminder", "") == token
+    fun markPresented(token: String) { preferences.edit().putString("presented_reminder", token).apply() }
+    fun strongReminders(): Boolean = preferences.getBoolean("strong_reminders", false)
+    fun setStrongReminders(enabled: Boolean) { preferences.edit().putBoolean("strong_reminders", enabled).apply() }
+    fun atomicEnabled(): Boolean = preferences.getBoolean("atomic_enabled", true)
+    fun setAtomicEnabled(enabled: Boolean) { preferences.edit().putBoolean("atomic_enabled", enabled).apply() }
 
     fun endedAcknowledgedCount(): Int = preferences.getInt("ended_acknowledged", 0)
 

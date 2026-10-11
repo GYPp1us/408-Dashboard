@@ -51,4 +51,16 @@ class ReminderPolicyTest {
             assertNull(ReminderPolicy.due(FocusRuntimeState(mode = mode), Long.MAX_VALUE, 0, 0))
         }
     }
+
+    @Test fun `missed departure stages coalesce into latest stage`() {
+        val state = FocusRuntimeState(mode = FocusMode.ENDED, endedAtEpochMs = minute)
+        assertEquals(ReminderKind.ENDED_60, ReminderPolicy.due(state, 80 * minute, 0, 0)?.kind)
+    }
+
+    @Test fun `departure snooze delays all surfaces and dismiss skips handled stage`() {
+        val state = FocusRuntimeState(mode = FocusMode.ENDED, endedAtEpochMs = minute)
+        assertNull(ReminderPolicy.due(state, 19 * minute, 0, 0, endedSnoozeUntilEpochMs = 20 * minute))
+        assertEquals(ReminderKind.ENDED_15, ReminderPolicy.due(state, 20 * minute, 0, 0, endedSnoozeUntilEpochMs = 20 * minute)?.kind)
+        assertNull(ReminderPolicy.due(state, 20 * minute, 0, 1))
+    }
 }

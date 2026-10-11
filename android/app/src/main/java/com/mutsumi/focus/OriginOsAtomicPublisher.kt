@@ -10,172 +10,151 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import com.mutsumi.focus.atomic.VivoAtomicPayload
-import java.util.Locale
 
 class OriginOsAtomicPublisher(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
-    private var atomicRecord = 0
+    private val store = FocusStateStore(context)
+    private var record = 0
+    data class Action(val label: String, val icon: Int, val intent: PendingIntent)
 
     fun ensureChannels() {
-        manager.createNotificationChannel(NotificationChannel(
-            CHANNEL_LIVE,
-            "专注实时状态",
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = "专注计时和 OriginOS 原子岛的本地实时状态"
+        manager.createNotificationChannel(NotificationChannel(CHANNEL_LIVE, "专注与休息实时状态", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "静默更新有效专注、暂停与休息计时"
             setShowBadge(false)
+            enableVibration(false)
+            setSound(null, null)
         })
-        manager.createNotificationChannel(NotificationChannel(
-            CHANNEL_REMINDER,
-            "暂停和离开提醒",
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = "暂停 5 分钟及结束专注 15/30/60 分钟提醒"
-            enableVibration(true)
+        manager.createNotificationChannel(NotificationChannel(CHANNEL_REMINDER, "暂停和离开提醒", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "暂停满 5 分钟与离开专注 15 / 30 / 60 分钟，每阶段只提示一次"
         })
     }
 
-    fun liveNotification(state: FocusRuntimeState, operation: AtomicOperation): Notification {
-        val openIntent = PendingIntent.getActivity(
-            context,
-            1,
-            // UPDATE_CURRENT refreshes extras, but retains an existing token's
-            // launch flags. A distinct action avoids reusing pre-upgrade tokens.
-            Intent(context, MainActivity::class.java).apply {
-                action = ACTION_OPEN_LIVE
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val title = when (state.mode) {
-            FocusMode.FOCUSING -> state.subject.ifBlank { "正在专注" }
-            FocusMode.PAUSED -> "专注已暂停"
-            FocusMode.ENDED -> "等待回到专注"
-            FocusMode.REST -> "正在休息"
-            FocusMode.IDLE -> "专注已结束"
-        }
-        val content = when (state.mode) {
-            FocusMode.FOCUSING -> "计时进行中 · 可暂停或结束"
-            FocusMode.PAUSED -> "5 分钟后提醒 · 点此返回继续"
-            FocusMode.ENDED -> "将在 15 / 30 / 60 分钟提醒"
-            FocusMode.REST -> "休息期间不会触发提醒"
-            FocusMode.IDLE -> "点此开始下一次专注"
-        }
+    fun liveNotification(state: FocusRuntimeState, operation: AtomicOperation,
+                         message: String = "", busy: Boolean = false, retryAction: String = ""): Notification {
+        val now = System.currentTimeMillis()
+        val due = store.due(now)
+        val title = FocusPresentation.title(state, due, now)
+        val detail = FocusPresentation.detail(state, store.nextReminderAt(state), due, now)
+        val content = listOf(state.subject, detail, message).filter { it.isNotBlank() }.joinToString(" · ")
+        val open = openIntent("details", 1)
+        val actions = if (busy) listOf(Action("返回应用", R.drawable.ic_action_details, open))
+            else if (retryAction.isNotBlank()) listOf(
+                Action("重试", R.drawable.ic_action_resume, serviceIntent(retryAction, 8, state)),
+                Action("返回应用", R.drawable.ic_action_details, open))
+            else actionsFor(state, due)
         val builder = Notification.Builder(context, CHANNEL_LIVE)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(Color.rgb(185, 74, 67))
-            .setContentTitle(title)
-            .setContentText(content)
-            .setCategory(if (Build.VERSION.SDK_INT >= 36) Notification.CATEGORY_PROGRESS else Notification.CATEGORY_STATUS)
-            .setContentIntent(openIntent)
-            .setOnlyAlertOnce(true)
-            .setOngoing(state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED))
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
-
-        if (state.mode == FocusMode.FOCUSING) {
-            builder.setUsesChronometer(true)
-                .setWhen(System.currentTimeMillis() - state.elapsedNow() * 1000)
-        } else {
-            builder.setUsesChronometer(false)
+            .setContentTitle(title).setContentText(content)
+            .setStyle(Notification.BigTextStyle().bigText(content))
+            .setContentIntent(open).setOnlyAlertOnce(true).setOngoing(state.mode != FocusMode.IDLE)
+            .setShowWhen(false).setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setCategory(Notification.CATEGORY_STATUS)
+        if (state.mode == FocusMode.FOCUSING) builder.setUsesChronometer(true)
+            .setWhen(now - state.elapsedNow(now) * 1000).setShowWhen(true)
+        if (state.mode == FocusMode.REST && state.restStartedAtEpochMs > 0) builder.setUsesChronometer(true).setShowWhen(true).apply {
+            if (state.restTargetSeconds > 0 && state.restElapsed(now) < state.restTargetSeconds) {
+                setChronometerCountDown(true)
+                setWhen(state.restStartedAtEpochMs + state.restTargetSeconds * 1000)
+            } else if (state.restTargetSeconds == 0L) setWhen(state.restStartedAtEpochMs)
+            else setUsesChronometer(false).setShowWhen(false)
         }
-
-        if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED)) {
-            val toggleAction = if (state.mode == FocusMode.PAUSED) FocusService.ACTION_RESUME else FocusService.ACTION_PAUSE
-            val toggleLabel = if (state.mode == FocusMode.PAUSED) "继续" else "暂停"
-            builder.addAction(Notification.Action.Builder(
-                null,
-                toggleLabel,
-                serviceIntent(toggleAction, 2),
-            ).build())
-            builder.addAction(Notification.Action.Builder(
-                null,
-                "结束",
-                serviceIntent(FocusService.ACTION_END, 3),
-            ).build())
+        actions.forEach { builder.addAction(Notification.Action.Builder(
+            android.graphics.drawable.Icon.createWithResource(context, it.icon), it.label, it.intent).build()) }
+        if (Build.VERSION.SDK_INT >= 36 && state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST)) {
+            val progress = Notification.ProgressStyle().setStyledByProgress(true)
+            if (state.mode == FocusMode.FOCUSING && state.plannedSeconds > 0) {
+                progress.setProgressSegments(listOf(Notification.ProgressStyle.Segment(state.plannedSeconds.toInt())))
+                    .setProgress(state.elapsedNow(now).coerceAtMost(state.plannedSeconds).toInt())
+            } else progress.setProgressIndeterminate(true)
+            builder.setStyle(progress).setCategory(Notification.CATEGORY_PROGRESS)
+            builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         }
-
-        attachAndroidLiveUpdate(builder, state)
-        if (isVivoDevice()) attachVivoAtomicExtras(builder, state, title, content, openIntent, operation)
+        if (isVivoDevice()) {
+            if (operation == AtomicOperation.CREATE) record = 0
+            val extras = VivoAtomicPayload.create(context, R.drawable.ic_atomic, operation.value,
+                BuildConfig.VIVO_ATOMIC_SCENE, title, content, FocusPresentation.timer(state, now), open,
+                BuildConfig.VIVO_HISTORICAL_ISLAND_ONLY, ++record, "focus:${state.sessionId}")
+            if (operation != AtomicOperation.END) VivoAtomicPayload.configureFocus(context, extras,
+                if (state.mode == FocusMode.FOCUSING) FocusPresentation.shortName(state.subject.ifBlank { title }) else title,
+                title, content + "\n" + actions.joinToString(" · ") { it.label },
+                actions.map { it.icon }.toIntArray(), ArrayList(actions.map { it.intent }),
+                if (state.mode == FocusMode.FOCUSING && state.plannedSeconds > 0)
+                    (state.elapsedNow(now) * 100 / state.plannedSeconds).coerceIn(0, 100).toInt() else -1,
+                busy, retryAction.isNotBlank())
+            builder.addExtras(extras)
+        }
         return builder.build()
     }
 
-    fun reminderNotification(kind: ReminderKind, sessionId: Long): Notification {
-        val minutes = when (kind) {
-            ReminderKind.PAUSED -> 5
-            ReminderKind.ENDED_15 -> 15
-            ReminderKind.ENDED_30 -> 30
-            ReminderKind.ENDED_60 -> 60
-        }
-        val title = if (kind == ReminderKind.PAUSED) "暂停已经 $minutes 分钟" else "离开专注已经 $minutes 分钟"
-        return Notification.Builder(context, CHANNEL_REMINDER)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setColor(Color.rgb(190, 54, 49))
-            .setContentTitle(title)
-            .setContentText("点此回到计时器；开启覆盖层权限可获得全屏滑动提醒")
-            .setCategory(Notification.CATEGORY_REMINDER)
-            // The service acknowledges and dismisses the tapped reminder. An
-            // automatic SystemUI cancellation can otherwise remove the next
-            // overdue stage, which reuses REMINDER_NOTIFICATION_ID.
-            .setAutoCancel(false)
-            .setContentIntent(PendingIntent.getActivity(
-                context,
-                10 + kind.ordinal,
-                Intent(context, MainActivity::class.java).apply {
-                    action = FocusService.ACTION_OPEN_FROM_REMINDER
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    putExtra(FocusService.EXTRA_REMINDER_KIND, kind.ordinal)
-                    putExtra(FocusService.EXTRA_SESSION_ID, sessionId)
-                },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            ))
-            .build()
+    private fun actionsFor(state: FocusRuntimeState, due: DueReminder?): List<Action> = when (state.mode) {
+        FocusMode.FOCUSING -> listOf(
+            Action("暂停", R.drawable.ic_action_pause, serviceIntent(FocusService.ACTION_PAUSE, 2, state)),
+            Action("结束本段", R.drawable.ic_action_end, serviceIntent(FocusService.ACTION_END, 3, state)),
+            Action("查看详情", R.drawable.ic_action_details, openIntent("details", 4)))
+        FocusMode.PAUSED -> listOf(
+            Action("继续专注", R.drawable.ic_action_resume, serviceIntent(FocusService.ACTION_RESUME, 2, state)),
+            if (due != null) Action("再等 5 分钟", R.drawable.ic_action_rest, serviceIntent(FocusService.ACTION_SNOOZE, 5, state))
+            else Action("查看详情", R.drawable.ic_action_details, openIntent("details", 4)),
+            Action("结束本段", R.drawable.ic_action_end, serviceIntent(FocusService.ACTION_END, 3, state)))
+        FocusMode.REST -> listOf(
+            Action("结束休息", R.drawable.ic_action_end, serviceIntent(FocusService.ACTION_END_REST, 6, state)),
+            Action("返回应用", R.drawable.ic_action_details, openIntent("details", 4)))
+        FocusMode.ENDED -> listOf(
+            Action("查看总结", R.drawable.ic_action_details, openIntent("summary", 4)),
+            Action("选择下一段", R.drawable.ic_action_resume, openIntent("next", 7))) +
+            if (due != null) listOf(Action("再等 5 分钟", R.drawable.ic_action_rest,
+                serviceIntent(FocusService.ACTION_SNOOZE, 5, state))) else emptyList()
+        FocusMode.SETTLED -> listOf(Action("查看今日总结", R.drawable.ic_action_details, openIntent("summary", 4)))
+        FocusMode.IDLE -> listOf(Action("选择事项", R.drawable.ic_action_resume, openIntent("next", 7)))
     }
 
-    private fun attachVivoAtomicExtras(
-        builder: Notification.Builder,
-        state: FocusRuntimeState,
-        title: String,
-        content: String,
-        clickIntent: PendingIntent,
-        operation: AtomicOperation,
-    ) {
-        if (operation == AtomicOperation.CREATE) atomicRecord = 0
-        val elapsed = state.elapsedNow()
-        val timer = String.format(Locale.ROOT, "%02d:%02d:%02d", elapsed / 3600, elapsed / 60 % 60, elapsed % 60)
-        builder.addExtras(VivoAtomicPayload.create(
-            context, R.drawable.ic_notification, operation.value,
-            BuildConfig.VIVO_ATOMIC_SCENE, title, content, timer, clickIntent,
-            BuildConfig.VIVO_HISTORICAL_ISLAND_ONLY, ++atomicRecord,
-            "focus:${state.sessionId}",
-        ))
+    fun reminderNotification(kind: ReminderKind, state: FocusRuntimeState, token: String, silent: Boolean): Notification {
+        val open = PendingIntent.getActivity(context, 10, Intent(context, MainActivity::class.java).apply {
+            action = FocusService.ACTION_OPEN_FROM_REMINDER
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra(FocusService.EXTRA_SESSION_ID, state.sessionId)
+            putExtra(FocusService.EXTRA_REVISION, store.transitionRevision())
+            putExtra(FocusService.EXTRA_REMINDER_TOKEN, token)
+        }, FLAGS)
+        val builder = Notification.Builder(context, CHANNEL_REMINDER).setSmallIcon(R.drawable.ic_notification)
+            .setColor(Color.rgb(185, 74, 67)).setContentTitle(FocusPresentation.reminderTitle(kind))
+            .setContentText(if (kind == ReminderKind.PAUSED) "计时仍暂停，可以继续专注，或再等 5 分钟。" else "准备好时，选择事项开始下一段。")
+            .setCategory(Notification.CATEGORY_REMINDER).setContentIntent(open).setAutoCancel(false)
+            .setOnlyAlertOnce(true).setShowWhen(false)
+            .setDeleteIntent(serviceIntent(FocusService.ACTION_DISMISS, 11, state, token))
+        if (silent) builder.setGroup("focus_reminder_silent").setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
+        val primary = if (kind == ReminderKind.PAUSED)
+            Action("继续专注", R.drawable.ic_action_resume, serviceIntent(FocusService.ACTION_RESUME, 12, state, token))
+            else Action("选择下一段", R.drawable.ic_action_resume, openIntent("next", 7))
+        listOf(primary, Action("再等 5 分钟", R.drawable.ic_action_rest,
+            serviceIntent(FocusService.ACTION_SNOOZE, 13, state, token)), Action("查看提醒", R.drawable.ic_action_details, open))
+            .forEach { builder.addAction(Notification.Action.Builder(null, it.label, it.intent).build()) }
+        return builder.build()
     }
 
-    @Suppress("NewApi")
-    private fun attachAndroidLiveUpdate(builder: Notification.Builder, state: FocusRuntimeState) {
-        if (Build.VERSION.SDK_INT < 36 || state.mode !in setOf(FocusMode.FOCUSING, FocusMode.PAUSED)) return
-        builder.setStyle(Notification.ProgressStyle().setProgressIndeterminate(true).setStyledByProgress(true))
-        // API 36.1 defines this public extra; use its documented wire name
-        // while compiling against 36 so older Android 16 builds stay safe.
-        // FLAG_PROMOTED_ONGOING is assigned by the system after eligibility checks.
-        builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
-    }
+    private fun serviceIntent(action: String, code: Int, state: FocusRuntimeState, token: String? = null): PendingIntent =
+        PendingIntent.getBroadcast(context, code, Intent(context, FocusActionReceiver::class.java).apply {
+            this.action = action
+            putExtra(FocusService.EXTRA_SESSION_ID, state.sessionId)
+            putExtra(FocusService.EXTRA_REVISION, store.transitionRevision())
+            if (token != null) putExtra(FocusService.EXTRA_REMINDER_TOKEN, token)
+        }, FLAGS)
 
-    private fun serviceIntent(action: String, requestCode: Int): PendingIntent = PendingIntent.getService(
-        context,
-        requestCode,
-        Intent(context, FocusService::class.java).setAction(action),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
+    private fun openIntent(destination: String, code: Int): PendingIntent = PendingIntent.getActivity(context, code,
+        Intent(context, MainActivity::class.java).apply {
+            action = "com.mutsumi.focus.OPEN_$destination"
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra("focus_destination", destination)
+        }, FLAGS)
 
-    private fun isVivoDevice(): Boolean =
-        Build.MANUFACTURER.equals("vivo", true) || Build.BRAND.equals("vivo", true) || Build.BRAND.equals("iqoo", true)
-
+    private fun isVivoDevice(): Boolean = Build.MANUFACTURER.equals("vivo", true) ||
+        Build.BRAND.equals("vivo", true) || Build.BRAND.equals("iqoo", true)
     enum class AtomicOperation(val value: Int) { CREATE(0), UPDATE(1), END(2) }
-
     companion object {
-        private const val ACTION_OPEN_LIVE = "com.mutsumi.focus.OPEN_LIVE"
+        private const val FLAGS = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         const val CHANNEL_LIVE = "focus_live_v1"
-        const val CHANNEL_REMINDER = "focus_reminder_v1"
+        const val CHANNEL_REMINDER = "focus_reminder_v2"
         const val LIVE_NOTIFICATION_ID = 4080
         const val REMINDER_NOTIFICATION_ID = 4081
     }

@@ -31,10 +31,7 @@ object PermissionStatus {
 
     fun promotedNotifications(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < 36) return true
-        val settingsIntent = Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
-            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-        return settingsIntent.resolveActivity(context.packageManager) == null ||
-            context.getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
+        return context.getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
     }
 
     fun reminderOverlayAvailable(context: Context): Boolean = accessibility(context) || overlay(context)

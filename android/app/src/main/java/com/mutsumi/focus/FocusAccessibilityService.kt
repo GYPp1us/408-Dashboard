@@ -25,10 +25,10 @@ class FocusAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    fun showOverlay(kind: ReminderKind, onContinue: () -> Unit, onOpen: () -> Unit): Boolean {
+    fun showOverlay(kind: ReminderKind, onContinue: () -> Unit, onOpen: () -> Unit, onResume: () -> Unit): Boolean {
         dismissOverlay()
         return try {
-            val view = ReminderOverlayView(this, kind, onContinue, onOpen)
+            val view = ReminderOverlayView(this, kind, onContinue, onOpen, onResume)
             val params = overlayLayoutParams(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
             getSystemService(WindowManager::class.java).addView(view, params)
             overlay = view
@@ -50,8 +50,8 @@ class FocusAccessibilityService : AccessibilityService() {
 
         fun isConnected(): Boolean = instance?.get() != null
 
-        fun show(kind: ReminderKind, onContinue: () -> Unit, onOpen: () -> Unit): Boolean =
-            instance?.get()?.showOverlay(kind, onContinue, onOpen) == true
+        fun show(kind: ReminderKind, onContinue: () -> Unit, onOpen: () -> Unit, onResume: () -> Unit): Boolean =
+            instance?.get()?.showOverlay(kind, onContinue, onOpen, onResume) == true
 
         fun dismiss() {
             instance?.get()?.dismissOverlay()

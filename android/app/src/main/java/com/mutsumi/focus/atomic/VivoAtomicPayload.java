@@ -5,10 +5,46 @@ import android.app.NotificationManager;
 import android.content.Context;
 import android.graphics.drawable.Icon;
 import android.os.Bundle;
+import java.util.ArrayList;
 
 /** Wire fields verified against the supplied vivo demo and document 896. */
 public final class VivoAtomicPayload {
     private VivoAtomicPayload() {}
+
+    /** Document 896's template 4 permits at most three actionable images. */
+    public static void configureFocus(Context context, Bundle extras, String shortTitle,
+            String title, String description, int[] iconResources,
+            ArrayList<PendingIntent> actions, int progress, boolean busy, boolean failed) {
+        Bundle island = extras.getBundle("notification.superx.island");
+        if (island == null) return;
+        island.getBundle("island.superx.leftInfo").putCharSequence("island.superx.leftInfo.content", shortTitle);
+        Bundle right = island.getBundle("island.superx.rightInfo");
+        if (busy) {
+            island.putInt("island.superx.rightTemplate", 3);
+            right.putInt("island.superx.rightInfo.loadingColor", 0xFFB94A43);
+        } else if (progress >= 0 || failed) {
+            island.putInt("island.superx.rightTemplate", 2);
+            right.putInt("island.superx.rightInfo.progressValue", Math.max(0, progress));
+            right.putInt("island.superx.rightInfo.progressColor", 0xFFB94A43);
+            right.putInt("island.superx.rightInfo.progressBgColor", 0xFF534541);
+            right.putInt("island.superx.rightInfo.progressState", failed ? -1 : 0);
+        }
+        // The historical experimental island-only path has no expanded card.
+        if (extras.getBoolean("notification.superx.islandNotify")) return;
+        Bundle base = extras.getBundle("notification.superx.baseInfos");
+        base.putCharSequence("notification.superx.baseInfos.title", title);
+        base.putCharSequence("notification.superx.baseInfos.content", description);
+        ArrayList<Icon> icons = new ArrayList<>();
+        for (int resource : iconResources) icons.add(Icon.createWithResource(context, resource));
+        base.putInt("notification.superx.baseInfos.subInfo", icons.isEmpty() ? 0 : 4);
+        base.putParcelableArrayList("notification.superx.baseInfos.subImageList", icons);
+        base.putParcelableArrayList("notification.superx.baseInfos.subInfoClickRespList", actions);
+        extras.putInt("notification.superx.template", 4);
+        island.putInt("island.superx.islandClick", 0);
+        island.putInt("island.superx.template", 4);
+        island.putBundle("island.superx.baseInfos", new Bundle(base));
+        island.putBundle("island.superx.infos", new Bundle(extras.getBundle("notification.superx.infos")));
+    }
 
     public static void cancel(NotificationManager manager, int id) {
         manager.cancel(id);

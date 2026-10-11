@@ -66,4 +66,22 @@ class FocusStateReducerTest {
 
         assertEquals(FocusMode.REST, FocusStateReducer.reduce(previous, FocusRuntimeState(mode = FocusMode.REST), 0).mode)
     }
+
+    @Test fun `idle remote state cannot erase a local active rest`() {
+        val rest = FocusRuntimeState(mode = FocusMode.REST, restStartedAtEpochMs = 1000, restTargetSeconds = 900)
+        assertEquals(rest, FocusStateReducer.reduce(rest, FocusRuntimeState(), 0))
+        assertEquals(FocusMode.SETTLED, FocusStateReducer.reduce(rest, FocusRuntimeState(mode = FocusMode.SETTLED), 0).mode)
+    }
+
+    @Test fun `ended summary expires while departure schedule remains`() {
+        val ended = FocusRuntimeState(mode = FocusMode.ENDED, endedAtEpochMs = 1000)
+        assertTrue(ended.summaryVisible(30_999))
+        assertFalse(ended.summaryVisible(31_000))
+        assertEquals(ended, FocusStateReducer.reduce(ended, FocusRuntimeState(), 0, 60_000))
+    }
+
+    @Test fun `yesterday settlement can return to idle without departure reminder`() {
+        val settled = FocusRuntimeState(mode = FocusMode.SETTLED, endedAtEpochMs = 1000)
+        assertEquals(FocusMode.IDLE, FocusStateReducer.reduce(settled, FocusRuntimeState(), 0, 60_000).mode)
+    }
 }

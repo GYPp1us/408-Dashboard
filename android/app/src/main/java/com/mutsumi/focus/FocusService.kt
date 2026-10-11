@@ -4,42 +4,39 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import com.mutsumi.focus.atomic.VivoAtomicPayload
+import org.json.JSONObject
 import java.util.concurrent.Executors
 
 class FocusService : Service() {
     private lateinit var store: FocusStateStore
     private lateinit var publisher: OriginOsAtomicPublisher
-    private lateinit var notificationManager: NotificationManager
-    private lateinit var applicationOverlay: ApplicationOverlay
+    private lateinit var notifications: NotificationManager
+    private lateinit var overlay: ApplicationOverlay
     private val handler = Handler(Looper.getMainLooper())
-    private val networkExecutor = Executors.newSingleThreadExecutor()
-    private var currentReminder: ReminderKind? = null
-    private var reminderSessionId = 0L
-    private var reminderUsesNotification = false
-    private var lastServerSyncAt = 0L
-    private var serverSyncInFlight = false
-    private var liveSessionId = 0L
+    private val network = Executors.newSingleThreadExecutor()
+    private var reminderToken = ""
+    private var lastSyncAt = 0L
+    private var syncing = false
+    private var liveIdentity = ""
+    private var islandVisible = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var destroyed = false
+    @Volatile private var busy = false
+    @Volatile private var messageSince = 0L
+    @Volatile private var message = ""
+        set(value) { field = value; messageSince = System.currentTimeMillis() }
+    @Volatile private var retryAction = ""
 
     private val tick = object : Runnable {
         override fun run() {
-            val state = store.read()
-            if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) {
-                refreshWakeLock()
-                maybeSyncServer(state)
-                checkReminder(state)
-                handler.postDelayed(this, TICK_MS)
-            } else {
-                stopRuntime(removeNotification = true)
-            }
+            applyState()
+            if (!destroyed) maybeSyncServer()
         }
     }
 
@@ -47,49 +44,20 @@ class FocusService : Service() {
         super.onCreate()
         store = FocusStateStore(this)
         publisher = OriginOsAtomicPublisher(this)
-        notificationManager = getSystemService(NotificationManager::class.java)
-        applicationOverlay = ApplicationOverlay(this)
+        notifications = getSystemService(NotificationManager::class.java)
+        overlay = ApplicationOverlay(this)
         publisher.ensureChannels()
         runningService = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // All requests and lifecycle callbacks are serialized on the main
-        // thread. A request is no longer pending once this callback owns its
-        // foreground promotion; teardown below still follows that promotion.
-        pendingStarts.remove(intent?.getLongExtra(EXTRA_START_REQUEST, 0L))
-        val state = store.read()
-        // A previously accepted foreground start can arrive after an idle
-        // sync, or take an action branch that immediately stops the service.
-        // Fulfil the platform contract before either dispatch or teardown.
-        val operation = when {
-            state.mode in setOf(FocusMode.IDLE, FocusMode.REST, FocusMode.ENDED) -> OriginOsAtomicPublisher.AtomicOperation.END
-            liveSessionId != state.sessionId -> OriginOsAtomicPublisher.AtomicOperation.CREATE
-            else -> OriginOsAtomicPublisher.AtomicOperation.UPDATE
-        }
-        if (!publishLive(state, operation)) return START_NOT_STICKY
-        if (operation == OriginOsAtomicPublisher.AtomicOperation.CREATE) liveSessionId = state.sessionId
-        if (state.mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
-            stopRuntime(removeNotification = true)
-            return START_NOT_STICKY
-        }
-        when (intent?.action) {
-            ACTION_PAUSE -> executeRemoteAction(state, RemoteAction.PAUSE)
-            ACTION_RESUME -> executeRemoteAction(state, RemoteAction.RESUME)
-            ACTION_END -> executeRemoteAction(state, RemoteAction.END)
-            ACTION_OPEN_FROM_REMINDER -> acknowledgeAndOpen(currentReminder ?: dueNow(state)?.kind)
-            ACTION_ACK_REMINDER -> {
-                applyState(state)
-                val kind = ReminderKind.entries.getOrNull(intent.getIntExtra(EXTRA_REMINDER_KIND, -1))
-                val sameSession = intent.getLongExtra(EXTRA_SESSION_ID, -1) == state.sessionId
-                if (sameSession && kind != null &&
-                    ((kind == ReminderKind.PAUSED && state.mode == FocusMode.PAUSED) ||
-                        (kind != ReminderKind.PAUSED && state.mode == FocusMode.ENDED))
-                ) acknowledgeReminder(kind, openApp = false)
-            }
-            else -> applyState(state)
-        }
-        return START_STICKY
+        pendingStarts.remove(intent?.getLongExtra(EXTRA_START_REQUEST, 0))
+        // Discharge every accepted foreground start before any idle teardown.
+        if (!publish(store.read())) return START_NOT_STICKY
+        val action = intent?.action.orEmpty()
+        if (action !in setOf(ACTION_SYNC, ACTION_CHECK, "") && matches(intent)) handleAction(action)
+        else applyState()
+        return if (store.read().mode == FocusMode.IDLE) START_NOT_STICKY else START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -98,325 +66,340 @@ class FocusService : Service() {
         destroyed = true
         if (runningService === this) runningService = null
         handler.removeCallbacksAndMessages(null)
-        dismissReminder()
+        dismissSurfaces()
         releaseWakeLock()
-        networkExecutor.shutdownNow()
+        network.shutdownNow()
         super.onDestroy()
     }
 
-    private fun applyState(state: FocusRuntimeState) {
-        handler.removeCallbacks(tick)
-        if (currentReminder != null &&
-            (reminderSessionId != state.sessionId || currentReminder != dueNow(state)?.kind)
-        ) dismissReminder()
-        if (state.mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
-            stopRuntime(removeNotification = true)
-            return
-        }
-        if (state.mode == FocusMode.ENDED && store.endedAcknowledgedCount() >= 3) {
-            stopRuntime(removeNotification = true)
-            return
-        }
-        val operation = if (liveSessionId != state.sessionId) {
-            liveSessionId = state.sessionId
-            OriginOsAtomicPublisher.AtomicOperation.CREATE
-        } else {
-            OriginOsAtomicPublisher.AtomicOperation.UPDATE
-        }
-        if (!publishLive(state, if (state.mode == FocusMode.ENDED) OriginOsAtomicPublisher.AtomicOperation.END else operation)) return
-        checkReminder(state)
-        handler.postDelayed(tick, TICK_MS)
-    }
-
-    private fun publishLive(state: FocusRuntimeState, operation: OriginOsAtomicPublisher.AtomicOperation): Boolean {
-        try {
-            startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, publisher.liveNotification(state, operation))
-            return true
-        } catch (error: Exception) {
-            // A plain notification cannot discharge a foreground-start
-            // obligation. Cancel the runtime instead of leaving its watchdog.
-            Log.w("FocusService", "Foreground promotion failed; stopping runtime", error)
-            stopRuntime(removeNotification = true)
-            return false
-        }
-    }
-
-    private fun maybeSyncServer(state: FocusRuntimeState) {
-        val now = System.currentTimeMillis()
-        if (serverSyncInFlight || now - lastServerSyncAt < SERVER_SYNC_MS) return
-        lastServerSyncAt = now
-        serverSyncInFlight = true
-        val requestedRevision = store.transitionRevision()
-        networkExecutor.execute {
-            val heartbeat = if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED) && state.sessionId > 0) {
-                FocusApi.heartbeat(state)
-            } else null
-            val remote = FocusApi.fetchState(state)
-            handler.post {
-                serverSyncInFlight = false
-                if (destroyed || !FocusStateReducer.canApplyResponse(state, store.read(), requestedRevision, store.transitionRevision())) return@post
-                if (heartbeat?.status == 401 || heartbeat?.status == 403 || remote.status == 401 || remote.status == 403) {
-                    store.write(FocusRuntimeState())
-                    stopRuntime(removeNotification = true)
-                    return@post
-                }
-                val incoming = remote.state
-                if (remote.successful && incoming != null) {
-                    val reduced = FocusStateReducer.reduce(store.read(), incoming, store.endedAcknowledgedCount())
-                    store.write(reduced)
-                    applyState(reduced)
-                    sendBroadcast(Intent(ACTION_REFRESH_WEB).setPackage(packageName))
-                }
-            }
-        }
-    }
-
-    private fun executeRemoteAction(state: FocusRuntimeState, action: RemoteAction) {
-        if (state.sessionId <= 0) { applyState(state); return }
-        val requestedRevision = store.transitionRevision()
-        if (!publishLive(state, OriginOsAtomicPublisher.AtomicOperation.UPDATE)) return
-        networkExecutor.execute {
-            val result = when (action) {
-                RemoteAction.PAUSE -> FocusApi.setPaused(state, true)
-                RemoteAction.RESUME -> FocusApi.setPaused(state, false)
-                RemoteAction.END -> FocusApi.end(state)
-            }
-            handler.post {
-                if (destroyed || !FocusStateReducer.canApplyResponse(state, store.read(), requestedRevision, store.transitionRevision())) return@post
-                if (result.status == 401 || result.status == 403) {
-                    store.write(FocusRuntimeState())
-                    stopRuntime(removeNotification = true)
-                } else if (result.successful) {
-                    val now = System.currentTimeMillis()
-                    val updated = when (action) {
-                        RemoteAction.PAUSE -> state.copy(
-                            mode = FocusMode.PAUSED,
-                            pausedAtEpochMs = now,
-                            elapsedSeconds = state.elapsedNow(now),
-                            observedAtEpochMs = now,
-                        )
-                        RemoteAction.RESUME -> state.copy(
-                            mode = FocusMode.FOCUSING,
-                            pausedAtEpochMs = 0,
-                            observedAtEpochMs = now,
-                        )
-                        RemoteAction.END -> state.copy(
-                            mode = FocusMode.ENDED,
-                            endedAtEpochMs = now,
-                            elapsedSeconds = state.elapsedNow(now),
-                            observedAtEpochMs = now,
-                        )
-                    }
-                    store.write(updated)
-                    applyState(updated)
-                } else {
-                    applyState(store.read())
-                }
-                sendBroadcast(Intent(ACTION_REFRESH_WEB).setPackage(packageName))
-            }
-        }
-    }
-
-    private fun dueNow(state: FocusRuntimeState): DueReminder? = ReminderPolicy.due(
-        state,
-        System.currentTimeMillis(),
-        store.pausedSnoozeUntil(),
-        store.endedAcknowledgedCount(),
-    )
-
-    private fun checkReminder(state: FocusRuntimeState) {
-        val due = dueNow(state) ?: return
-        if (currentReminder == due.kind && reminderSessionId == state.sessionId) {
-            // SystemUI can remove a notification while an acknowledgement or
-            // lifecycle check posts the next reminder using the same ID.
-            // Reconcile the fallback with the actual notification, rather than
-            // keeping a due reminder hidden behind stale in-memory state.
-            if (!reminderUsesNotification || notificationManager.activeNotifications.any {
-                    it.id == OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID
-                }) return
-        }
-        if (currentReminder != null) dismissReminder()
-        currentReminder = due.kind
-        reminderSessionId = state.sessionId
-        val onContinue = { acknowledgeReminder(due.kind, openApp = false) }
-        val onOpen = { acknowledgeReminder(due.kind, openApp = true) }
-        val shown = applicationOverlay.show(due.kind, onContinue, onOpen) ||
-            FocusAccessibilityService.show(due.kind, onContinue, onOpen)
-        reminderUsesNotification = !shown
-        if (!shown) {
-            notificationManager.notify(
-                OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID,
-                publisher.reminderNotification(due.kind, state.sessionId),
-            )
-        }
-    }
-
-    private fun acknowledgeReminder(kind: ReminderKind, openApp: Boolean) {
-        if (kind == ReminderKind.PAUSED) store.snoozePaused(System.currentTimeMillis())
-        else store.acknowledgeEnded(kind.endedIndex)
-        dismissReminder()
-        if (openApp) openTimer()
+    private fun matches(intent: Intent?): Boolean {
+        if (intent == null) return false
         val state = store.read()
-        if (state.mode == FocusMode.ENDED && store.endedAcknowledgedCount() >= 3) {
-            stopRuntime(removeNotification = true)
+        if (intent.hasExtra(EXTRA_SESSION_ID) && intent.getLongExtra(EXTRA_SESSION_ID, -1) != state.sessionId) return false
+        if (intent.hasExtra(EXTRA_REVISION) && intent.getLongExtra(EXTRA_REVISION, -1) != store.transitionRevision()) return false
+        val token = intent.getStringExtra(EXTRA_REMINDER_TOKEN)
+        return token == null || store.due()?.let { store.reminderToken(it.kind) == token } == true
+    }
+
+    private fun handleAction(action: String) {
+        val state = store.read()
+        when (action) {
+            ACTION_PAUSE -> if (state.mode == FocusMode.FOCUSING) executeRemoteAction(state, action)
+            ACTION_RESUME -> if (state.mode == FocusMode.PAUSED) executeRemoteAction(state, action)
+            ACTION_END -> if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED)) executeRemoteAction(state, action)
+            ACTION_END_REST -> if (state.mode == FocusMode.REST) {
+                store.write(FocusRuntimeState())
+                message = "休息已结束"
+                changed()
+            }
+            ACTION_SNOOZE -> {
+                if (store.due() == null) return
+                if (state.mode == FocusMode.PAUSED) store.snoozePaused(System.currentTimeMillis())
+                else if (state.mode == FocusMode.ENDED) store.snoozeEnded(System.currentTimeMillis())
+                message = "已设置 5 分钟后再提醒"
+                dismissSurfaces()
+                changed()
+            }
+            ACTION_DISMISS, ACTION_OPEN_FROM_REMINDER -> {
+                store.due()?.kind?.let { kind ->
+                    if (kind == ReminderKind.PAUSED) store.dismissPaused() else store.acknowledgeEnded(kind.endedIndex)
+                }
+                dismissSurfaces()
+                changed()
+            }
         }
+        applyState()
     }
 
-    private fun acknowledgeAndOpen(kind: ReminderKind?) {
-        if (kind != null) acknowledgeReminder(kind, openApp = true) else openTimer()
-    }
-
-    private fun openTimer() {
-        try {
-            startActivity(Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            })
-        } catch (_: Exception) {
-            // The heads-up notification remains a route back if background launch is restricted.
+    private fun applyState() {
+        handler.removeCallbacks(tick)
+        val state = store.read()
+        if (state.mode == FocusMode.IDLE ||
+            state.mode == FocusMode.SETTLED && !state.summaryVisible(System.currentTimeMillis()) ||
+            state.mode == FocusMode.ENDED && store.endedAcknowledgedCount() >= 3 && !state.summaryVisible(System.currentTimeMillis())) {
+            stopRuntime()
+            return
         }
-    }
-
-    private fun dismissReminder() {
-        FocusAccessibilityService.dismiss()
-        applicationOverlay.dismiss()
-        notificationManager.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
-        currentReminder = null
-        reminderSessionId = 0L
-        reminderUsesNotification = false
-    }
-
-    private fun refreshWakeLock() {
-        val power = getSystemService(PowerManager::class.java)
-        val lock = wakeLock ?: power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:focus-runtime").also {
+        if (!publish(state)) return
+        checkReminder()
+        val lock = wakeLock ?: getSystemService(PowerManager::class.java).newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK, "$packageName:focus-runtime").also {
             it.setReferenceCounted(false)
             wakeLock = it
         }
-        if (!lock.isHeld) lock.acquire(WAKE_LOCK_WINDOW_MS)
+        if (!lock.isHeld) lock.acquire(10 * 60_000L)
+        handler.postDelayed(tick, 1_000L)
     }
 
-    private fun releaseWakeLock() {
-        wakeLock?.takeIf { it.isHeld }?.release()
-        wakeLock = null
+    private fun publish(state: FocusRuntimeState): Boolean {
+        val now = System.currentTimeMillis()
+        val visible = store.atomicEnabled() && (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST) ||
+            state.summaryVisible(now) || store.due(now) != null)
+        val identity = "${state.sessionId}:${state.restStartedAtEpochMs}:${state.mode in setOf(FocusMode.ENDED, FocusMode.SETTLED)}"
+        val operation = when {
+            !visible -> OriginOsAtomicPublisher.AtomicOperation.END
+            !islandVisible || identity != liveIdentity -> OriginOsAtomicPublisher.AtomicOperation.CREATE
+            else -> OriginOsAtomicPublisher.AtomicOperation.UPDATE
+        }
+        return try {
+            startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID,
+                publisher.liveNotification(state, operation, if (busy) "正在处理…" else displayMessage(now), busy, retryAction))
+            islandVisible = visible
+            liveIdentity = identity
+            true
+        } catch (error: Exception) {
+            Log.w("FocusService", "Foreground promotion failed", error)
+            stopRuntime()
+            false
+        }
     }
 
-    private fun stopRuntime(removeNotification: Boolean) {
-        handler.removeCallbacksAndMessages(null)
-        dismissReminder()
+    private fun maybeSyncServer() {
+        val now = System.currentTimeMillis()
+        if (busy || syncing || now - lastSyncAt < 15_000 || destroyed || store.read().mode == FocusMode.IDLE) return
+        lastSyncAt = now
+        syncing = true
+        val requested = store.read()
+        val revision = store.transitionRevision()
+        network.execute {
+            val heartbeat = if (requested.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED) && requested.sessionId > 0)
+                FocusApi.heartbeat(requested) else null
+            val response = FocusApi.fetchState(requested)
+            handler.post {
+                syncing = false
+                if (destroyed || busy || !FocusStateReducer.canApplyResponse(requested, store.read(), revision, store.transitionRevision())) return@post
+                if (heartbeat?.status in setOf(401, 403) || response.status in setOf(401, 403)) {
+                    clear(this)
+                    changed()
+                    return@post
+                }
+                if (response.successful && response.state != null) {
+                    val updated = FocusStateReducer.reduce(store.read(), response.state, store.endedAcknowledgedCount())
+                    val transition = !FocusStateReducer.canApplyResponse(store.read(), updated)
+                    store.write(updated)
+                    if (transition) { message = ""; retryAction = ""; changed() }
+                    applyState()
+                }
+            }
+        }
+    }
+
+    private fun executeRemoteAction(state: FocusRuntimeState, action: String) {
+        if (busy || state.sessionId <= 0) return
+        busy = true
+        message = ""
+        retryAction = ""
+        val revision = store.transitionRevision()
+        changed()
+        publish(state)
+        network.execute {
+            val result = when (action) {
+                ACTION_PAUSE -> FocusApi.setPaused(state, true)
+                ACTION_RESUME -> FocusApi.setPaused(state, false)
+                else -> FocusApi.end(state)
+            }
+            // A timeout may have committed. Read back before offering retry.
+            val reconciled = if (!result.successful) FocusApi.fetchState(state) else null
+            handler.post {
+                busy = false
+                if (destroyed) return@post
+                if (!FocusStateReducer.canApplyResponse(state, store.read(), revision, store.transitionRevision())) {
+                    changed(); applyState(); return@post
+                }
+                if (result.status in setOf(401, 403) || reconciled?.status in setOf(401, 403)) {
+                    clear(this)
+                    changed()
+                    return@post
+                }
+                val now = System.currentTimeMillis()
+                val updated = result.state ?: if (result.successful) when (action) {
+                    ACTION_PAUSE -> state.copy(mode = FocusMode.PAUSED, pausedAtEpochMs = now,
+                        elapsedSeconds = state.elapsedNow(now), observedAtEpochMs = now)
+                    ACTION_RESUME -> state.copy(mode = FocusMode.FOCUSING, pausedAtEpochMs = 0, observedAtEpochMs = now)
+                    else -> state.copy(mode = FocusMode.ENDED, endedAtEpochMs = now, pausedAtEpochMs = 0,
+                        elapsedSeconds = state.elapsedNow(now), observedAtEpochMs = now)
+                } else reconciled?.state?.let { FocusStateReducer.reduce(state, it, store.endedAcknowledgedCount(), now) }
+                if (updated != null) store.write(updated)
+                val expected = when (action) {
+                    ACTION_PAUSE -> FocusMode.PAUSED
+                    ACTION_RESUME -> FocusMode.FOCUSING
+                    else -> FocusMode.ENDED
+                }
+                val outcome = FocusActionOutcome.resolve(state, updated, expected)
+                message = when (outcome) {
+                    FocusActionOutcome.COMPLETED -> when (action) {
+                        ACTION_PAUSE -> "专注已暂停"
+                        ACTION_RESUME -> "已继续专注"
+                        else -> "本段专注已结束"
+                    }
+                    FocusActionOutcome.CHANGED_ELSEWHERE -> "状态已在其他设备更新，请返回应用查看"
+                    FocusActionOutcome.UNCONFIRMED -> "操作未确认，请检查网络后重试"
+                }
+                retryAction = if (outcome == FocusActionOutcome.UNCONFIRMED) action else ""
+                if (outcome != FocusActionOutcome.UNCONFIRMED) dismissSurfaces()
+                changed()
+                applyState()
+            }
+        }
+    }
+
+    private fun checkReminder() {
+        val due = store.due()
+        if (due == null) { if (reminderToken.isNotEmpty()) dismissSurfaces(); return }
+        val token = store.reminderToken(due.kind)
+        if (appVisible) {
+            overlay.dismiss()
+            FocusAccessibilityService.dismiss()
+            notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
+            if (reminderToken != token) { reminderToken = token; changed() }
+            return
+        }
+        if (!store.strongReminders()) { overlay.dismiss(); FocusAccessibilityService.dismiss() }
+        if (reminderToken == token && notifications.activeNotifications.any {
+                it.id == OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID }) return
+        val alreadyPresented = store.wasPresented(token)
+        dismissSurfaces()
+        reminderToken = token
+        store.markPresented(token)
+        notifications.notify(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID,
+            publisher.reminderNotification(due.kind, store.read(), token, alreadyPresented))
+        if (store.strongReminders() && !alreadyPresented) {
+            val snooze = { handleAction(ACTION_SNOOZE) }
+            val open = { handleAction(ACTION_OPEN_FROM_REMINDER); openTimer() }
+            val resume = { handleAction(ACTION_RESUME) }
+            overlay.show(due.kind, snooze, open, resume) ||
+                FocusAccessibilityService.show(due.kind, snooze, open, resume)
+        }
+    }
+
+    private fun openTimer() {
+        runCatching { startActivity(Intent(this, MainActivity::class.java).addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
+    }
+
+    private fun displayMessage(now: Long): String = if (retryAction.isNotBlank() || now - messageSince < 5_000) message else ""
+
+    private fun changed() { sendBroadcast(Intent(ACTION_REFRESH_WEB).setPackage(packageName)) }
+
+    private fun dismissSurfaces() {
+        overlay.dismiss()
+        FocusAccessibilityService.dismiss()
+        notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
+        reminderToken = ""
+    }
+
+    private fun releaseWakeLock() { wakeLock?.takeIf { it.isHeld }?.release(); wakeLock = null }
+
+    private fun stopRuntime() {
+        handler.removeCallbacks(tick)
+        dismissSurfaces()
         releaseWakeLock()
-        // startForegroundService() is a synchronous Binder request, but its
-        // onStartCommand() arrives later. Android can crash us immediately if
-        // we stop while any accepted request still awaits foreground promotion.
-        // Drain those callbacks instead; each reads the latest stored state.
         if (pendingStarts.isNotEmpty()) return
-        stopForeground(if (removeNotification) STOP_FOREGROUND_REMOVE else STOP_FOREGROUND_DETACH)
-        if (removeNotification) VivoAtomicPayload.cancel(notificationManager, OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        VivoAtomicPayload.cancel(notifications, OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
         if (runningService === this) runningService = null
         stopSelf()
     }
-
-    private enum class RemoteAction { PAUSE, RESUME, END }
 
     companion object {
         const val ACTION_REFRESH_WEB = "com.mutsumi.focus.REFRESH_WEB"
         const val ACTION_PAUSE = "com.mutsumi.focus.PAUSE"
         const val ACTION_RESUME = "com.mutsumi.focus.RESUME"
         const val ACTION_END = "com.mutsumi.focus.END"
+        const val ACTION_END_REST = "com.mutsumi.focus.END_REST"
+        const val ACTION_SNOOZE = "com.mutsumi.focus.SNOOZE"
+        const val ACTION_DISMISS = "com.mutsumi.focus.DISMISS"
         const val ACTION_OPEN_FROM_REMINDER = "com.mutsumi.focus.OPEN_FROM_REMINDER"
-        private const val ACTION_ACK_REMINDER = "com.mutsumi.focus.ACK_REMINDER"
-        const val EXTRA_REMINDER_KIND = "reminder_kind"
-        const val EXTRA_SESSION_ID = "reminder_session_id"
+        const val EXTRA_SESSION_ID = "focus_session_id"
+        const val EXTRA_REVISION = "focus_revision"
+        const val EXTRA_REMINDER_TOKEN = "focus_reminder_token"
         private const val ACTION_SYNC = "com.mutsumi.focus.SYNC"
         private const val ACTION_CHECK = "com.mutsumi.focus.CHECK"
         private const val EXTRA_START_REQUEST = "focus_start_request"
-        private const val TICK_MS = 15_000L
-        private const val SERVER_SYNC_MS = 15_000L
-        private const val WAKE_LOCK_WINDOW_MS = 10 * 60_000L
-        private val mainHandler = Handler(Looper.getMainLooper())
-        private var runningService: FocusService? = null
+        private val main = Handler(Looper.getMainLooper())
+        @Volatile private var runningService: FocusService? = null
         private var nextStartRequest = 0L
         private val pendingStarts = mutableSetOf<Long>()
+        private var appVisible = false
 
-        fun sync(context: Context, state: FocusRuntimeState) = onMainThread {
-            FocusStateStore(context).write(state)
-            if (state.mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
-                stopAndCancel(context)
-                return@onMainThread
-            }
-            start(context, ACTION_SYNC)
+        fun sync(context: Context, state: FocusRuntimeState) = onMain {
+            val store = FocusStateStore(context)
+            val previous = store.read()
+            store.write(state)
+            if (!FocusStateReducer.canApplyResponse(previous, state)) runningService?.let { it.message = ""; it.retryAction = "" }
+            if (state.mode == FocusMode.IDLE) stopAndCancel(context) else dispatch(context, Intent().setAction(ACTION_SYNC))
         }
 
-        fun clear(context: Context) = onMainThread {
-            // Identity loss is not a completed session and must not schedule
-            // ended reminders or restart an idle foreground service.
+        fun clear(context: Context) = onMain {
             FocusStateStore(context).write(FocusRuntimeState())
             stopAndCancel(context)
         }
 
-        private fun stopAndCancel(context: Context) {
+        fun setAppVisible(context: Context, visible: Boolean) = onMain {
+            appVisible = visible
+            runningService?.applyState()
+        }
+
+        fun requestReminderCheck(context: Context) = onMain {
+            if (FocusStateStore(context).read().mode != FocusMode.IDLE) dispatch(context, Intent().setAction(ACTION_CHECK))
+        }
+
+        fun action(context: Context, intent: Intent) = onMain { dispatch(context, intent) }
+
+        fun acknowledgeFromNotification(context: Context, intent: Intent) {
+            if (intent.action == ACTION_OPEN_FROM_REMINDER) action(context, Intent(intent))
+        }
+
+        fun snapshot(context: Context): String {
+            val store = FocusStateStore(context)
+            val state = store.read()
+            val now = System.currentTimeMillis()
+            val due = store.due(now)
+            return JSONObject().apply {
+                put("mode", state.mode.name.lowercase()); put("sessionId", state.sessionId)
+                put("subject", state.subject); put("elapsedSeconds", state.elapsedNow(now))
+                put("endedAtEpochMs", state.endedAtEpochMs)
+                put("restStartedAtEpochMs", state.restStartedAtEpochMs); put("restTargetSeconds", state.restTargetSeconds)
+                put("plannedSeconds", state.plannedSeconds); put("nextReminderAt", store.nextReminderAt(state))
+                put("reminder", due?.kind?.name.orEmpty()); put("reminderToken", due?.let { store.reminderToken(it.kind) }.orEmpty())
+                put("title", FocusPresentation.title(state, due, now)); put("detail", FocusPresentation.detail(state, store.nextReminderAt(state), due, now))
+                put("timer", FocusPresentation.timer(state, now)); put("busy", runningService?.busy == true)
+                put("message", runningService?.displayMessage(now).orEmpty()); put("retryAction", runningService?.retryAction.orEmpty())
+                put("revision", store.transitionRevision())
+            }.toString()
+        }
+
+        fun isBusy(): Boolean = runningService?.busy == true
+
+        private fun dispatch(context: Context, intent: Intent) {
             val service = runningService
             if (service != null) {
-                service.stopRuntime(removeNotification = true)
+                if (service.matches(intent)) service.handleAction(intent.action.orEmpty()) else service.applyState()
                 return
             }
-            // With no instance yet, an accepted foreground launch must be
-            // allowed to reach onStartCommand(), promote, then read IDLE/REST
-            // and stop itself. stopService() would violate that contract.
-            if (pendingStarts.isNotEmpty()) return
-            val notifications = context.getSystemService(NotificationManager::class.java)
-            VivoAtomicPayload.cancel(notifications, OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
-            notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
-        }
-
-        fun requestReminderCheck(context: Context) = onMainThread {
-            val state = FocusStateStore(context).read()
-            if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) {
-                start(context, ACTION_CHECK)
-            }
-        }
-
-        fun acknowledgeFromNotification(context: Context, notificationIntent: Intent) = onMainThread {
-            if (notificationIntent.action != ACTION_OPEN_FROM_REMINDER) return@onMainThread
-            val state = FocusStateStore(context).read()
-            if (state.mode !in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED)) return@onMainThread
-            start(context, Intent(context, FocusService::class.java).apply {
-                action = ACTION_ACK_REMINDER
-                putExtra(EXTRA_REMINDER_KIND, notificationIntent.getIntExtra(EXTRA_REMINDER_KIND, -1))
-                putExtra(EXTRA_SESSION_ID, notificationIntent.getLongExtra(EXTRA_SESSION_ID, -1))
-            })
-        }
-
-        private fun start(context: Context, action: String) {
-            start(context, Intent(context, FocusService::class.java).setAction(action))
-        }
-
-        private fun start(context: Context, intent: Intent) {
-            // Reminder/action dispatch may race a newer idle bridge sync.
-            if (FocusStateStore(context).read().mode in setOf(FocusMode.IDLE, FocusMode.REST)) {
-                stopAndCancel(context)
-                return
-            }
+            if (FocusStateStore(context).read().mode == FocusMode.IDLE) { stopAndCancel(context); return }
             val request = ++nextStartRequest
             pendingStarts.add(request)
-            intent.putExtra(EXTRA_START_REQUEST, request)
+            intent.setClass(context, FocusService::class.java).putExtra(EXTRA_START_REQUEST, request)
             try {
-                if (context.startForegroundService(intent) == null) {
-                    pendingStarts.remove(request)
-                    stopAndCancel(context)
-                }
-            } catch (error: IllegalStateException) {
+                if (context.startForegroundService(intent) == null) { pendingStarts.remove(request); stopAndCancel(context) }
+            } catch (error: RuntimeException) {
                 pendingStarts.remove(request)
-                Log.w("FocusService", "Foreground start rejected; stopping runtime", error)
-                stopAndCancel(context)
-            } catch (error: SecurityException) {
-                pendingStarts.remove(request)
-                Log.w("FocusService", "Foreground start denied; stopping runtime", error)
+                Log.w("FocusService", "Foreground start rejected", error)
                 stopAndCancel(context)
             }
         }
 
-        private fun onMainThread(action: () -> Unit) {
-            if (Looper.myLooper() == Looper.getMainLooper()) action()
-            else mainHandler.post { action() }
+        private fun stopAndCancel(context: Context) {
+            runningService?.let { it.stopRuntime(); return }
+            if (pendingStarts.isNotEmpty()) return
+            val manager = context.getSystemService(NotificationManager::class.java)
+            VivoAtomicPayload.cancel(manager, OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
+            manager.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
+        }
+
+        private fun onMain(action: () -> Unit) {
+            if (Looper.myLooper() == Looper.getMainLooper()) action() else main.post { action() }
         }
     }
 }

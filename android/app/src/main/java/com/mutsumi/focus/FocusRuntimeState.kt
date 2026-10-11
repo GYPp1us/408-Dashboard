@@ -7,7 +7,8 @@ enum class FocusMode {
     FOCUSING,
     PAUSED,
     REST,
-    ENDED;
+    ENDED,
+    SETTLED;
 
     companion object {
         fun fromWire(value: String?): FocusMode = when (value?.lowercase()) {
@@ -15,6 +16,7 @@ enum class FocusMode {
             "paused" -> PAUSED
             "rest" -> REST
             "ended" -> ENDED
+            "settled" -> SETTLED
             else -> IDLE
         }
     }
@@ -28,6 +30,10 @@ data class FocusRuntimeState(
     val pausedAtEpochMs: Long = 0,
     val endedAtEpochMs: Long = 0,
     val elapsedSeconds: Long = 0,
+    val plannedSeconds: Long = 0,
+    val focusItemId: Long = 0,
+    val restStartedAtEpochMs: Long = 0,
+    val restTargetSeconds: Long = 0,
     val observedAtEpochMs: Long = System.currentTimeMillis(),
     val baseUrl: String = BuildConfig.DASHBOARD_URL.trimEnd('/'),
 ) {
@@ -42,6 +48,10 @@ data class FocusRuntimeState(
                 pausedAtEpochMs = data.optLong("pausedAtEpochMs"),
                 endedAtEpochMs = data.optLong("endedAtEpochMs"),
                 elapsedSeconds = data.optLong("elapsedSeconds").coerceAtLeast(0),
+                plannedSeconds = data.optLong("plannedSeconds").coerceIn(0, 86_400),
+                focusItemId = data.optLong("focusItemId").coerceAtLeast(0),
+                restStartedAtEpochMs = data.optLong("restStartedAtEpochMs").coerceAtLeast(0),
+                restTargetSeconds = data.optLong("restTargetSeconds").coerceIn(0, 86_400),
                 observedAtEpochMs = System.currentTimeMillis(),
                 baseUrl = trustedBaseUrl(data.optString("baseUrl")),
             )
@@ -57,6 +67,12 @@ data class FocusRuntimeState(
         elapsedSeconds + if (mode == FocusMode.FOCUSING) {
             ((nowEpochMs - observedAtEpochMs).coerceAtLeast(0) / 1000)
         } else 0
+
+    fun restElapsed(nowEpochMs: Long): Long = if (restStartedAtEpochMs > 0)
+        (nowEpochMs - restStartedAtEpochMs).coerceAtLeast(0) / 1000 else 0
+
+    fun summaryVisible(nowEpochMs: Long): Boolean = mode in setOf(FocusMode.ENDED, FocusMode.SETTLED) &&
+        endedAtEpochMs > 0 && nowEpochMs - endedAtEpochMs in 0 until 30_000
 }
 
 enum class ReminderKind(val endedIndex: Int = 0) {
@@ -79,9 +95,12 @@ object ReminderPolicy {
         nowEpochMs: Long,
         pausedSnoozeUntilEpochMs: Long,
         endedAcknowledgedCount: Int,
+        pausedDismissed: Boolean = false,
+        endedSnoozeUntilEpochMs: Long = 0,
     ): DueReminder? {
         return when (state.mode) {
             FocusMode.PAUSED -> {
+                if (pausedDismissed) return null
                 val baseDue = state.pausedAtEpochMs.takeIf { it > 0 }?.plus(PAUSED_DELAY_MS) ?: return null
                 val dueAt = maxOf(baseDue, pausedSnoozeUntilEpochMs)
                 if (nowEpochMs >= dueAt) DueReminder(ReminderKind.PAUSED, nowEpochMs - dueAt) else null
@@ -89,12 +108,25 @@ object ReminderPolicy {
             FocusMode.ENDED -> {
                 val index = endedAcknowledgedCount.coerceIn(0, endedThresholds.size)
                 if (state.endedAtEpochMs <= 0 || index >= endedThresholds.size) return null
-                val dueAt = state.endedAtEpochMs + endedThresholds[index]
-                if (nowEpochMs >= dueAt) {
-                    DueReminder(ReminderKind.entries[index + 1], nowEpochMs - dueAt)
+                if (nowEpochMs < endedSnoozeUntilEpochMs) return null
+                // After a long offline period show the latest relevant stage,
+                // never a burst of all missed reminders.
+                val reached = endedThresholds.indexOfLast { nowEpochMs >= state.endedAtEpochMs + it }
+                val dueAt = maxOf(state.endedAtEpochMs + endedThresholds[index], endedSnoozeUntilEpochMs)
+                if (reached >= index && nowEpochMs >= dueAt) {
+                    DueReminder(ReminderKind.entries[reached + 1], nowEpochMs - dueAt)
                 } else null
             }
             else -> null
         }
+    }
+
+    fun nextAt(state: FocusRuntimeState, pausedSnooze: Long, endedCount: Int,
+               pausedDismissed: Boolean = false, endedSnooze: Long = 0): Long = when (state.mode) {
+        FocusMode.PAUSED -> if (pausedDismissed || state.pausedAtEpochMs <= 0) 0
+            else maxOf(state.pausedAtEpochMs + PAUSED_DELAY_MS, pausedSnooze)
+        FocusMode.ENDED -> if (endedCount >= endedThresholds.size || state.endedAtEpochMs <= 0) 0
+            else maxOf(state.endedAtEpochMs + endedThresholds[endedCount.coerceAtLeast(0)], endedSnooze)
+        else -> 0
     }
 }

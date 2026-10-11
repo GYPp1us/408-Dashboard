@@ -7,7 +7,23 @@
 1. vivo 本地原子通知：在 vivo/iQOO 设备上写入官方 `notification.superx.*` 扩展字段。
 2. Android 16 Live Update：使用 `Notification.ProgressStyle` 并请求 ongoing 通知推广；`FLAG_PROMOTED_ONGOING` 由系统批准后设置，未获推广时使用普通通知。
 3. Android 持续前台通知：所有 Android 8+ 设备均可使用，含继续、暂停、结束操作。
-4. 超时提醒：优先使用应用悬浮层，其次使用不读取窗口内容的可选无障碍覆盖层，最后退化为高优先级通知。
+4. 超时提醒：默认前台在专注卡片提示、后台通过原子岛与通知提示；仅主动开启强提醒后使用应用悬浮层，再使用不读取窗口内容的可选无障碍覆盖层兜底。
+
+## 0.7 APK 页面与状态
+
+`app/src/main/assets/dashboard/` 包含 APK 专用的页面交互、详情脚本及布局样式。`MainActivity` 只替换编译时 HTTPS 同源下的三个静态资源，API 与其他网页资源仍由既有站点提供；更换手机页面不需要部署生产服务端。调整前需对照站点模板和 API，保持这份 APK 资源与所使用的接口一致。
+
+原生运行服务统一执行暂停、继续和结束；WebView、通知及岛读取同一份运行状态。休息和提醒收起/延后保存于 APK 本地，不跨设备同步；既有 API 负责专注和结算的跨设备同步。版本、实现范围与本地验证见 [v0.7 发布说明](../docs/releases/v0.7.0.md)，真机操作顺序见 [验证清单](../docs/android-v0.7-validation.md)。
+
+本地页面回归使用隔离的 `.tmp` 数据库，不启动模拟器：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/android_v07_fixture.py
+# 另一个终端；Playwright 可由现有 Node 依赖或 NODE_PATH 提供，使用已安装 Chrome。
+node scripts/validate_android_v07.cjs
+```
+
+页面测试模拟原生桥，原生状态/提醒逻辑由 Gradle JVM 测试验证，OriginOS 渲染与保活仍由 release APK 的真机验收覆盖。
 
 没有 vivo 场景认证并不意味着全部不可用。本地通知调用、WebView、前台服务、心跳、通知操作、覆盖层提醒都不依赖 vivo 认证；但原子岛形态是否真正展示仍由系统按包名和 `scene` 权限判定。未授权时 `showNotify=true` 会保留普通通知兜底。
 

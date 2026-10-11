@@ -19,6 +19,7 @@ import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -32,7 +33,6 @@ import androidx.core.view.ViewCompat
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
-    private lateinit var permissionChip: Button
     private lateinit var contentRoot: FrameLayout
     private var receiverRegistered = false
     private var backInFlight = false
@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
     @Volatile private var fileChooserInFlight = false
     @Volatile private var fileChooserReturnedAt = 0L
     @Volatile private var systemOrientation = Configuration.ORIENTATION_UNDEFINED
+    @Volatile private var pendingFocusDestination: String? = null
     private val imageChooser = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         fileChooserReturnedAt = SystemClock.uptimeMillis()
         if (BuildConfig.DEBUG) Log.d("MutsumiPicker", "result cancelled=${uri == null}")
@@ -76,6 +77,7 @@ class MainActivity : ComponentActivity() {
         configureWebView()
         updateWindowLayout()
         FocusService.acknowledgeFromNotification(this, intent)
+        pendingFocusDestination = intent.getStringExtra("focus_destination")
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (BuildConfig.DEBUG) Log.d("MutsumiPicker", "back pending=$fileChooserInFlight sinceResult=${SystemClock.uptimeMillis() - fileChooserReturnedAt}")
@@ -106,11 +108,6 @@ class MainActivity : ComponentActivity() {
         })
         val restored = savedInstanceState != null && webView.restoreState(savedInstanceState) != null
         if (!restored) webView.loadUrl(restorableUrl(FocusStateStore(this).lastPageUrl()))
-        val store = FocusStateStore(this)
-        if (!store.onboardingSeen()) {
-            store.setOnboardingSeen()
-            openPermissionSetup()
-        }
     }
 
     private fun buildContent(): View {
@@ -118,18 +115,6 @@ class MainActivity : ComponentActivity() {
         contentRoot = root
         webView = WebView(this)
         root.addView(webView, FrameLayout.LayoutParams(-1, -1))
-        permissionChip = Button(this).apply {
-            text = "原子岛与提醒设置"
-            textSize = 12f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.rgb(185, 74, 67))
-            setOnClickListener { openPermissionSetup() }
-        }
-        root.addView(permissionChip, FrameLayout.LayoutParams(-2, dp(36)).apply {
-            gravity = Gravity.TOP or Gravity.END
-            topMargin = dp(4)
-            marginEnd = dp(4)
-        })
         return root
     }
 
@@ -190,6 +175,18 @@ class MainActivity : ComponentActivity() {
             }
         }
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                if (!isTrustedUrl(request.url.toString()) || request.method != "GET") return null
+                val asset = when (request.url.path) {
+                    "/static/app.js" -> "app.js"
+                    "/static/viewport-scale.css" -> "viewport-scale.css"
+                    "/static/dashboard-details.js" -> "dashboard-details.js"
+                    else -> return null
+                }
+                return WebResourceResponse(if (asset.endsWith(".css")) "text/css" else "application/javascript",
+                    "UTF-8", 200, "OK", mapOf("Cache-Control" to "no-store"), assets.open("dashboard/$asset"))
+            }
+
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 // Retry cache at most once per navigation, including a second
                 // offline visit to the same route after reconnection.
@@ -238,6 +235,7 @@ class MainActivity : ComponentActivity() {
                     if (Uri.parse(url).path in setOf("/login", "/register")) {
                         FocusService.clear(this@MainActivity)
                     }
+                    deliverFocusDestination()
                 }
             }
         }
@@ -253,11 +251,14 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         FocusService.acknowledgeFromNotification(this, intent)
+        pendingFocusDestination = intent.getStringExtra("focus_destination")
+        deliverFocusDestination()
     }
 
     override fun onResume() {
         super.onResume()
         updateWindowLayout()
+        FocusService.setAppVisible(this, true)
         FocusService.requestReminderCheck(this)
         // A notification can change focus while this Activity's receiver is
         // stopped. Reconcile the retained document as soon as it returns.
@@ -279,19 +280,7 @@ class MainActivity : ComponentActivity() {
 
     private fun updateWindowLayout() {
         systemOrientation = resources.configuration.orientation
-        val landscape = AppWindowLayout.apply(this, contentRoot)
-        permissionChip.visibility = if (landscape) View.GONE else View.VISIBLE
-        // Keep a setup entry even after all permissions are granted; atomic
-        // scene registration and revocation remain independent of permissions.
-        // Reserve a native strip. A floating chip
-        // over the WebView would intercept its top-right Settings link.
-        (webView.layoutParams as FrameLayout.LayoutParams).let { params ->
-            val margin = if (permissionChip.visibility == View.VISIBLE) dp(44) else 0
-            if (params.topMargin != margin) {
-                params.topMargin = margin
-                webView.layoutParams = params
-            }
-        }
+        AppWindowLayout.apply(this, contentRoot)
         ViewCompat.requestApplyInsets(contentRoot)
         if (hasTrustedDocument()) webView.post {
             if (hasTrustedDocument()) webView.evaluateJavascript("window.MutsumiViewport?.update?.()", null)
@@ -314,6 +303,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        FocusService.setAppVisible(this, false)
         if (receiverRegistered) {
             unregisterReceiver(refreshReceiver)
             receiverRegistered = false
@@ -331,6 +321,17 @@ class MainActivity : ComponentActivity() {
     fun openPermissionSetup() {
         startActivity(Intent(this, PermissionSetupActivity::class.java))
     }
+
+    private fun deliverFocusDestination() {
+        val destination = pendingFocusDestination ?: return
+        if (!hasTrustedDocument()) return
+        webView.evaluateJavascript("window.MutsumiWeb?.navigateFocus?.(${org.json.JSONObject.quote(destination)}) || false") { handled ->
+            if (handled == "true") pendingFocusDestination = null
+        }
+    }
+
+    internal fun focusDestination(): String = pendingFocusDestination.orEmpty()
+    internal fun clearFocusDestination() { pendingFocusDestination = null }
 
     private fun restorableUrl(candidate: String?): String =
         candidate?.takeIf(::isTrustedUrl) ?: BuildConfig.DASHBOARD_URL

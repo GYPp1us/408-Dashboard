@@ -7,7 +7,7 @@ import java.net.URL
 import java.time.OffsetDateTime
 
 object FocusApi {
-    data class Result(val successful: Boolean, val status: Int)
+    data class Result(val successful: Boolean, val status: Int, val state: FocusRuntimeState? = null)
     data class StateResult(val successful: Boolean, val status: Int, val state: FocusRuntimeState? = null)
 
     fun heartbeat(state: FocusRuntimeState): Result = post(
@@ -29,28 +29,46 @@ object FocusApi {
     )
 
     fun fetchState(localState: FocusRuntimeState): StateResult {
-        val connection = (URL(localState.baseUrl + "/api/focus").openConnection() as HttpURLConnection)
+        // The existing dashboard includes today's settlement, so a finish on
+        // another device also cancels departure reminders without a new API.
+        val connection = (URL(localState.baseUrl + "/api/dashboard").openConnection() as HttpURLConnection)
         return try {
             connection.requestMethod = "GET"
             configure(connection, localState)
             val status = connection.responseCode
             if (status !in 200..299) return StateResult(false, status)
             val payload = connection.inputStream.bufferedReader().use { it.readText() }
-            val active = JSONObject(payload).optJSONObject("active")
-                ?: return StateResult(true, status, FocusRuntimeState(baseUrl = localState.baseUrl))
+            val data = JSONObject(payload)
+            val active = data.optJSONObject("focus")?.optJSONObject("active")
+            if (active == null) {
+                val settled = data.optJSONObject("daily_settlement")
+                if (settled != null) return StateResult(true, status, localState.copy(
+                    mode = FocusMode.SETTLED,
+                    elapsedSeconds = localState.elapsedNow(),
+                    endedAtEpochMs = epochMillis(settled.optString("settled_at")),
+                    restStartedAtEpochMs = 0,
+                    pausedAtEpochMs = 0,
+                    observedAtEpochMs = System.currentTimeMillis(),
+                ))
+                // Resolve uncertain writes and remote finishes using the real
+                // ended record, not the later time this poll happened to arrive.
+                if (localState.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED) && localState.sessionId > 0) {
+                    for (key in listOf("recent", "today")) {
+                        val rows = data.optJSONObject("focus")?.optJSONArray(key) ?: continue
+                        for (index in 0 until rows.length()) {
+                            val row = rows.optJSONObject(index) ?: continue
+                            if (row.optLong("id") == localState.sessionId && epochMillis(row.optString("ended_at")) > 0)
+                                return StateResult(true, status, stateFromPayload(row, localState.baseUrl, System.currentTimeMillis()))
+                        }
+                    }
+                }
+                return StateResult(true, status, FocusRuntimeState(baseUrl = localState.baseUrl))
+            }
             val now = System.currentTimeMillis()
             StateResult(
                 true,
                 status,
-                stateFromServerFields(
-                    sessionId = active.optLong("id"),
-                    subject = active.optString("subject"),
-                    startedAt = active.optString("started_at"),
-                    pausedAt = active.optString("paused_at").takeUnless { it.isBlank() || it == "null" },
-                    effectiveSeconds = active.optLong("effective_seconds"),
-                    baseUrl = localState.baseUrl,
-                    observedAtEpochMs = now,
-                ),
+                stateFromPayload(active, localState.baseUrl, now),
             )
         } catch (_: Exception) {
             StateResult(false, 0)
@@ -69,7 +87,11 @@ object FocusApi {
             connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
-            Result(status in 200..299, status)
+            val session = if (status in 200..299) runCatching {
+                JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).optJSONObject("session")
+            }.getOrNull() else null
+            Result(status in 200..299 && (path == "/api/focus/heartbeat" || session != null), status,
+                session?.let { stateFromPayload(it, state.baseUrl, System.currentTimeMillis()) })
         } catch (_: Exception) {
             Result(false, 0)
         } finally {
@@ -80,11 +102,23 @@ object FocusApi {
     private fun configure(connection: HttpURLConnection, state: FocusRuntimeState) {
         connection.connectTimeout = 8_000
         connection.readTimeout = 8_000
+        connection.instanceFollowRedirects = false
         connection.setRequestProperty("Accept", "application/json")
         connection.setRequestProperty("User-Agent", "MutsumiFocus/${BuildConfig.VERSION_NAME}")
         CookieManager.getInstance().getCookie(state.baseUrl)?.takeIf { it.isNotBlank() }?.let {
             connection.setRequestProperty("Cookie", it)
         }
+    }
+
+    private fun stateFromPayload(data: JSONObject, baseUrl: String, now: Long): FocusRuntimeState {
+        val state = stateFromServerFields(data.optLong("id"), data.optString("subject"),
+            data.optString("started_at"), data.optString("paused_at").takeUnless { it.isBlank() || it == "null" },
+            data.optLong("effective_seconds"), baseUrl, now).copy(
+                plannedSeconds = data.optLong("planned_minutes").coerceIn(0, 1440) * 60,
+                focusItemId = data.optLong("focus_item_id"),
+            )
+        return if (data.optString("status") == "active" || data.optString("ended_at").let { it.isBlank() || it == "null" }) state
+        else state.copy(mode = FocusMode.ENDED, endedAtEpochMs = epochMillis(data.optString("ended_at")), pausedAtEpochMs = 0)
     }
 
     internal fun stateFromServerFields(

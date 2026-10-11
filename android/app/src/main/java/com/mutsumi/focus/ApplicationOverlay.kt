@@ -7,11 +7,11 @@ import android.view.WindowManager
 class ApplicationOverlay(private val context: Context) {
     private var view: ReminderOverlayView? = null
 
-    fun show(kind: ReminderKind, onContinue: () -> Unit, onOpen: () -> Unit): Boolean {
+    fun show(kind: ReminderKind, onContinue: () -> Unit, onOpen: () -> Unit, onResume: () -> Unit): Boolean {
         dismiss()
         if (!Settings.canDrawOverlays(context)) return false
         return try {
-            val overlay = ReminderOverlayView(context, kind, onContinue, onOpen)
+            val overlay = ReminderOverlayView(context, kind, onContinue, onOpen, onResume)
             val params = FocusAccessibilityService.overlayLayoutParams(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
             context.getSystemService(WindowManager::class.java).addView(overlay, params)
             view = overlay

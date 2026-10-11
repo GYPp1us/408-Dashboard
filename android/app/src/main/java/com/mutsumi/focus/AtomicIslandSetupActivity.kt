@@ -28,6 +28,8 @@ import java.util.concurrent.Executors
 class AtomicIslandSetupActivity : Activity() {
     private lateinit var root: ScrollView
     private lateinit var content: LinearLayout
+    private lateinit var sectionContent: LinearLayout
+    private lateinit var style: SetupStyle
     private lateinit var status: TextView
     private lateinit var pairingResult: TextView
     private lateinit var registrationResult: TextView
@@ -42,11 +44,13 @@ class AtomicIslandSetupActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        style = SetupStyle(this)
         content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(18), dp(20), dp(24))
-            setBackgroundColor(Color.rgb(244, 238, 231))
+            setBackgroundColor(style.paper)
         }
+        sectionContent = content
         label("启用原子岛", 24f, true)
         label("仅在这台手机上完成配对和启用。成功后可以关闭无线调试，日常计时不需要电脑。")
         status = label("正在检查…", 16f, true)
@@ -90,7 +94,12 @@ class AtomicIslandSetupActivity : Activity() {
 
         pairingPort.setText(savedInstanceState?.getString("pairingPort").orEmpty())
         connectionPort.setText(savedInstanceState?.getString("connectionPort").orEmpty())
-        root = ScrollView(this).apply { isFillViewport = true; addView(content) }
+        val centered = android.widget.FrameLayout(this).apply {
+            setBackgroundColor(style.paper)
+            addView(content, android.widget.FrameLayout.LayoutParams(
+                minOf(resources.displayMetrics.widthPixels, dp(680)), -2, android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL))
+        }
+        root = ScrollView(this).apply { isFillViewport = true; addView(centered) }
         setContentView(root)
         AppWindowLayout.apply(this, root)
         refreshStatus()
@@ -217,35 +226,47 @@ class AtomicIslandSetupActivity : Activity() {
     private fun label(value: String, size: Float = 14f, bold: Boolean = false): TextView = TextView(this).apply {
         text = value
         textSize = size
-        setTextColor(Color.rgb(54, 44, 38))
+        style.text(this, size)
         if (bold) setTypeface(typeface, Typeface.BOLD)
         setPadding(0, dp(6), 0, dp(6))
-        content.addView(this)
+        sectionContent.addView(this)
     }
 
-    private fun section(value: String) { label(value, 18f, true).setPadding(0, dp(22), 0, dp(6)) }
+    private fun section(value: String) {
+        sectionContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(16))
+            background = style.rounded()
+            content.addView(this, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
+        }
+        label(value, 20f, true)
+    }
 
     private fun numberInput(hintText: String, maxLength: Int, secret: Boolean = false): EditText = EditText(this).apply {
         hint = hintText
         textSize = 16f
+        setTextColor(style.ink)
+        setHintTextColor(style.muted)
+        minHeight = dp(52)
         inputType = InputType.TYPE_CLASS_NUMBER or if (secret) InputType.TYPE_NUMBER_VARIATION_PASSWORD else 0
         filters = arrayOf(InputFilter.LengthFilter(maxLength))
         isSingleLine = true
         isSaveEnabled = false
         importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        content.addView(this, LinearLayout.LayoutParams(-1, -2))
+        sectionContent.addView(this, LinearLayout.LayoutParams(-1, -2))
     }
 
     private fun button(value: String, guarded: Boolean = true, action: () -> Unit) {
         val button = Button(this).apply {
             text = value
             textSize = 14f
+            style.button(this)
             isAllCaps = false
             isEnabled = !guarded || supported
             setOnClickListener { action() }
         }
         if (guarded) actions += button
-        content.addView(button, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        sectionContent.addView(button, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
