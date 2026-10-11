@@ -14,6 +14,7 @@ import android.text.InputFilter
 import android.text.InputType
 import android.util.Log
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -28,7 +29,8 @@ class AtomicIslandSetupActivity : Activity() {
     private lateinit var root: ScrollView
     private lateinit var content: LinearLayout
     private lateinit var status: TextView
-    private lateinit var result: TextView
+    private lateinit var pairingResult: TextView
+    private lateinit var registrationResult: TextView
     private lateinit var pairingPort: EditText
     private lateinit var pairingCode: EditText
     private lateinit var connectionPort: EditText
@@ -52,11 +54,11 @@ class AtomicIslandSetupActivity : Activity() {
         if (!supported) label("当前系统尚未适配注册流程。系统升级后需重新验证，已开启的计时仍可使用。", 14f)
 
         section("1 · 打开无线调试")
-        label("连接 Wi-Fi，在开发者选项中开启「无线调试」。再让本页与系统设置分屏或小窗并排显示。")
-        button("打开无线调试设置", guarded = false) { openWirelessSettings() }
+        label("连接 Wi-Fi，先把 Mutsumi Focus 切换为小窗。然后点下方按钮，独立打开开发者选项，将系统设置保持全屏，在里面开启「无线调试」。")
+        button("独立打开开发者选项", guarded = false) { openDeveloperSettings() }
 
         section("2 · 与当前手机配对")
-        label("在系统中点「使用配对码配对设备」。保持该弹窗打开，将地址冒号后的配对端口和六位配对码填到这里。")
+        label("在全屏系统设置中点「使用配对码配对设备」，让配对弹窗始终可见。从 Mutsumi 小窗输入弹窗地址冒号后的配对端口和六位码，点下方按钮。设置配对页退到后台会中断配对。")
         pairingPort = numberInput("配对端口，例如 37123", 5)
         pairingCode = numberInput("六位配对码", 6, secret = true)
         button("完成本机配对") {
@@ -69,12 +71,14 @@ class AtomicIslandSetupActivity : Activity() {
                 "配对成功。回到无线调试主页，填写主页显示的连接端口，再启用原子岛。"
             }
         }
+        pairingResult = label("本次配对：等待操作。", 14f)
 
         section("3 · 注册专注场景")
         label("填写无线调试主页「IP 地址与端口」中的端口。它与上一步的配对端口不同，每次开启无线调试可能变化。")
         connectionPort = numberInput("连接端口，例如 39841", 5)
         button("连接并启用原子岛") { configure(true) }
-        result = label("等待操作。配对码不会保存或上传；配对凭据仅存于应用私有目录。", 14f)
+        registrationResult = label("本次注册：等待操作。", 14f)
+        label("配对码不会保存或上传；配对凭据仅存于应用私有目录。", 12f)
 
         section("完成与撤销")
         label("显示「已开启」后，返回计时页面开始专注。启用会保留其他应用的场景；撤销只移除本应用的专注场景。需要再次修改时，重新开启无线调试并填写当前连接端口。")
@@ -131,21 +135,25 @@ class AtomicIslandSetupActivity : Activity() {
         if (busy || !supported) return
         busy = true
         actions.forEach { it.isEnabled = false }
-        result.text = progress
+        val output = if (pairing) pairingResult else registrationResult
+        output.text = progress
+        output.setTextColor(Color.rgb(54, 44, 38))
+        getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(root.windowToken, 0)
+        root.post { root.smoothScrollTo(0, output.top) }
         worker.execute {
             val adb = LocalAdbClient(this)
             client = adb
             try {
                 check(!isDestroyed) { "操作已取消" }
                 val message = operation(adb)
-                showResult(message)
+                showResult(message, output, success = true)
             } catch (error: Exception) {
                 // Types only: pairing codes, private keys and exception messages are not logged.
                 Log.w("MutsumiAtomicSetup", "pairing=$pairing failure=${error.javaClass.simpleName} cause=${error.cause?.javaClass?.simpleName}")
                 val message = if (pairing) "配对失败。请保持配对弹窗打开，重新核对配对端口与配对码；已关闭的弹窗需要重新生成。"
                 else if (error is IllegalStateException || error is IllegalArgumentException) error.message.orEmpty()
                 else "连接失败或超时。请确认无线调试已开启、配对仍有效，并使用主页的连接端口。"
-                showResult(message)
+                showResult(message, output, success = false)
             } finally {
                 adb.close()
                 client = null
@@ -160,7 +168,13 @@ class AtomicIslandSetupActivity : Activity() {
         }
     }
 
-    private fun showResult(message: String) = runOnUiThread { if (!isDestroyed) result.text = message }
+    private fun showResult(message: String, output: TextView, success: Boolean) = runOnUiThread {
+        if (!isDestroyed) {
+            output.text = message
+            output.setTextColor(if (success) Color.rgb(61, 112, 78) else Color.rgb(185, 74, 67))
+            root.post { root.smoothScrollTo(0, output.top) }
+        }
+    }
 
     private fun refreshStatus() {
         val enabled = runCatching {
@@ -169,18 +183,21 @@ class AtomicIslandSetupActivity : Activity() {
                 .invoke(manager, packageName, AtomicSceneRegistration.SCENE) as Boolean
         }.getOrNull()
         status.text = when (enabled) {
-            true -> "原子岛专注场景 · 已开启"
-            false -> "原子岛专注场景 · 未开启"
-            null -> "原子岛专注场景 · 暂无法读取"
+            true -> "系统已有场景授权 · 已开启"
+            false -> "系统已有场景授权 · 未开启"
+            null -> "系统场景授权 · 暂无法读取"
         }
         status.setTextColor(if (enabled == true) Color.rgb(61, 112, 78) else Color.rgb(185, 74, 67))
     }
 
-    private fun openWirelessSettings() {
-        val direct = Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS")
-        val fallback = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-        try { startActivity(if (direct.resolveActivity(packageManager) != null) direct else fallback) }
-        catch (_: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+    private fun openDeveloperSettings() {
+        // Settings must have its own task: otherwise switching to our pairing
+        // form stops the Settings pairing page inside this application's task.
+        val developer = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val fallback = Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try { startActivity(if (developer.resolveActivity(packageManager) != null) developer else fallback) }
+        catch (_: Exception) { startActivity(fallback) }
     }
 
     private fun showLicenses() {
