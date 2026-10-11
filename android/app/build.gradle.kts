@@ -35,8 +35,8 @@ android {
         applicationId = "com.mutsumi.focus"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.6.0"
+        versionCode = 12
+        versionName = "0.6.1-local"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "DASHBOARD_URL", "\"$dashboardUrl\"")
         buildConfigField("String", "VIVO_ATOMIC_SCENE", "\"$vivoAtomicScene\"")
@@ -103,5 +103,8 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach {
 dependencies {
     implementation("androidx.activity:activity:1.13.0")
     implementation("androidx.core:core-ktx:1.17.0")
+    // 1.3.0 uses Kotlin 2.2 metadata, compatible with AGP's built-in compiler.
+    implementation("com.flyfishxu:kadb:1.3.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     testImplementation("junit:junit:4.13.2")
 }

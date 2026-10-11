@@ -11,6 +11,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven("https://jitpack.io") {
+            content { includeModule("com.github.Flyfish233", "spake2-java") }
+        }
     }
 }
 

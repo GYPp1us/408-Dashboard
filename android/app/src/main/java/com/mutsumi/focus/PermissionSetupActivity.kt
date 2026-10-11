@@ -50,11 +50,18 @@ class PermissionSetupActivity : Activity() {
             setTypeface(typeface, Typeface.BOLD)
         })
         list.addView(TextView(this).apply {
-            text = "权限仅用于后台计时、OriginOS 原子岛尝试与超时提醒。无厂商认证时自动降级为普通持续通知；无障碍只是悬浮层失败后的可选兜底。"
+            text = "权限用于后台计时、原子岛与超时提醒。当前本机实验提供原子岛启用引导；未启用时使用普通持续通知。无障碍是悬浮层失败后的可选兜底。"
             textSize = 8f
             setTextColor(Color.rgb(74, 63, 58))
             setPadding(0, dp(6), 0, dp(9))
         })
+
+        list.addView(Button(this).apply {
+            text = "启用 OriginOS 原子岛 · 本机引导"
+            textSize = 12f
+            isAllCaps = false
+            setOnClickListener { startActivity(Intent(this@PermissionSetupActivity, AtomicIslandSetupActivity::class.java)) }
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
 
         addPermission(
             "① 通知与实时状态",

@@ -19,6 +19,11 @@
         android:theme="@style/Theme.MutsumiFocus">
 
         <activity
+            android:name=".AtomicIslandSetupActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize"
+            android:exported="false"
+            android:theme="@style/Theme.MutsumiFocus.Setup" />
+        <activity
             android:name=".PermissionSetupActivity"
             android:exported="false"
             android:theme="@style/Theme.MutsumiFocus.Setup" />

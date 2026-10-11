@@ -119,13 +119,13 @@ class MainActivity : ComponentActivity() {
         webView = WebView(this)
         root.addView(webView, FrameLayout.LayoutParams(-1, -1))
         permissionChip = Button(this).apply {
-            text = "完善提醒权限"
-            textSize = 8f
+            text = "原子岛与提醒设置"
+            textSize = 12f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.rgb(185, 74, 67))
             setOnClickListener { openPermissionSetup() }
         }
-        root.addView(permissionChip, FrameLayout.LayoutParams(-2, dp(26)).apply {
+        root.addView(permissionChip, FrameLayout.LayoutParams(-2, dp(36)).apply {
             gravity = Gravity.TOP or Gravity.END
             topMargin = dp(4)
             marginEnd = dp(4)
@@ -280,11 +280,13 @@ class MainActivity : ComponentActivity() {
     private fun updateWindowLayout() {
         systemOrientation = resources.configuration.orientation
         val landscape = AppWindowLayout.apply(this, contentRoot)
-        permissionChip.visibility = if (landscape || PermissionStatus.allRecommended(this)) View.GONE else View.VISIBLE
-        // Reserve a native strip while setup is incomplete. A floating chip
+        permissionChip.visibility = if (landscape) View.GONE else View.VISIBLE
+        // Keep a setup entry even after all permissions are granted; atomic
+        // scene registration and revocation remain independent of permissions.
+        // Reserve a native strip. A floating chip
         // over the WebView would intercept its top-right Settings link.
         (webView.layoutParams as FrameLayout.LayoutParams).let { params ->
-            val margin = if (permissionChip.visibility == View.VISIBLE) dp(34) else 0
+            val margin = if (permissionChip.visibility == View.VISIBLE) dp(44) else 0
             if (params.topMargin != margin) {
                 params.topMargin = margin
                 webView.layoutParams = params
