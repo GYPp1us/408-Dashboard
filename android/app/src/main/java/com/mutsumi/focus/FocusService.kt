@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
+import com.mutsumi.focus.atomic.VivoAtomicPayload
 import java.util.concurrent.Executors
 
 class FocusService : Service() {
@@ -308,7 +309,7 @@ class FocusService : Service() {
         // Drain those callbacks instead; each reads the latest stored state.
         if (pendingStarts.isNotEmpty()) return
         stopForeground(if (removeNotification) STOP_FOREGROUND_REMOVE else STOP_FOREGROUND_DETACH)
-        if (removeNotification) notificationManager.cancel(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
+        if (removeNotification) VivoAtomicPayload.cancel(notificationManager, OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
         if (runningService === this) runningService = null
         stopSelf()
     }
@@ -362,7 +363,7 @@ class FocusService : Service() {
             // and stop itself. stopService() would violate that contract.
             if (pendingStarts.isNotEmpty()) return
             val notifications = context.getSystemService(NotificationManager::class.java)
-            notifications.cancel(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
+            VivoAtomicPayload.cancel(notifications, OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID)
             notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
         }
 

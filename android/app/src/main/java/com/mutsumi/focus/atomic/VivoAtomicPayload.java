@@ -1,6 +1,7 @@
 package com.mutsumi.focus.atomic;
 
 import android.app.PendingIntent;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.graphics.drawable.Icon;
 import android.os.Bundle;
@@ -8,6 +9,13 @@ import android.os.Bundle;
 /** Wire fields verified against the supplied vivo demo and document 896. */
 public final class VivoAtomicPayload {
     private VivoAtomicPayload() {}
+
+    public static void cancel(NotificationManager manager, int id) {
+        manager.cancel(id);
+        // OriginOS rewrites notify()'s tag for SuperX, but cancel(id) still
+        // targets the original null tag. Remove only our same notification ID.
+        manager.cancel("VIVO_SUPERX_TAG", id);
+    }
 
     public static Bundle create(Context context, int iconResource, int operation,
             String scene, String title, String description, String timer,
@@ -18,7 +26,8 @@ public final class VivoAtomicPayload {
         extras.putBoolean("notification.superx.showNotify", true);
         extras.putInt("notification.superx.changedRecord", record);
         // This ROM resolves the activity key and checks eligibility before its
-        // END branch. Retain the routing fields even for an end operation.
+        // END branch. Missing template defaults to -2 and is rejected before
+        // END too. Retain both routing and template for an end operation.
         if (historicalIslandOnly) {
             extras.putBoolean("notification.superx.islandNotify", true);
             if (operation == 2) {
@@ -27,6 +36,7 @@ public final class VivoAtomicPayload {
             }
         } else {
             extras.putString("notification.superx.scene", scene);
+            extras.putInt("notification.superx.template", 1);
             if (operation == 2) return extras;
         }
 
@@ -55,7 +65,6 @@ public final class VivoAtomicPayload {
             return extras;
         }
 
-        extras.putInt("notification.superx.template", 1);
         extras.putParcelable("notification.superx.clickResp", openIntent);
         extras.putBoolean("notification.superx.sound", false);
 

@@ -26,6 +26,8 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Spinner;
+import android.widget.ArrayAdapter;
 
 import com.mutsumi.focus.atomic.VivoAtomicPayload;
 
@@ -48,14 +50,16 @@ public class AtomicLabActivity extends Activity {
     private NotificationManager manager;
     private EditText sceneInput;
     private TextView output;
+    private Spinner layoutSelector;
     private BroadcastReceiver receiver;
     private long loopUntil;
 
     private static final class Trial {
-        final String mode, scene, token = UUID.randomUUID().toString();
+        final String mode, scene, layout, token = UUID.randomUUID().toString();
         final long started = SystemClock.elapsedRealtime();
         int record;
-        Trial(String mode, String scene) { this.mode = mode; this.scene = scene; }
+        Trial(String mode, String scene) { this(mode, scene, null); }
+        Trial(String mode, String scene, String layout) { this.mode = mode; this.scene = scene; this.layout = layout; }
     }
 
     @Override public void onCreate(Bundle savedInstanceState) {
@@ -96,6 +100,10 @@ public class AtomicLabActivity extends Activity {
         sceneInput.setText("FOCUS_TIMER");
         sceneInput.setHint("scene（可手动对比官方 demo 的 TAKEOUT）");
         body.addView(sceneInput);
+        layoutSelector = new Spinner(this);
+        layoutSelector.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, VivoLayoutSamples.LABELS));
+        body.addView(layoutSelector);
+        button(body, "发送选择的版式（点击或长按岛看卡片）", () -> createLayout(VivoLayoutSamples.KEYS[layoutSelector.getSelectedItemPosition()]));
         button(body, "通知设置 / 申请通知权限", this::permissions);
         button(body, "读取场景开关和隐藏接口", this::probe);
         button(body, "读取本应用通知的系统分类结果", this::inspectOwnNotifications);
@@ -106,6 +114,7 @@ public class AtomicLabActivity extends Activity {
         button(body, "更新已创建通知", this::updateTrials);
         button(body, "每 15 秒更新，3 分钟后自动结束", this::startLoop);
         button(body, "结束并清理实验通知", this::endTrials);
+        button(body, "仅发送 END（协议结束对照）", this::protocolEndTrials);
         output = new TextView(this);
         output.setTextIsSelectable(true);
         output.setTypeface(Typeface.MONOSPACE);
@@ -180,7 +189,7 @@ public class AtomicLabActivity extends Activity {
         if ("android".equals(mode) && Build.VERSION.SDK_INT < 36) { log("Android 对照需要 API 36。"); return; }
         int id = idFor(mode);
         Trial old = trials.remove(id);
-        if (old != null) { publish(id, old, 2); manager.cancel(id); }
+        if (old != null) { publish(id, old, 2); VivoAtomicPayload.cancel(manager, id); }
         Trial trial = new Trial(mode, sceneInput.getText().toString().trim());
         if ("full".equals(mode) && trial.scene.isEmpty()) { log("全模板需要填写 scene。"); return; }
         trials.put(id, trial);
@@ -189,6 +198,16 @@ public class AtomicLabActivity extends Activity {
 
     private static int idFor(String mode) {
         return switch (mode) { case "full" -> 9402; case "island" -> 9403; case "android" -> 9404; default -> 9401; };
+    }
+
+    private void createLayout(String key) {
+        VivoLayoutSamples.label(key);
+        if (!manager.areNotificationsEnabled()) { permissions(); return; }
+        endTrials();
+        Trial trial = new Trial("full", sceneInput.getText().toString().trim(), key);
+        trials.put(9405, trial);
+        log("版式 " + key + "：" + VivoLayoutSamples.label(key));
+        publish(9405, trial, 0);
     }
 
     private void publish(int id, Trial trial, int operation) {
@@ -203,9 +222,11 @@ public class AtomicLabActivity extends Activity {
                 .setContentText(timer + " · " + trial.scene).setContentIntent(open)
                 .setOnlyAlertOnce(true).setOngoing(operation != 2);
         if ("full".equals(trial.mode) || "island".equals(trial.mode)) {
-            builder.addExtras(VivoAtomicPayload.create(this, R.drawable.ic_atomic_lab, operation,
+            Bundle payload = VivoAtomicPayload.create(this, R.drawable.ic_atomic_lab, operation,
                     trial.scene, "专注实验", "本地学习计时", timer, open,
-                    "island".equals(trial.mode), ++trial.record, trial.token));
+                    "island".equals(trial.mode), ++trial.record, trial.token);
+            if (trial.layout != null && operation != 2) VivoLayoutSamples.apply(this, payload, open, trial.layout);
+            builder.addExtras(payload);
         } else if ("android".equals(trial.mode) && Build.VERSION.SDK_INT >= 36) {
             builder.setCategory(Notification.CATEGORY_PROGRESS)
                     .setStyle(new Notification.ProgressStyle().setProgressIndeterminate(true).setStyledByProgress(true));
@@ -242,10 +263,17 @@ public class AtomicLabActivity extends Activity {
 
     private void endTrials() {
         handler.removeCallbacks(loop);
-        for (Map.Entry<Integer, Trial> item : trials.entrySet()) { publish(item.getKey(), item.getValue(), 2); manager.cancel(item.getKey()); }
+        for (Map.Entry<Integer, Trial> item : trials.entrySet()) { publish(item.getKey(), item.getValue(), 2); VivoAtomicPayload.cancel(manager, item.getKey()); }
         trials.clear();
-        for (int id = 9401; id <= 9404; id++) manager.cancel(id);
+        for (int id = 9401; id <= 9405; id++) VivoAtomicPayload.cancel(manager, id);
         log("已结束本应用的实验通知。");
+    }
+
+    private void protocolEndTrials() {
+        handler.removeCallbacks(loop);
+        for (Map.Entry<Integer, Trial> item : trials.entrySet()) publish(item.getKey(), item.getValue(), 2);
+        trials.clear();
+        log("仅发送 END，未额外 cancel；请读取本应用系统记录核验。");
     }
 
     private void registerCallbacks() {
@@ -285,8 +313,10 @@ public class AtomicLabActivity extends Activity {
                 else log("未知实验模式。");
             }
             case "update" -> updateTrials();
+            case "layout" -> createLayout(intent.getStringExtra("layout"));
             case "loop" -> startLoop();
             case "end" -> endTrials();
+            case "protocolEnd" -> protocolEndTrials();
             default -> log("未知实验动作。");
         }
     }

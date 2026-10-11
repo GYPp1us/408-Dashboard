@@ -1,19 +1,23 @@
 param(
-    [ValidateSet('Inspect', 'Install', 'Probe', 'Status', 'Plain', 'Full', 'Island', 'Android', 'Update', 'Loop', 'End', 'Logs')]
+    [ValidateSet('Inspect', 'Install', 'Probe', 'Status', 'Plain', 'Full', 'Island', 'Android', 'Layout', 'Update', 'Loop', 'End', 'ProtocolEnd', 'Logs')]
     [string]$Action = 'Inspect',
     [string]$Serial,
     [ValidatePattern('^[A-Z][A-Z0-9_]{0,63}$')]
     [string]$Scene = 'FOCUS_TIMER',
+    [ValidatePattern('^(c[1-5]|r[1-6]|b[0-6])$')]
+    [string]$Layout = 'c1',
     [ValidateSet('com.mutsumi.focus.atomiclab', 'com.vivo.systemuitesttophone')]
     [string]$Package = 'com.mutsumi.focus.atomiclab',
     [string]$Apk,
+    [ValidateRange(1024, 65535)]
+    [int]$Port = 5037,
     [string]$Adb = 'D:\Android\Sdk\platform-tools\adb.exe'
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path -LiteralPath $Adb)) { throw "ADB not found: $Adb" }
-$deviceLines = & $Adb devices
+$deviceLines = & $Adb -P $Port devices
 $connected = @($deviceLines | Where-Object { $_ -match '^\S+\s+device\s*$' } | ForEach-Object { ($_ -split '\s+')[0] })
 if (-not $Serial) {
     if ($connected.Count -ne 1) { throw 'Connect and authorize one vivo/iQOO phone, or specify -Serial. No device was changed.' }
@@ -24,7 +28,7 @@ if ($Serial -notin $connected) { throw "Device $Serial is unavailable or has not
 
 function Invoke-LabAdb {
     param([string[]]$Arguments)
-    & $Adb -s $Serial @Arguments
+    & $Adb -P $Port -s $Serial @Arguments
     if ($LASTEXITCODE -ne 0) { throw "ADB command failed: $($Arguments -join ' ')" }
 }
 
@@ -32,6 +36,7 @@ function Start-LabAction {
     param([string]$Command, [string]$Mode)
     $arguments = @('shell', 'am', 'start', '-n', "$Package/com.mutsumi.focus.atomiclab.AtomicLabActivity", '-f', '0x20000000', '--es', 'action', $Command, '--es', 'scene', $Scene)
     if ($Mode) { $arguments += @('--es', 'mode', $Mode) }
+    if ($Command -eq 'layout') { $arguments += @('--es', 'layout', $Layout) }
     Invoke-LabAdb -Arguments $arguments
 }
 
@@ -42,7 +47,7 @@ switch ($Action) {
             Invoke-LabAdb -Arguments @('shell','getprop',$property)
         }
         # Some vendor builds print valid help but return a nonzero exit code.
-        & $Adb -s $Serial shell cmd notification help
+        & $Adb -P $Port -s $Serial shell cmd notification help
         Invoke-LabAdb -Arguments @('shell','pm','path','com.android.systemui')
     }
     'Install' {
@@ -54,7 +59,7 @@ switch ($Action) {
         $packageLine = (& $aapt dump badging $Apk | Select-String '^package:').Line
         if ($packageLine -notmatch "name='$([regex]::Escape($Package))'") { throw "APK package differs from -Package: $packageLine" }
         if ($Package -eq 'com.vivo.systemuitesttophone') {
-            $installed = & $Adb -s $Serial shell pm path $Package
+            $installed = & $Adb -P $Port -s $Serial shell pm path $Package
             if ($installed) { throw 'The official demo package already exists on this device. Inspect it before replacing it.' }
         }
         Invoke-LabAdb -Arguments @('install','-r',$Apk)
@@ -65,8 +70,10 @@ switch ($Action) {
     'Full' { Start-LabAction -Command 'create' -Mode 'full' }
     'Island' { Start-LabAction -Command 'create' -Mode 'island' }
     'Android' { Start-LabAction -Command 'create' -Mode 'android' }
+    'Layout' { Start-LabAction -Command 'layout' }
     'Update' { Start-LabAction -Command 'update' }
     'Loop' { Start-LabAction -Command 'loop' }
     'End' { Start-LabAction -Command 'end' }
+    'ProtocolEnd' { Start-LabAction -Command 'protocolEnd' }
     'Logs' { Invoke-LabAdb -Arguments @('exec-out','run-as',$Package,'cat','files/atomic-lab.log') }
 }
