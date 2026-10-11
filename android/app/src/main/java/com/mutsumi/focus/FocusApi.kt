@@ -45,6 +45,8 @@ object FocusApi {
                 if (settled != null) return StateResult(true, status, localState.copy(
                     mode = FocusMode.SETTLED,
                     elapsedSeconds = localState.elapsedNow(),
+                    todayFocusSeconds = settled.optLong("total_seconds").coerceAtLeast(0),
+                    todaySessionCount = settled.optInt("session_count").coerceAtLeast(0),
                     endedAtEpochMs = epochMillis(settled.optString("settled_at")),
                     restStartedAtEpochMs = 0,
                     pausedAtEpochMs = 0,
@@ -116,6 +118,7 @@ object FocusApi {
             data.optLong("effective_seconds"), baseUrl, now).copy(
                 plannedSeconds = data.optLong("planned_minutes").coerceIn(0, 1440) * 60,
                 focusItemId = data.optLong("focus_item_id"),
+                pausedSeconds = data.optLong("paused_seconds").coerceAtLeast(0),
             )
         return if (data.optString("status") == "active" || data.optString("ended_at").let { it.isBlank() || it == "null" }) state
         else state.copy(mode = FocusMode.ENDED, endedAtEpochMs = epochMillis(data.optString("ended_at")), pausedAtEpochMs = 0)

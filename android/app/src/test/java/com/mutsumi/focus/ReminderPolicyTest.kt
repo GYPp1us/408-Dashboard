@@ -57,6 +57,14 @@ class ReminderPolicyTest {
         assertEquals(ReminderKind.ENDED_60, ReminderPolicy.due(state, 80 * minute, 0, 0)?.kind)
     }
 
+    @Test fun `pause reminder advances once per five minute round without replaying missed rounds`() {
+        val state = FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = minute)
+        assertEquals(1, ReminderPolicy.due(state, 6 * minute, 0, 0)?.round)
+        assertEquals(1, ReminderPolicy.due(state, 11 * minute - 1, 0, 0)?.round)
+        assertEquals(2, ReminderPolicy.due(state, 11 * minute, 0, 0)?.round)
+        assertEquals(12, ReminderPolicy.due(state, 61 * minute, 0, 0)?.round)
+    }
+
     @Test fun `departure snooze delays all surfaces and dismiss skips handled stage`() {
         val state = FocusRuntimeState(mode = FocusMode.ENDED, endedAtEpochMs = minute)
         assertNull(ReminderPolicy.due(state, 19 * minute, 0, 0, endedSnoozeUntilEpochMs = 20 * minute))

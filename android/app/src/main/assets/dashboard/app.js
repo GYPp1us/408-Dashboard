@@ -39,11 +39,7 @@
   function runtimeActions(runtime) {
     if (runtime.busy) return [];
     if (runtime.retryAction) return [{ label:"重试", action:runtime.retryAction.split(".").pop().toLowerCase() }];
-    if (runtime.mode === "paused") return [
-      { label:"继续专注", action:"resume" },
-      ...(runtime.reminder ? [{ label:"再等 5 分钟", action:"snooze", reminder:true }, { label:"收起提醒", action:"dismiss", reminder:true }] : []),
-      { label:"结束本段", action:"end" },
-    ];
+    if (runtime.mode === "paused") return [{ label:"继续专注", action:"resume" }];
     if (runtime.mode === "rest") return [{ label:"结束休息", action:"endRest" }];
     if (runtime.mode === "ended") return [
       { label:"选择下一段", destination:"next" }, { label:"查看总结", destination:"summary" },
@@ -83,7 +79,7 @@
     const runtime = nativeRuntime();
     const card = $("#native-runtime-card");
     if (card) {
-      card.hidden = !["paused", "rest", "ended", "settled"].includes(runtime.mode) && !runtime.busy && !runtime.retryAction;
+      card.hidden = runtime.mode === "paused" || (!["rest", "ended", "settled"].includes(runtime.mode) && !runtime.busy && !runtime.retryAction);
       $("#native-runtime-title").textContent = runtime.busy ? "正在处理…" : runtime.title || "专注状态";
       $("#native-runtime-detail").textContent = runtime.detail || "";
       $("#native-runtime-timer").hidden = !["paused", "rest", "ended"].includes(runtime.mode);
@@ -98,7 +94,7 @@
       $("#idle-mode-view").hidden = Boolean(state.dashboard?.focus?.active);
       $("#idle-mode-view").inert = rest;
     }
-    if ($("#active-mode-view")) $("#active-mode-view").inert = paused;
+    renderFocusStateOverlay();
     if ($("#focus-timer") && ["paused", "focusing"].includes(runtime.mode)) $("#focus-timer").textContent = runtime.timer;
     const toggle = $("#toggle-focus-pause");
     if (toggle) { toggle.disabled = Boolean(runtime.busy); toggle.title = paused ? "继续专注" : "暂停专注"; }
@@ -498,6 +494,9 @@
       pausedAtEpochMs: active?.paused_at ? Date.parse(active.paused_at) : 0,
       endedAtEpochMs: mode === "settled" ? Date.parse(state.dashboard.daily_settlement.settled_at) || 0 : state.recentlyEnded?.endedAt ?? 0,
       elapsedSeconds: active ? focusElapsedSeconds(active) : Number(state.recentlyEnded?.elapsedSeconds || 0),
+      pausedSeconds: Number(active?.paused_seconds ?? state.recentlyEnded?.pausedSeconds ?? nativeRuntime().pausedSeconds ?? 0),
+      todayFocusSeconds: Number(state.dashboard?.daily_settlement?.total_seconds || 0),
+      todaySessionCount: Number(state.dashboard?.daily_settlement?.session_count || 0),
       plannedSeconds: active ? Number(active.planned_minutes || 0) * 60 : Number(nativeRuntime().plannedSeconds || 0),
       focusItemId: Number(active?.focus_item_id || 0),
       restStartedAtEpochMs: state.restStartedAt || 0,
@@ -514,14 +513,33 @@
     catch (error) { console.warn("native_focus_sync_failed", error); }
   }
 
+  // Restore the v0.6 pause panel: elapsed pause clock and click/Enter to resume.
   function renderFocusStateOverlay(active = state.dashboard?.focus?.active) {
     const overlay = $("#focus-state-overlay");
     if (!overlay) return;
-    overlay.hidden = true;
-    document.body.classList.toggle("is-resting", Boolean(state.restStartedAt));
-    [$("#idle-mode-view"), $("#active-mode-view")].filter(Boolean).forEach((view) => { view.inert = false; });
-    renderNativeRuntime();
-    return;
+    const runtime = nativeRuntime();
+    const panel = document.body.dataset.page === "home" ? $("#dashboard-controls") : null;
+    const paused = canManageOwnFocus() && Boolean(panel) && runtime.mode === "paused";
+    const wasPaused = !overlay.hidden && overlay.classList.contains("is-panel-overlay");
+    if (paused && overlay.parentElement !== panel) {
+      overlay.hidden = true;
+      overlay.classList.add("is-panel-overlay");
+      panel.append(overlay);
+    }
+    [$("#idle-mode-view"), $("#active-mode-view")].filter(Boolean).forEach(view => { view.inert = paused || runtime.mode === "rest"; });
+    overlay.hidden = !paused;
+    if (!paused) { removeSecondTask("stateOverlay"); return; }
+    $("#focus-state-overlay-kicker").textContent = "PAUSED";
+    $("#focus-state-overlay-title").textContent = `${active?.subject || runtime.subject || "专注"} 已暂停`;
+    $("#focus-state-overlay-note").textContent = runtime.busy ? "正在继续专注…"
+      : runtime.retryAction ? "操作未确认，点击此分栏重试" : "点击此分栏或按回车继续专注";
+    $("#focus-state-overlay-timer-label").hidden = false;
+    const startedAt = Number(runtime.pausedAtEpochMs) || Date.parse(active?.paused_at) || Date.now();
+    setSecondTask("stateOverlay", now => {
+      $("#focus-state-overlay-timer").textContent = formatSeconds(Math.max(0, Math.floor((now - startedAt) / 1000)));
+    });
+    initDragSettlement();
+    if (!wasPaused && !document.querySelector("dialog[open]")) overlay.focus({ preventScroll:true });
   }
 
   function startRest() {
@@ -546,7 +564,7 @@
       exitRest();
       return;
     }
-    if (state.dashboard?.focus?.active?.paused_at) await toggleFocusPause();
+    if (nativeRuntime().mode === "paused") nativeAction("resume");
   }
 
   function bindFocusStateOverlay() {
@@ -2200,7 +2218,7 @@
         closeFocusSummary();
         state.restStartedAt = null;
         try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
-        state.recentlyEnded = ended ? { id:ended.id, subject:ended.subject, endedAt:Date.parse(ended.ended_at) || Date.now(), elapsedSeconds:Number(ended.effective_seconds ?? ended.duration_seconds ?? focusElapsedSeconds(ended)) } : null;
+        state.recentlyEnded = ended ? { id:ended.id, subject:ended.subject, endedAt:Date.parse(ended.ended_at) || Date.now(), elapsedSeconds:Number(ended.effective_seconds ?? ended.duration_seconds ?? focusElapsedSeconds(ended)), pausedSeconds:Number(ended.paused_seconds || 0) } : null;
         state.dashboard = { ...state.dashboard, daily_settlement:result.settlement, focus:{ ...(state.dashboard?.focus || {}), active:null } };
         applyFocusState(null);
         state.recentlyEnded = null;

@@ -75,3 +75,5 @@ $env:MUTSUMI_VIVO_ATOMIC_SCENE = '<vivo 分配的 scene>'
 更完整的厂商限制与真机清单见 [OriginOS 说明](../docs/originos-atomic-island.md)。
 
 文件选择边界的实现依据：Chromium 的 [`ShouldBlockURL`](https://github.com/chromium/chromium/blob/main/android_webview/browser/network_service/net_helpers.cc) 将 `allowContentAccess` 检查用于 `content://` 资源 URL；[`FilesSelectedInChooser`](https://github.com/chromium/chromium/blob/main/android_webview/browser/aw_web_contents_delegate.cc) 将用户选择的 URI 作为 `NativeFileInfo` 传给文件选择结果，未经过该 URL 检查；Android [`File::DoInitialize`](https://github.com/chromium/chromium/blob/main/base/files/file_posix.cc) 则通过 `OpenAndroidFile` 打开 content URI。因此保留上述两个开关，无需为文件输入开放页面的本地资源访问。API 35 模拟器结果支持这一实现，仍不能替代 vivo 真机验证。
+
+原子岛模板按 [doc895](https://dev.vivo.com.cn/documentCenter/doc/895) 重设计；模板字段、按钮与防闪烁实现见 [重设计记录](../docs/android-v0.7-atomic-redesign.md)。

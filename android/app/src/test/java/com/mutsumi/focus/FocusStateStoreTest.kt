@@ -9,6 +9,43 @@ class FocusStateStoreTest {
     private val paused = FocusRuntimeState(mode = FocusMode.PAUSED, sessionId = 8,
         pausedAtEpochMs = minute, elapsedSeconds = 1800, observedAtEpochMs = minute)
 
+    @Test fun `island reminder expansion is persisted per round and reset for a new pause`() {
+        val prefs = MemoryPreferences()
+        val store = FocusStateStore(prefs)
+        store.write(paused)
+        val first = store.reminderToken(ReminderKind.PAUSED, 6 * minute)
+        store.markIslandPresented(first)
+        val restored = FocusStateStore(prefs)
+        assertTrue(restored.wasIslandPresented(first))
+        assertEquals(first, restored.reminderToken(ReminderKind.PAUSED, 7 * minute))
+        val second = restored.reminderToken(ReminderKind.PAUSED, 11 * minute)
+        assertNotEquals(first, second)
+        assertFalse(restored.wasIslandPresented(second))
+        restored.write(paused.copy(mode = FocusMode.FOCUSING, pausedAtEpochMs = 0))
+        restored.write(paused)
+        assertFalse(restored.wasIslandPresented(first))
+    }
+
+    @Test fun `notification sequence and real summary statistics survive process recreation`() {
+        val prefs = MemoryPreferences()
+        val store = FocusStateStore(prefs)
+        store.write(paused.copy(pausedSeconds = 123, todayFocusSeconds = 25_200, todaySessionCount = 8))
+        assertEquals(1, store.nextAtomicRecord())
+        val restored = FocusStateStore(prefs)
+        assertEquals(2, restored.nextAtomicRecord())
+        assertEquals(123L, restored.read().pausedSeconds)
+        assertEquals(25_200L, restored.read().todayFocusSeconds)
+        assertEquals(8, restored.read().todaySessionCount)
+    }
+
+    @Test fun `upgrade adopts the existing notification sequence before replacing its payload`() {
+        val store = FocusStateStore(MemoryPreferences())
+        store.seedAtomicRecord(1250)
+        assertEquals(1251, store.nextAtomicRecord())
+        store.seedAtomicRecord(100)
+        assertEquals(1252, store.nextAtomicRecord())
+    }
+
     @Test fun `snooze deadline and presented stage survive store recreation`() {
         val prefs = MemoryPreferences()
         val store = FocusStateStore(prefs)

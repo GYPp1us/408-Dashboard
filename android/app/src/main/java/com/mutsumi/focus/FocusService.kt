@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import com.mutsumi.focus.atomic.VivoAtomicPayload
 import org.json.JSONObject
@@ -23,7 +24,8 @@ class FocusService : Service() {
     private var reminderToken = ""
     private var lastSyncAt = 0L
     private var syncing = false
-    private var liveIdentity = ""
+    private val refreshPolicy = AtomicRefreshPolicy()
+    private var foregroundStarted = false
     private var islandVisible = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var destroyed = false
@@ -47,6 +49,12 @@ class FocusService : Service() {
         notifications = getSystemService(NotificationManager::class.java)
         overlay = ApplicationOverlay(this)
         publisher.ensureChannels()
+        val previousNotifications = notifications.activeNotifications.filter { it.id == OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID }
+        store.seedAtomicRecord(previousNotifications.maxOfOrNull { it.notification.extras.getInt("notification.superx.changedRecord", 0) } ?: 0)
+        islandVisible = previousNotifications.any {
+            it.id == OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID &&
+                it.notification.extras.getInt("notification.superx.operation", -1) in 0..1
+        }
         runningService = this
     }
 
@@ -135,17 +143,35 @@ class FocusService : Service() {
         val now = System.currentTimeMillis()
         val visible = store.atomicEnabled() && (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST) ||
             state.summaryVisible(now) || store.due(now) != null)
-        val identity = "${state.sessionId}:${state.restStartedAtEpochMs}:${state.mode in setOf(FocusMode.ENDED, FocusMode.SETTLED)}"
+        val due = store.due(now)
+        val token = due?.let { store.reminderToken(it.kind, now) }.orEmpty()
+        val atomic = publisher.usesAtomicIsland()
+        val forceShowCard = visible && atomic && token.isNotBlank() && !store.wasIslandPresented(token)
+        val clockBucket = if (!visible) 0 else when (state.mode) {
+            FocusMode.PAUSED -> (now - state.pausedAtEpochMs).coerceAtLeast(0) / 10_000
+            FocusMode.REST -> state.restElapsed(now) / 10
+            FocusMode.FOCUSING -> state.elapsedNow(now) / 10
+            else -> if (due != null) (now - state.endedAtEpochMs).coerceAtLeast(0) / 10_000 else 0
+        }
+        val signature = listOf(visible, state.mode, state.sessionId, state.pausedAtEpochMs, state.restStartedAtEpochMs,
+            state.endedAtEpochMs, state.plannedSeconds, state.restTargetSeconds, state.elapsedSeconds / 10,
+            state.pausedSeconds, state.todayFocusSeconds, state.todaySessionCount, clockBucket, token, retryAction).joinToString(":")
+        val elapsedNow = SystemClock.elapsedRealtime()
+        if (!refreshPolicy.shouldPublish(signature, elapsedNow, publisher.usesAtomicTransport(), !foregroundStarted)) return true
         val operation = when {
             !visible -> OriginOsAtomicPublisher.AtomicOperation.END
-            !islandVisible || identity != liveIdentity -> OriginOsAtomicPublisher.AtomicOperation.CREATE
+            !islandVisible -> OriginOsAtomicPublisher.AtomicOperation.CREATE
             else -> OriginOsAtomicPublisher.AtomicOperation.UPDATE
         }
         return try {
-            startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID,
-                publisher.liveNotification(state, operation, if (busy) "正在处理…" else displayMessage(now), busy, retryAction))
+            val notification = publisher.liveNotification(state, operation, retryAction = retryAction,
+                forceShowCard = forceShowCard, now = now)
+            if (!foregroundStarted) startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
+            else notifications.notify(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
+            foregroundStarted = true
             islandVisible = visible
-            liveIdentity = identity
+            refreshPolicy.published(signature, elapsedNow)
+            if (forceShowCard) { store.markIslandPresented(token); store.markPresented(token) }
             true
         } catch (error: Exception) {
             Log.w("FocusService", "Foreground promotion failed", error)
@@ -247,6 +273,15 @@ class FocusService : Service() {
         val due = store.due()
         if (due == null) { if (reminderToken.isNotEmpty()) dismissSurfaces(); return }
         val token = store.reminderToken(due.kind)
+        if (publisher.usesAtomicIsland()) {
+            // doc895: the same reminder is one atomic activity, not a second
+            // ordinary notification. publish() requests expansion once/round.
+            overlay.dismiss()
+            FocusAccessibilityService.dismiss()
+            notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
+            if (reminderToken != token) { reminderToken = token; changed() }
+            return
+        }
         if (appVisible) {
             overlay.dismiss()
             FocusAccessibilityService.dismiss()
@@ -358,10 +393,13 @@ class FocusService : Service() {
             return JSONObject().apply {
                 put("mode", state.mode.name.lowercase()); put("sessionId", state.sessionId)
                 put("subject", state.subject); put("elapsedSeconds", state.elapsedNow(now))
+                put("pausedAtEpochMs", state.pausedAtEpochMs); put("pausedSeconds", state.pausedSeconds)
+                put("todayFocusSeconds", state.todayFocusSeconds); put("todaySessionCount", state.todaySessionCount)
                 put("endedAtEpochMs", state.endedAtEpochMs)
                 put("restStartedAtEpochMs", state.restStartedAtEpochMs); put("restTargetSeconds", state.restTargetSeconds)
                 put("plannedSeconds", state.plannedSeconds); put("nextReminderAt", store.nextReminderAt(state))
-                put("reminder", due?.kind?.name.orEmpty()); put("reminderToken", due?.let { store.reminderToken(it.kind) }.orEmpty())
+                put("reminder", due?.kind?.name.orEmpty()); put("reminderToken", due?.let { store.reminderToken(it.kind, now) }.orEmpty())
+                put("reminderRound", due?.round ?: 0)
                 put("title", FocusPresentation.title(state, due, now)); put("detail", FocusPresentation.detail(state, store.nextReminderAt(state), due, now))
                 put("timer", FocusPresentation.timer(state, now)); put("busy", runningService?.busy == true)
                 put("message", runningService?.displayMessage(now).orEmpty()); put("retryAction", runningService?.retryAction.orEmpty())

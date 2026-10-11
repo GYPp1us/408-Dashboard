@@ -127,8 +127,9 @@ async function nativeBridge() {
     const scenario = await context.request.post(base + '/api/_test/scenario', {data:{scenario:'paused5min', seconds_before:-2}});
     const payload = await scenario.json();
     await page.evaluate(payload => { __setNative(payload.native_state); MutsumiWeb.refresh(); }, payload);
-    await page.waitForFunction(() => document.querySelector('#native-runtime-reminder')?.textContent.includes('暂停满'));
-    await page.locator('#native-runtime-actions').getByText('再等 5 分钟', {exact:true}).click();
+    await page.waitForFunction(() => !document.querySelector('#focus-state-overlay').hidden);
+    assert(await page.locator('#native-runtime-card').isHidden(), 'Pause must use the v0.6 panel, without a runtime status card');
+    await page.evaluate(() => MutsumiAndroid.performFocusAction('snooze', JSON.parse(MutsumiAndroid.getFocusRuntime()).revision, JSON.parse(MutsumiAndroid.getFocusRuntime()).reminderToken));
     await page.waitForFunction(() => !JSON.parse(MutsumiAndroid.getFocusRuntime()).reminder);
     const deadline = await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).nextReminderAt);
     await page.reload();
@@ -136,16 +137,22 @@ async function nativeBridge() {
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).nextReminderAt), deadline);
     await page.waitForTimeout(400);
     const glass = await page.evaluate(() => {
-      const card = document.querySelector('#native-runtime-card'), style = getComputedStyle(card);
+      const overlay = document.querySelector('#focus-state-overlay'), style = getComputedStyle(overlay);
       return {background:style.backgroundColor, blur:style.backdropFilter, radius:style.borderRadius,
-        position:style.position, bounds:card.getBoundingClientRect().toJSON(),
-        buttonHeight:card.querySelector('button').getBoundingClientRect().height};
+        position:style.position, bounds:overlay.getBoundingClientRect().toJSON(),
+        nativeCardHidden:document.querySelector('#native-runtime-card').hidden,
+        buttons:overlay.querySelectorAll('.native-runtime-actions button').length,
+        note:document.querySelector('#focus-state-overlay-note').textContent};
     });
-    assert(glass.blur.includes('blur(10px)'), 'Pause panel must blur the underlying content');
-    assert.equal(glass.position, 'absolute', 'Glass panel must actually cover content inside the focus column');
+    assert(glass.blur.includes('blur(10px)'), 'The v0.6 pause panel must blur the underlying focus content');
+    assert.equal(glass.position, 'absolute');
     assert.equal(glass.radius, '8px');
-    assert(Math.abs(glass.buttonHeight - 34 * .6) < 1, 'New action proportions must use the existing 34px controls');
-    console.log('Pause surface', await page.evaluate(() => ({ opacity:getComputedStyle(document.querySelector('#active-mode-view')).opacity, filter:getComputedStyle(document.querySelector('#active-mode-view')).filter, overlayHidden:document.querySelector('#focus-state-overlay').hidden })));
+    assert.equal(glass.buttons, 0, 'No extra pause control strip');
+    assert(glass.nativeCardHidden);
+    assert.equal(glass.note, '点击此分栏或按回车继续专注');
+    const pauseClock = await page.locator('#focus-state-overlay-timer').innerText();
+    await page.waitForTimeout(1100);
+    assert.notEqual(await page.locator('#focus-state-overlay-timer').innerText(), pauseClock, 'Pause duration must keep advancing');
     await page.screenshot({path:path.join(output,'portrait-paused-snoozed.png'), fullPage:false});
     await page.locator('.native-chart-toggle').click();
     await page.setViewportSize({width:412,height:480});
@@ -158,11 +165,12 @@ async function nativeBridge() {
     await page.setViewportSize({width:412,height:915});
     await page.locator('#dashboard-controls').scrollIntoViewIfNeeded();
     await page.evaluate(() => { window.__nativeFailure = true; });
-    await page.locator('#native-runtime-actions').getByText('继续专注', {exact:true}).click();
+    await page.locator('#focus-state-overlay-timer').click();
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).retryAction);
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode), 'paused');
     await page.evaluate(() => { window.__nativeFailure = false; });
-    await page.locator('#native-runtime-actions').getByText('重试', {exact:true}).click();
+    assert((await page.locator('#focus-state-overlay-note').innerText()).includes('重试'));
+    await page.locator('#focus-state-overlay-timer').click();
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'focusing');
     await page.evaluate(() => MutsumiWeb.navigateFocus('details'));
     assert(await page.locator('#native-runtime-details').isVisible());
@@ -195,6 +203,9 @@ async function nativeBridge() {
     await page.evaluate(() => MutsumiWeb.refresh());
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'settled');
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).reminder), '');
+    const actualSettlement = await (await context.request.get(base + '/api/dashboard')).json();
+    assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).todayFocusSeconds), actualSettlement.daily_settlement.total_seconds);
+    assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).todaySessionCount), actualSettlement.daily_settlement.session_count);
     await page.evaluate(() => MutsumiWeb.navigateFocus('summary'));
     assert(await page.locator('.daily-report-dialog').isVisible());
     await page.keyboard.press('Escape');
@@ -222,7 +233,7 @@ async function nativeBridge() {
     await page.screenshot({path:path.join(output,'narrow-dark-settings.png'), fullPage:true});
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output,'web-validation.json'), JSON.stringify({passed:true,layout,glass,checks:[
-      'portrait order and touch targets','planned focus','pause freezes effective time','snooze shared deadline and reload',
+      'portrait order and scale','planned focus','v0.6 pause panel and advancing pause clock','snooze shared deadline and reload',
       'failed resume retains state and offers retry','details does not resume','target rest and reload',
       'sticky bottom actions and chart expansion','landscape and portrait','settings integrated and draft retained','320px dark ocean layout','real settlement stops reminder and opens report'],errors},null,2));
     console.log(`PASS: APK WebView assets, screenshots and report in ${output}`);

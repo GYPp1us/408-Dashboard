@@ -30,6 +30,9 @@ data class FocusRuntimeState(
     val pausedAtEpochMs: Long = 0,
     val endedAtEpochMs: Long = 0,
     val elapsedSeconds: Long = 0,
+    val pausedSeconds: Long = 0,
+    val todayFocusSeconds: Long = 0,
+    val todaySessionCount: Int = 0,
     val plannedSeconds: Long = 0,
     val focusItemId: Long = 0,
     val restStartedAtEpochMs: Long = 0,
@@ -48,6 +51,9 @@ data class FocusRuntimeState(
                 pausedAtEpochMs = data.optLong("pausedAtEpochMs"),
                 endedAtEpochMs = data.optLong("endedAtEpochMs"),
                 elapsedSeconds = data.optLong("elapsedSeconds").coerceAtLeast(0),
+                pausedSeconds = data.optLong("pausedSeconds").coerceAtLeast(0),
+                todayFocusSeconds = data.optLong("todayFocusSeconds").coerceAtLeast(0),
+                todaySessionCount = data.optInt("todaySessionCount").coerceAtLeast(0),
                 plannedSeconds = data.optLong("plannedSeconds").coerceIn(0, 86_400),
                 focusItemId = data.optLong("focusItemId").coerceAtLeast(0),
                 restStartedAtEpochMs = data.optLong("restStartedAtEpochMs").coerceAtLeast(0),
@@ -82,7 +88,7 @@ enum class ReminderKind(val endedIndex: Int = 0) {
     ENDED_60(3),
 }
 
-data class DueReminder(val kind: ReminderKind, val overdueMs: Long)
+data class DueReminder(val kind: ReminderKind, val overdueMs: Long, val round: Int = kind.endedIndex.coerceAtLeast(1))
 
 object ReminderPolicy {
     const val PAUSED_DELAY_MS = 5 * 60_000L
@@ -103,7 +109,12 @@ object ReminderPolicy {
                 if (pausedDismissed) return null
                 val baseDue = state.pausedAtEpochMs.takeIf { it > 0 }?.plus(PAUSED_DELAY_MS) ?: return null
                 val dueAt = maxOf(baseDue, pausedSnoozeUntilEpochMs)
-                if (nowEpochMs >= dueAt) DueReminder(ReminderKind.PAUSED, nowEpochMs - dueAt) else null
+                if (nowEpochMs < dueAt) return null
+                // A long absence advances directly to the current five-minute
+                // round; it must never replay all the missed reminders.
+                val round = ((nowEpochMs - state.pausedAtEpochMs) / PAUSED_DELAY_MS).coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
+                val roundAt = maxOf(state.pausedAtEpochMs + round * PAUSED_DELAY_MS, pausedSnoozeUntilEpochMs)
+                DueReminder(ReminderKind.PAUSED, nowEpochMs - roundAt, round)
             }
             FocusMode.ENDED -> {
                 val index = endedAcknowledgedCount.coerceIn(0, endedThresholds.size)

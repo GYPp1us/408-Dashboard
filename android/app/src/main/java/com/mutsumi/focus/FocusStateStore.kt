@@ -14,6 +14,9 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
         pausedAtEpochMs = preferences.getLong("paused_at", 0),
         endedAtEpochMs = preferences.getLong("ended_at", 0),
         elapsedSeconds = preferences.getLong("elapsed_seconds", 0),
+        pausedSeconds = preferences.getLong("paused_seconds", 0),
+        todayFocusSeconds = preferences.getLong("today_focus_seconds", 0),
+        todaySessionCount = preferences.getInt("today_session_count", 0),
         plannedSeconds = preferences.getLong("planned_seconds", 0),
         focusItemId = preferences.getLong("focus_item_id", 0),
         restStartedAtEpochMs = preferences.getLong("rest_started_at", 0),
@@ -32,6 +35,9 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
             .putLong("paused_at", state.pausedAtEpochMs)
             .putLong("ended_at", state.endedAtEpochMs)
             .putLong("elapsed_seconds", state.elapsedSeconds)
+            .putLong("paused_seconds", state.pausedSeconds)
+            .putLong("today_focus_seconds", state.todayFocusSeconds)
+            .putInt("today_session_count", state.todaySessionCount)
             .putLong("planned_seconds", state.plannedSeconds)
             .putLong("focus_item_id", state.focusItemId)
             .putLong("rest_started_at", state.restStartedAtEpochMs)
@@ -47,6 +53,7 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
                     editor.putLong("paused_snooze_until", 0)
                     editor.putBoolean("paused_dismissed", false)
                     editor.putString("presented_reminder", "")
+                    editor.putString("island_presented_reminder", "")
                     editor.putLong("ended_snooze_until", 0)
                     if (previous.sessionId != state.sessionId || previous.mode != state.mode)
                         editor.putInt("ended_acknowledged", 0)
@@ -75,12 +82,27 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
         state, pausedSnoozeUntil(), endedAcknowledgedCount(), pausedDismissed(), endedSnoozeUntil())
     fun due(now: Long = System.currentTimeMillis()): DueReminder? = ReminderPolicy.due(
         read(), now, pausedSnoozeUntil(), endedAcknowledgedCount(), pausedDismissed(), endedSnoozeUntil())
-    fun reminderToken(kind: ReminderKind): String {
+    fun reminderToken(kind: ReminderKind, now: Long = System.currentTimeMillis()): String {
         val state = read()
-        return "${state.sessionId}:${state.pausedAtEpochMs}:${state.endedAtEpochMs}:${kind.name}:${nextReminderAt(state)}"
+        val round = if (kind == ReminderKind.PAUSED) due(now)?.round ?: 0 else kind.endedIndex
+        return "${state.sessionId}:${state.pausedAtEpochMs}:${state.endedAtEpochMs}:${kind.name}:${nextReminderAt(state)}:$round"
     }
     fun wasPresented(token: String): Boolean = preferences.getString("presented_reminder", "") == token
     fun markPresented(token: String) { preferences.edit().putString("presented_reminder", token).apply() }
+    fun wasIslandPresented(token: String): Boolean = preferences.getString("island_presented_reminder", "") == token
+    fun markIslandPresented(token: String) { preferences.edit().putString("island_presented_reminder", token).apply() }
+    fun nextAtomicRecord(): Int {
+        val next = (preferences.getInt("atomic_record", 0).toLong() + 1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        // Persist before notify so a process restart cannot send a lower record.
+        @Suppress("ApplySharedPref")
+        val saved = preferences.edit().putInt("atomic_record", next).commit()
+        return next
+    }
+    fun seedAtomicRecord(existingRecord: Int) {
+        if (existingRecord <= preferences.getInt("atomic_record", 0)) return
+        @Suppress("ApplySharedPref")
+        val saved = preferences.edit().putInt("atomic_record", existingRecord).commit()
+    }
     fun strongReminders(): Boolean = preferences.getBoolean("strong_reminders", false)
     fun setStrongReminders(enabled: Boolean) { preferences.edit().putBoolean("strong_reminders", enabled).apply() }
     fun atomicEnabled(): Boolean = preferences.getBoolean("atomic_enabled", true)
