@@ -20,6 +20,7 @@ class PermissionSetupActivity : Activity() {
     private lateinit var list: LinearLayout
     private lateinit var root: ScrollView
     private lateinit var store: FocusStateStore
+    private var unbindBlur: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,12 +37,14 @@ class PermissionSetupActivity : Activity() {
     private fun render() {
         val scroll = if (::root.isInitialized) root.scrollY else 0
         style = SetupStyle(this)
+        unbindBlur?.invoke()
+        unbindBlur = style.bindWindow(this)
         list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(style.dp(20), style.dp(20), style.dp(20), style.dp(28))
+            setPadding(style.dp(18), style.dp(16), style.dp(18), style.dp(20))
         }
-        label(list, "原子岛与提醒", 26f)
-        label(list, "状态与计时始终一致。按需要开启功能，也可以稍后设置。", 16f)
+        label(list, "原子岛与提醒", 18f)
+        label(list, "状态与计时始终一致。按需要开启功能，也可以稍后设置。", 12f)
         val atomic = card("原子岛展示")
         toggle(atomic, "在原子岛展示专注与休息", store.atomicEnabled()) {
             store.setAtomicEnabled(it)
@@ -95,10 +98,10 @@ class PermissionSetupActivity : Activity() {
         }
         button(list, "返回计时", true) { finish() }
         val container = FrameLayout(this).apply {
-            setBackgroundColor(style.paper)
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
             addView(list, FrameLayout.LayoutParams(minOf(resources.displayMetrics.widthPixels, style.dp(680)), -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         }
-        root = ScrollView(this).apply { isFillViewport = true; addView(container); setBackgroundColor(style.paper) }
+        root = ScrollView(this).apply { isFillViewport = true; addView(container); setBackgroundColor(style.canvas) }
         setContentView(root)
         AppWindowLayout.apply(this, root)
         root.post { root.scrollTo(0, scroll) }
@@ -106,36 +109,37 @@ class PermissionSetupActivity : Activity() {
 
     private fun card(title: String): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(style.dp(18), style.dp(16), style.dp(18), style.dp(16))
+        setPadding(style.dp(14), style.dp(12), style.dp(14), style.dp(12))
         background = style.rounded()
-        list.addView(this, LinearLayout.LayoutParams(-1, -2).apply { topMargin = style.dp(18) })
-        label(this, title, 20f)
+        list.addView(this, LinearLayout.LayoutParams(-1, -2).apply { topMargin = style.dp(8) })
+        label(this, title, 15f)
     }
-    private fun label(parent: LinearLayout, value: String, size: Float = 16f) {
+    private fun label(parent: LinearLayout, value: String, size: Float = 12f) {
         parent.addView(TextView(this).apply {
             style.text(this, size); text = value; setLineSpacing(style.dp(3).toFloat(), 1f)
-            setPadding(0, style.dp(6), 0, style.dp(8))
+            setPadding(0, style.dp(4), 0, style.dp(6))
         })
     }
     private fun toggle(parent: LinearLayout, value: String, checked: Boolean, action: (Boolean) -> Unit) {
         parent.addView(Switch(this).apply {
-            style.text(this); text = value; isChecked = checked; minHeight = style.dp(52)
+            style.text(this); text = value; isChecked = checked; minHeight = style.dp(34)
             setOnCheckedChangeListener { _, enabled -> action(enabled) }
         }, LinearLayout.LayoutParams(-1, -2))
     }
     private fun button(parent: LinearLayout, title: String, primary: Boolean = false, action: () -> Unit) {
         parent.addView(Button(this).apply {
             text = title; style.button(this, primary); setOnClickListener { action() }
-        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = style.dp(10) })
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = style.dp(8) })
     }
     private fun permission(parent: LinearLayout, title: String, granted: Boolean, note: String, action: () -> Unit) {
         label(parent, "$title · ${if (granted) "已开启" else "待设置"}")
-        label(parent, note, 14f)
+        label(parent, note, 11f)
         button(parent, if (granted) "检查$title" else "设置$title", action = action)
     }
     private fun openSafely(primary: Intent) {
         val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
         runCatching { startActivity(if (primary.resolveActivity(packageManager) != null) primary else fallback) }
     }
+    override fun onDestroy() { unbindBlur?.invoke(); unbindBlur = null; super.onDestroy() }
     override fun onStop() { FocusService.setAppVisible(this, false); super.onStop() }
 }

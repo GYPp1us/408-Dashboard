@@ -86,7 +86,7 @@
       card.hidden = !["paused", "rest", "ended", "settled"].includes(runtime.mode) && !runtime.busy && !runtime.retryAction;
       $("#native-runtime-title").textContent = runtime.busy ? "正在处理…" : runtime.title || "专注状态";
       $("#native-runtime-detail").textContent = runtime.detail || "";
-      $("#native-runtime-timer").hidden = !["rest", "ended"].includes(runtime.mode);
+      $("#native-runtime-timer").hidden = !["paused", "rest", "ended"].includes(runtime.mode);
       $("#native-runtime-timer").textContent = runtime.timer || "";
       $("#native-runtime-message").textContent = runtime.message || "";
       $("#native-runtime-reminder").hidden = !runtime.reminder;
@@ -94,8 +94,11 @@
       renderRuntimeButtons($("#native-runtime-actions"), runtime);
     }
     const paused = runtime.mode === "paused", rest = runtime.mode === "rest";
-    if (rest && $("#idle-mode-view")) $("#idle-mode-view").hidden = true;
-    if (!rest && !state.dashboard?.focus?.active && $("#idle-mode-view")) $("#idle-mode-view").hidden = false;
+    if ($("#idle-mode-view")) {
+      $("#idle-mode-view").hidden = Boolean(state.dashboard?.focus?.active);
+      $("#idle-mode-view").inert = rest;
+    }
+    if ($("#active-mode-view")) $("#active-mode-view").inert = paused;
     if ($("#focus-timer") && ["paused", "focusing"].includes(runtime.mode)) $("#focus-timer").textContent = runtime.timer;
     const toggle = $("#toggle-focus-pause");
     if (toggle) { toggle.disabled = Boolean(runtime.busy); toggle.title = paused ? "继续专注" : "暂停专注"; }

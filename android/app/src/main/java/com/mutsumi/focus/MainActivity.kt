@@ -180,6 +180,7 @@ class MainActivity : ComponentActivity() {
                 val asset = when (request.url.path) {
                     "/static/app.js" -> "app.js"
                     "/static/viewport-scale.css" -> "viewport-scale.css"
+                    "/static/viewport-scale.js" -> "viewport-scale.js"
                     "/static/dashboard-details.js" -> "dashboard-details.js"
                     else -> return null
                 }

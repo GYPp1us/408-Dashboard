@@ -42,30 +42,30 @@ html[data-viewport-mode="wide"] .detail-record { flex-wrap: nowrap; gap: 12px; }
 
 /* APK 0.7. Landscape retains the existing canvas and column proportions. */
 html.native-app :is(.native-glass-card,.detail-drawer,.quick-score-drawer,.confirm-dialog,.native-settings-entry) {
-  border:1px solid var(--line); border-radius:22px; color:var(--ink);
-  background:var(--surface); background:color-mix(in srgb,var(--surface) 92%,transparent);
-  backdrop-filter:blur(22px); -webkit-backdrop-filter:blur(22px); box-shadow:0 14px 40px #0002;
+  border:1px solid var(--line); border-radius:8px; color:var(--ink);
+  background:var(--surface); background:color-mix(in srgb,var(--surface) 50%,transparent);
+  backdrop-filter:blur(10px) saturate(1.05); -webkit-backdrop-filter:blur(10px) saturate(1.05); box-shadow:0 6px 18px #0001;
 }
-html.native-app .native-glass-card { padding:18px; }
-html.native-app .native-glass-card h3 { margin:0 0 10px; font-size:18px; }
-html.native-app .native-glass-card p { font-size:15px; line-height:1.65; color:var(--muted); }
-html.native-app .native-runtime-actions { display:flex; flex-wrap:wrap; gap:8px; }
-html.native-app .native-runtime-actions button { min-height:44px; font-size:15px; }
+html.native-app .native-glass-card { padding:14px; }
+html.native-app .native-glass-card h3 { margin:0 0 8px; font-size:14px; font-weight:500; }
+html.native-app .native-glass-card p { font-size:12px; line-height:1.55; color:var(--muted); }
+html.native-app .native-runtime-actions { display:flex; flex-wrap:wrap; gap:6px; }
+html.native-app .native-runtime-actions button { min-height:34px; font-size:12px; border-radius:7px; }
 html.native-app #native-runtime-card { margin-top:14px; }
-html.native-app #native-runtime-reminder { color:var(--accent-deep); font-size:16px; }
-html.native-app .native-goal-choice { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px 0; font-size:14px; }
-html.native-app .native-goal-choice select { min-height:44px; padding:8px 12px; border:1px solid var(--line); border-radius:12px; background:var(--surface); color:var(--ink); font-size:15px; }
+html.native-app #native-runtime-reminder { color:var(--accent-deep); font-size:12px; }
+html.native-app .native-goal-choice { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 0; font-size:12px; }
+html.native-app .native-goal-choice select { min-height:34px; padding:4px 10px; border:1px solid var(--line); border-radius:7px; background:color-mix(in srgb,var(--surface) 50%,transparent); color:var(--ink); font-size:12px; }
 html.native-app #native-focus-progress { width:100%; height:8px; accent-color:var(--accent); margin:12px 0; }
 html.native-app #native-runtime-details { width:min(540px,calc(var(--ui-viewport-width) - 32px)); }
 html.native-app #native-runtime-details::backdrop { background:#18202b70; backdrop-filter:blur(6px); }
 html.native-app .native-details-head { display:flex; gap:12px; align-items:center; justify-content:space-between; }
-html.native-app .native-details-head h2 { margin:0; font-size:23px; overflow-wrap:anywhere; }
-html.native-app #native-details-timer { display:block; margin:24px 0; font-size:46px; font-variant-numeric:tabular-nums; }
+html.native-app .native-details-head h2 { margin:0; font-size:18px; overflow-wrap:anywhere; }
+html.native-app #native-details-timer { display:block; margin:16px 0; font-size:40px; font-variant-numeric:tabular-nums; }
 html.native-app #native-focus-dock { display:none; }
 html.native-app :is(.native-chart-toggle,.native-stat-toggle) { display:none; }
-html.native-app .native-settings-entry { margin-bottom:20px; padding:22px; }
-html.native-app .native-settings-entry p { color:var(--muted); font-size:16px; }
-html.native-app .native-settings-entry h2 { font-size:20px; }
+html.native-app .native-settings-entry { margin-bottom:14px; padding:18px; }
+html.native-app .native-settings-entry p { color:var(--muted); font-size:12px; }
+html.native-app .native-settings-entry h2 { font-size:15px; }
 html.native-app[data-viewport-mode="wide"] body:not(.page-home) .app-main { max-width:1120px; margin-inline:auto; }
 
 html.native-app[data-viewport-mode="portrait"] body { min-width:0; width:100%; font-size:16px; overflow-x:clip; }
@@ -85,9 +85,9 @@ html.native-app[data-viewport-mode="portrait"] #dashboard-activity { order:3; mi
 html.native-app[data-viewport-mode="portrait"] #dashboard-activity[data-native-expanded="false"] > :not(.native-chart-toggle) { display:none !important; }
 html.native-app[data-viewport-mode="portrait"] #dashboard-activity[data-native-expanded="true"] { min-height:410px !important; }
 html.native-app[data-viewport-mode="portrait"] #dashboard-activity .activity-view { min-height:310px; }
-html.native-app[data-viewport-mode="portrait"] :is(.native-chart-toggle,.native-stat-toggle) { display:flex; width:100%; min-height:48px; font-size:16px; }
+html.native-app[data-viewport-mode="portrait"] :is(.native-chart-toggle,.native-stat-toggle) { display:flex; width:100%; min-height:34px; font-size:12px; }
 html.native-app[data-viewport-mode="portrait"] #dashboard-insights[data-native-expanded="false"] .investment-chart:nth-child(n+2) { display:none; }
-html.native-app[data-viewport-mode="portrait"] .panel { border-radius:20px; }
+html.native-app[data-viewport-mode="portrait"] .panel { border-radius:8px; }
 html.native-app[data-viewport-mode="portrait"] .mode-panel-heading h2 { font-size:18px; }
 html.native-app[data-viewport-mode="portrait"] #focus-subject { font-size:22px; white-space:normal; transform:none; animation:none; overflow-wrap:anywhere; }
 html.native-app[data-viewport-mode="portrait"] .focus-subject-viewport { max-height:none; }
@@ -99,7 +99,7 @@ html.native-app[data-viewport-mode="portrait"] .drag-label { font-size:16px; }
 html.native-app[data-viewport-mode="portrait"] .drag-thumb { min-width:44px; min-height:44px; }
 html.native-app[data-viewport-mode="portrait"] .quick-pin { width:40px; height:44px; right:2px; }
 html.native-app[data-viewport-mode="portrait"] .focus-launch-actions { min-height:48px; height:auto; gap:10px; }
-html.native-app[data-viewport-mode="portrait"] :is(.ui-button,.primary,.outline-button) { min-height:44px; font-size:15px; border-radius:12px; }
+html.native-app[data-viewport-mode="portrait"] :is(.ui-button,.primary,.outline-button) { min-height:34px; font-size:12px; border-radius:7px; }
 html.native-app[data-viewport-mode="portrait"] .focus-pause-button { width:60px; }
 html.native-app[data-viewport-mode="portrait"] .key-list { font-size:15px; }
 html.native-app[data-viewport-mode="portrait"] .focus-lock-row { gap:10px; }
@@ -119,13 +119,13 @@ html.native-app[data-viewport-mode="portrait"] #native-focus-dock > button:first
 html.native-app[data-viewport-mode="portrait"] #native-dock-title { display:block; max-width:100%; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 html.native-app[data-viewport-mode="portrait"] #native-dock-timer { font-size:26px; }
 html.native-app[data-viewport-mode="portrait"] .native-dock-visible .app-main { padding-bottom:110px; }
-html.native-app[data-viewport-mode="portrait"] :is(.detail-drawer,.quick-score-drawer,#native-runtime-details) { inset:auto 0 0; margin:0; width:100%; max-width:100%; height:auto; max-height:90dvh; border-radius:24px 24px 0 0; overflow-y:auto; transform:translateY(0); }
-html.native-app[data-viewport-mode="portrait"] .detail-drawer { height:84dvh; }
-html.native-app[data-viewport-mode="portrait"] :is(.detail-drawer-head,.detail-drawer-content,.quick-score-drawer) { padding:20px; }
+html.native-app[data-viewport-mode="portrait"] :is(.detail-drawer,.quick-score-drawer,#native-runtime-details) { inset:auto 0 0; margin:0; width:100%; max-width:100%; height:auto; max-height:calc(var(--ui-viewport-height,100dvh) * .9); border-radius:8px 8px 0 0; overflow-y:auto; transform:translateY(0); }
+html.native-app[data-viewport-mode="portrait"] .detail-drawer { height:calc(var(--ui-viewport-height,100dvh) * .84); }
+html.native-app[data-viewport-mode="portrait"] :is(.detail-drawer-head,.detail-drawer-content,.quick-score-drawer) { padding:18px; }
 html.native-app[data-viewport-mode="portrait"] :is(.settings-grid,.settings-content-grid,.settings-field-grid,.account-settings-grid,.settings-data-grid) { grid-template-columns:minmax(0,1fr); }
 html.native-app[data-viewport-mode="portrait"] .settings-wide { grid-column:auto; }
-html.native-app[data-viewport-mode="portrait"] :is(.settings-panel,.account-panel) h2 { font-size:20px; }
-html.native-app[data-viewport-mode="portrait"] .settings-panel :is(label,input,select) { font-size:16px; }
+html.native-app[data-viewport-mode="portrait"] :is(.settings-panel,.account-panel) h2 { font-size:15px; }
+html.native-app[data-viewport-mode="portrait"] .settings-panel :is(label,input,select) { font-size:12px; }
 html.native-app[data-viewport-mode="portrait"] :is(input,select,textarea) { min-height:44px; max-width:100%; scroll-margin-block:100px; }
 html.native-app[data-viewport-mode="portrait"] :is(.subject-settings-row,.focus-item-settings-row,.subject-create-form,.focus-item-create-form) { display:flex; flex-wrap:wrap; gap:10px; }
 html.native-app[data-viewport-mode="portrait"] :is(.subject-settings-row,.focus-item-settings-row) input { min-width:120px; flex:1; }
@@ -141,7 +141,7 @@ html.native-app [hidden] { display:none !important; }
 html.native-app[data-viewport-mode="wide"] .native-advanced-controls > summary { display:none; }
 html.native-app[data-viewport-mode="portrait"] #active-mode-view { height:auto !important; min-height:0; overflow:visible; }
 html.native-app[data-viewport-mode="portrait"] .native-advanced-controls { margin-top:14px; }
-html.native-app[data-viewport-mode="portrait"] .native-advanced-controls > summary { min-height:44px; padding:12px 0; color:var(--muted); font-size:15px; cursor:pointer; }
+html.native-app[data-viewport-mode="portrait"] .native-advanced-controls > summary { min-height:34px; padding:8px 0; color:var(--muted); font-size:12px; cursor:pointer; }
 html.native-app[data-viewport-mode="portrait"] .focus-lock-row { grid-template-rows:auto; }
 html.native-app[data-viewport-mode="portrait"] .focus-item-settings-row select { min-width:120px; }
 
@@ -150,3 +150,26 @@ html.native-app[data-viewport-mode="portrait"] .settings-grid .heat-hour-options
 html.native-app[data-viewport-mode="portrait"] input[type="checkbox"], html.native-app[data-viewport-mode="portrait"] input[type="radio"] { min-height:0; width:18px; height:18px; }
 
 html.native-app[data-viewport-mode="wide"] :is(#idle-mode-view,#active-mode-view) { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
+
+/* Apply the requested 60% to the entire APK portrait home canvas. */
+html.native-app[data-viewport-mode="portrait"] body.page-home { zoom:var(--ui-scale,.6); width:var(--ui-viewport-width,100%); }
+html.native-app[data-viewport-mode="portrait"] .page-home .app-shell { min-height:var(--ui-viewport-height,100dvh); }
+html.native-app .native-settings-entry .ui-button { min-height:34px; font-size:12px; border-radius:7px; }
+html.native-app .native-glass-card .ui-button--secondary { background:color-mix(in srgb,var(--surface) 50%,transparent); }
+html.native-app #native-runtime-message:empty { display:none; }
+html.native-app #native-runtime-card { border-radius:inherit; }
+html.native-app :is(.is-paused,.is-resting) #native-runtime-card {
+  position:absolute; inset:0; z-index:20; margin:0;
+  display:flex; flex-direction:column; justify-content:center; align-items:center;
+  background:color-mix(in srgb,var(--surface) 42%,transparent);
+  backdrop-filter:blur(10px) saturate(1.05); -webkit-backdrop-filter:blur(10px) saturate(1.05);
+  text-align:center; box-shadow:none;
+}
+html.native-app :is(.is-paused,.is-resting) #native-runtime-title { font-size:21px; margin:0 0 8px; }
+html.native-app :is(.is-paused,.is-resting) #native-runtime-timer { font-size:40px; margin:4px 0; }
+html.native-app :is(.is-paused,.is-resting) #native-runtime-detail { max-width:90%; font-size:13px; }
+html.native-app :is(.is-paused,.is-resting) #native-runtime-actions { justify-content:center; }
+
+html.native-app[data-viewport-mode="portrait"] .native-goal-choice select { min-height:34px; font-size:12px; border-radius:7px; }
+html.native-app[data-viewport-mode="portrait"] .native-settings-entry h2 { font-size:15px; }
+html.native-app[data-viewport-mode="portrait"] .is-resting #dashboard-controls { height:340px !important; overflow:hidden; }

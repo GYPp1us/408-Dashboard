@@ -30,6 +30,7 @@ class AtomicIslandSetupActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var sectionContent: LinearLayout
     private lateinit var style: SetupStyle
+    private var unbindBlur: (() -> Unit)? = null
     private lateinit var status: TextView
     private lateinit var pairingResult: TextView
     private lateinit var registrationResult: TextView
@@ -45,15 +46,16 @@ class AtomicIslandSetupActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         style = SetupStyle(this)
+        unbindBlur = style.bindWindow(this)
         content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(18), dp(20), dp(24))
-            setBackgroundColor(style.paper)
+            setPadding(dp(18), dp(16), dp(18), dp(20))
+            setBackgroundColor(Color.TRANSPARENT)
         }
         sectionContent = content
-        label("启用原子岛", 24f, true)
+        label("启用原子岛", 18f, true)
         label("仅在这台手机上完成配对和启用。成功后可以关闭无线调试，日常计时不需要电脑。")
-        status = label("正在检查…", 16f, true)
+        status = label("正在检查…", 13f, true)
         label("${Build.MODEL} · ${Build.DISPLAY}", 12f)
         if (!supported) label("当前系统尚未适配注册流程。系统升级后需重新验证，已开启的计时仍可使用。", 14f)
 
@@ -95,11 +97,11 @@ class AtomicIslandSetupActivity : Activity() {
         pairingPort.setText(savedInstanceState?.getString("pairingPort").orEmpty())
         connectionPort.setText(savedInstanceState?.getString("connectionPort").orEmpty())
         val centered = android.widget.FrameLayout(this).apply {
-            setBackgroundColor(style.paper)
+            setBackgroundColor(Color.TRANSPARENT)
             addView(content, android.widget.FrameLayout.LayoutParams(
                 minOf(resources.displayMetrics.widthPixels, dp(680)), -2, android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL))
         }
-        root = ScrollView(this).apply { isFillViewport = true; addView(centered) }
+        root = ScrollView(this).apply { isFillViewport = true; addView(centered); setBackgroundColor(style.canvas) }
         setContentView(root)
         AppWindowLayout.apply(this, root)
         refreshStatus()
@@ -122,6 +124,7 @@ class AtomicIslandSetupActivity : Activity() {
     }
 
     override fun onDestroy() {
+        unbindBlur?.invoke(); unbindBlur = null
         client?.close()
         worker.shutdownNow()
         super.onDestroy()
@@ -223,31 +226,31 @@ class AtomicIslandSetupActivity : Activity() {
         return port
     }
 
-    private fun label(value: String, size: Float = 14f, bold: Boolean = false): TextView = TextView(this).apply {
+    private fun label(value: String, size: Float = 12f, bold: Boolean = false): TextView = TextView(this).apply {
         text = value
         textSize = size
         style.text(this, size)
         if (bold) setTypeface(typeface, Typeface.BOLD)
-        setPadding(0, dp(6), 0, dp(6))
+        setPadding(0, dp(4), 0, dp(4))
         sectionContent.addView(this)
     }
 
     private fun section(value: String) {
         sectionContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(16))
+            setPadding(dp(14), dp(10), dp(14), dp(12))
             background = style.rounded()
-            content.addView(this, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
+            content.addView(this, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
         }
-        label(value, 20f, true)
+        label(value, 15f, true)
     }
 
     private fun numberInput(hintText: String, maxLength: Int, secret: Boolean = false): EditText = EditText(this).apply {
         hint = hintText
-        textSize = 16f
+        textSize = 12f
         setTextColor(style.ink)
         setHintTextColor(style.muted)
-        minHeight = dp(52)
+        minHeight = dp(34)
         inputType = InputType.TYPE_CLASS_NUMBER or if (secret) InputType.TYPE_NUMBER_VARIATION_PASSWORD else 0
         filters = arrayOf(InputFilter.LengthFilter(maxLength))
         isSingleLine = true

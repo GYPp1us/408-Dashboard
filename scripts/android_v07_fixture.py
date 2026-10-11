@@ -15,7 +15,8 @@ app = fixture_app(ROOT / ".tmp/android-v07-preview.sqlite3", testing=True)
 @app.before_request
 def apk_assets():
     overrides = {"/static/app.js": "app.js", "/static/viewport-scale.css": "viewport-scale.css",
-                 "/static/dashboard-details.js": "dashboard-details.js"}
+                 "/static/dashboard-details.js": "dashboard-details.js",
+                 "/static/viewport-scale.js": "viewport-scale.js"}
     asset = overrides.get(request.path)
     if asset:
         response = send_file(ASSETS / asset, max_age=0)

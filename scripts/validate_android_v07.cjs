@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const base = 'http://127.0.0.1:43130';
-const output = path.resolve('.tmp/v07');
+const output = path.resolve(process.env.MUTSUMI_UI_VALIDATION_OUTPUT || '.tmp/v07');
 fs.mkdirSync(output, { recursive: true });
 
 async function nativeBridge() {
@@ -96,19 +96,28 @@ async function nativeBridge() {
       controls:document.querySelector('#dashboard-controls').getBoundingClientRect().top,
       time:document.querySelector('.time-grid').getBoundingClientRect().top,
       buttonHeight:document.querySelector('#open-focus-launch').getBoundingClientRect().height,
+      scale:window.MutsumiViewport.scale,
+      logicalWidth:window.MutsumiViewport.logicalWidth,
+      panelRadius:getComputedStyle(document.querySelector('#dashboard-controls')).borderRadius,
+      goalRadius:getComputedStyle(document.querySelector('#native-focus-goal')).borderRadius,
     }));
     assert(layout.controls < layout.time, 'Focus controls must precede time cards');
     assert(layout.overflow <= 1, `Horizontal overflow ${layout.overflow}`);
-    assert(layout.buttonHeight >= 44, 'Phone controls need comfortable touch targets');
+    assert.equal(layout.scale, 0.6, 'Portrait home must use the requested 60% canvas');
+    assert(Math.abs(layout.logicalWidth * layout.scale - layout.width) < 1, 'Scaled canvas must still fill the phone width');
+    assert(Math.abs(layout.buttonHeight - 48 * 0.6) < 1, 'Existing 48px focus control must render at 60%');
+    assert.equal(layout.panelRadius, '8px');
+    assert.equal(layout.goalRadius, '7px');
     assert(await page.locator('.native-chart-toggle').isVisible(), 'Chart expansion must remain visible');
     assert(await page.locator('.native-stat-toggle').isVisible(), 'Statistics expansion must remain visible');
-    await page.screenshot({path:path.join(output,'portrait-idle.png'), fullPage:true});
+    await page.screenshot({path:path.join(output,'portrait-idle.png'), fullPage:false});
 
     await page.locator('#native-focus-goal').selectOption('25');
     await page.locator('#open-focus-launch').click();
     await page.locator('#submit-focus-launch').click();
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'focusing');
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).plannedSeconds), 1500);
+    await page.screenshot({path:path.join(output,'portrait-focusing.png'), fullPage:false});
     await page.locator('#toggle-focus-pause').click();
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'paused');
     const frozen = await page.locator('#focus-timer').innerText();
@@ -126,15 +135,27 @@ async function nativeBridge() {
     await page.waitForFunction(() => window.MutsumiWeb);
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).nextReminderAt), deadline);
     await page.waitForTimeout(400);
+    const glass = await page.evaluate(() => {
+      const card = document.querySelector('#native-runtime-card'), style = getComputedStyle(card);
+      return {background:style.backgroundColor, blur:style.backdropFilter, radius:style.borderRadius,
+        position:style.position, bounds:card.getBoundingClientRect().toJSON(),
+        buttonHeight:card.querySelector('button').getBoundingClientRect().height};
+    });
+    assert(glass.blur.includes('blur(10px)'), 'Pause panel must blur the underlying content');
+    assert.equal(glass.position, 'absolute', 'Glass panel must actually cover content inside the focus column');
+    assert.equal(glass.radius, '8px');
+    assert(Math.abs(glass.buttonHeight - 34 * .6) < 1, 'New action proportions must use the existing 34px controls');
     console.log('Pause surface', await page.evaluate(() => ({ opacity:getComputedStyle(document.querySelector('#active-mode-view')).opacity, filter:getComputedStyle(document.querySelector('#active-mode-view')).filter, overlayHidden:document.querySelector('#focus-state-overlay').hidden })));
-    await page.screenshot({path:path.join(output,'portrait-paused-snoozed.png'), fullPage:true});
+    await page.screenshot({path:path.join(output,'portrait-paused-snoozed.png'), fullPage:false});
     await page.locator('.native-chart-toggle').click();
+    await page.setViewportSize({width:412,height:480});
     await page.locator('#dashboard-activity').scrollIntoViewIfNeeded();
     await page.waitForTimeout(250);
     assert(await page.locator('#native-focus-dock').isVisible(), 'Bottom focus actions must stay available while reading charts');
     await page.locator('#native-dock-details').click();
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode), 'paused');
     await page.locator('#native-runtime-details').getByText('关闭', {exact:true}).click();
+    await page.setViewportSize({width:412,height:915});
     await page.locator('#dashboard-controls').scrollIntoViewIfNeeded();
     await page.evaluate(() => { window.__nativeFailure = true; });
     await page.locator('#native-runtime-actions').getByText('继续专注', {exact:true}).click();
@@ -145,6 +166,7 @@ async function nativeBridge() {
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'focusing');
     await page.evaluate(() => MutsumiWeb.navigateFocus('details'));
     assert(await page.locator('#native-runtime-details').isVisible());
+    await page.screenshot({path:path.join(output,'portrait-focus-details.png'), fullPage:false});
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode), 'focusing');
     await page.locator('#native-runtime-details').getByText('关闭', {exact:true}).click();
     await page.evaluate(() => MutsumiAndroid.performFocusAction('end', JSON.parse(MutsumiAndroid.getFocusRuntime()).revision, ''));
@@ -157,11 +179,11 @@ async function nativeBridge() {
     await page.waitForFunction(() => window.MutsumiWeb);
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).restStartedAtEpochMs), restStarted);
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).restTargetSeconds), 900);
-    await page.screenshot({path:path.join(output,'portrait-rest.png'), fullPage:true});
+    await page.screenshot({path:path.join(output,'portrait-rest.png'), fullPage:false});
     await page.setViewportSize({width:915,height:412});
     await page.waitForFunction(() => document.documentElement.dataset.viewportMode === 'wide');
     await page.waitForTimeout(400);
-    await page.screenshot({path:path.join(output,'landscape-rest.png'), fullPage:true});
+    await page.screenshot({path:path.join(output,'landscape-rest.png'), fullPage:false});
     await page.setViewportSize({width:412,height:915});
     await page.waitForFunction(() => document.documentElement.dataset.viewportMode === 'portrait');
     await page.evaluate(() => MutsumiWeb.endRest());
@@ -180,6 +202,7 @@ async function nativeBridge() {
     await page.waitForFunction(() => window.MutsumiWeb && document.querySelector('.native-settings-entry'));
     await page.locator('.native-settings-entry button').click();
     assert(await page.evaluate(() => window.__settingsOpened));
+    assert.equal(await page.evaluate(() => MutsumiViewport.scale), 1, 'Settings must retain its own scale');
     await page.locator('#new-subject-name').fill('旋转后保留草稿');
     await page.setViewportSize({width:915,height:412});
     await page.setViewportSize({width:412,height:915});
@@ -198,10 +221,10 @@ async function nativeBridge() {
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Narrow dark settings must not overflow');
     await page.screenshot({path:path.join(output,'narrow-dark-settings.png'), fullPage:true});
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(output,'web-validation.json'), JSON.stringify({passed:true,layout,checks:[
+    fs.writeFileSync(path.join(output,'web-validation.json'), JSON.stringify({passed:true,layout,glass,checks:[
       'portrait order and touch targets','planned focus','pause freezes effective time','snooze shared deadline and reload',
       'failed resume retains state and offers retry','details does not resume','target rest and reload',
       'sticky bottom actions and chart expansion','landscape and portrait','settings integrated and draft retained','320px dark ocean layout','real settlement stops reminder and opens report'],errors},null,2));
-    console.log('PASS: APK WebView assets, screenshots and report in .tmp/v07');
+    console.log(`PASS: APK WebView assets, screenshots and report in ${output}`);
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

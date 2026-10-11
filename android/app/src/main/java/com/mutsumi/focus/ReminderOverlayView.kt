@@ -22,7 +22,7 @@ class ReminderOverlayView(
         val style = SetupStyle(context)
         isClickable = true
         isFocusable = true
-        setBackgroundColor(Color.argb(185, 24, 18, 17))
+        setBackgroundColor(Color.argb(108, 24, 18, 17))
 
         val minutes = when (kind) {
             ReminderKind.PAUSED -> 5
@@ -40,7 +40,7 @@ class ReminderOverlayView(
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(26), dp(28), dp(26), dp(24))
+            setPadding(dp(18), dp(18), dp(18), dp(16))
             background = style.rounded()
             isClickable = false
         }
@@ -53,7 +53,7 @@ class ReminderOverlayView(
         }, LinearLayout.LayoutParams(-1, -2))
         card.addView(TextView(context).apply {
             text = title
-            textSize = 27f
+            textSize = 21f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(style.ink)
             gravity = Gravity.CENTER
@@ -61,41 +61,41 @@ class ReminderOverlayView(
         }, LinearLayout.LayoutParams(-1, -2))
         card.addView(TextView(context).apply {
             text = detail
-            textSize = 16f
+            textSize = 13f
             setTextColor(style.muted)
             gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(-1, -2))
         if (kind == ReminderKind.PAUSED) card.addView(TextView(context).apply {
             text = "继续专注"
-            textSize = 17f
+            textSize = 12f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            background = rounded(style.accent, 18f)
+            background = rounded(style.accent, 7f)
             setOnClickListener { onResume() }
-        }, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(20) })
+        }, LinearLayout.LayoutParams(-1, dp(34)).apply { topMargin = dp(12) })
         card.addView(TextView(context).apply {
             text = "再等 5 分钟  →"
-            textSize = 17f
+            textSize = 12f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             setTypeface(typeface, Typeface.BOLD)
-            background = rounded(Color.rgb(86, 75, 69), 18f)
+            background = rounded(Color.argb(180, 86, 75, 69), 7f)
             setPadding(dp(16), 0, dp(16), 0)
             setOnTouchListener(SwipeListener(this, onContinueSlacking))
-        }, LinearLayout.LayoutParams(-1, dp(60)).apply { topMargin = dp(24) })
+        }, LinearLayout.LayoutParams(-1, dp(34)).apply { topMargin = dp(12) })
         card.addView(TextView(context).apply {
             text = "查看提醒 · 返回应用"
-            textSize = 16f
+            textSize = 13f
             setTextColor(Color.rgb(112, 96, 88))
             gravity = Gravity.CENTER
             setPadding(0, dp(12), 0, 0)
-            minHeight = dp(48)
+            minHeight = dp(34)
             setOnClickListener { onOpenTimer() }
         })
 
         addView(android.widget.ScrollView(context).apply { addView(card) },
             LayoutParams(minOf(resources.displayMetrics.widthPixels - dp(48), dp(520)), -2, Gravity.CENTER).apply {
-                topMargin = dp(24); bottomMargin = dp(24)
+                topMargin = dp(12); bottomMargin = dp(24)
             })
     }
 
