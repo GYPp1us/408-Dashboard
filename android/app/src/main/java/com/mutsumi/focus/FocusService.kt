@@ -148,16 +148,17 @@ class FocusService : Service() {
         val atomic = publisher.usesAtomicIsland()
         val forceShowCard = visible && atomic && token.isNotBlank() && !store.wasIslandPresented(token)
         val clockBucket = if (!visible) 0 else when (state.mode) {
-            FocusMode.PAUSED -> (now - state.pausedAtEpochMs).coerceAtLeast(0) / 10_000
-            FocusMode.REST -> state.restElapsed(now) / 10
-            FocusMode.FOCUSING -> state.elapsedNow(now) / 10
-            else -> if (due != null) (now - state.endedAtEpochMs).coerceAtLeast(0) / 10_000 else 0
+            FocusMode.PAUSED -> (now - state.pausedAtEpochMs).coerceAtLeast(0) / 1000
+            FocusMode.REST -> state.restElapsed(now)
+            FocusMode.FOCUSING -> state.elapsedNow(now)
+            else -> if (due != null) (now - state.endedAtEpochMs).coerceAtLeast(0) / 1000 else 0
         }
         val signature = listOf(visible, state.mode, state.sessionId, state.pausedAtEpochMs, state.restStartedAtEpochMs,
-            state.endedAtEpochMs, state.plannedSeconds, state.restTargetSeconds, state.elapsedSeconds / 10,
-            state.pausedSeconds, state.todayFocusSeconds, state.todaySessionCount, clockBucket, token, retryAction).joinToString(":")
+            state.startedAtEpochMs, state.endedAtEpochMs, state.plannedSeconds, state.restTargetSeconds, state.elapsedSeconds,
+            state.pausedSeconds, state.todayFocusSeconds, state.todaySessionCount, state.accountTimeZone, state.accountOffsetSeconds,
+            publisher.palette(state).accent, clockBucket, token, retryAction).joinToString(":")
         val elapsedNow = SystemClock.elapsedRealtime()
-        if (!refreshPolicy.shouldPublish(signature, elapsedNow, publisher.usesAtomicTransport(), !foregroundStarted)) return true
+        if (!refreshPolicy.shouldPublish(signature, elapsedNow, !foregroundStarted)) return true
         val operation = when {
             !visible -> OriginOsAtomicPublisher.AtomicOperation.END
             !islandVisible -> OriginOsAtomicPublisher.AtomicOperation.CREATE
@@ -393,6 +394,8 @@ class FocusService : Service() {
             return JSONObject().apply {
                 put("mode", state.mode.name.lowercase()); put("sessionId", state.sessionId)
                 put("subject", state.subject); put("elapsedSeconds", state.elapsedNow(now))
+                put("startedAtEpochMs", state.startedAtEpochMs)
+                put("accountTimeZone", state.accountTimeZone); put("accountOffsetSeconds", state.accountOffsetSeconds)
                 put("pausedAtEpochMs", state.pausedAtEpochMs); put("pausedSeconds", state.pausedSeconds)
                 put("todayFocusSeconds", state.todayFocusSeconds); put("todaySessionCount", state.todaySessionCount)
                 put("endedAtEpochMs", state.endedAtEpochMs)

@@ -36,14 +36,17 @@ async function nativeBridge() {
     sessionId:session.id, subject:session.subject, elapsedSeconds:session.effective_seconds,
     startedAtEpochMs:Date.parse(session.started_at), pausedAtEpochMs:Date.parse(session.paused_at) || 0,
     endedAtEpochMs:Date.parse(session.ended_at) || 0, plannedSeconds:session.planned_minutes * 60,
-    focusItemId:session.focus_item_id, restStartedAtEpochMs:0});
+    focusItemId:session.focus_item_id, restStartedAtEpochMs:0,
+    accountTimeZone:runtime.accountTimeZone || "", accountOffsetSeconds:runtime.accountOffsetSeconds ?? 28800});
   window.__setNative = payload => update({ ...runtime, ...payload, busy:false, retryAction:'', message:'', dismissed:false, snooze:0 });
   window.__nativeActions = [];
   window.MutsumiAndroid = {
     getDisplayOrientation: () => innerWidth > innerHeight ? 'landscape' : 'portrait',
     getFocusRuntime: () => JSON.stringify(view()),
     getFocusDestination: () => '', clearFocusDestination: () => {},
-    setAppearance: () => {}, imagePickerOwnsBack: () => false,
+    setAppearance: (mode, palette, accent) => { window.__nativeAppearance = {mode, palette, accent}; },
+    setAccountTimeZone: zone => { runtime.accountTimeZone = zone; persist(); },
+    imagePickerOwnsBack: () => false,
     openFocusSettings: () => { window.__settingsOpened = true; },
     clearFocusState: () => update({mode:'idle', sessionId:0, elapsedSeconds:0, restStartedAtEpochMs:0}),
     syncFocusState: raw => {
@@ -117,6 +120,8 @@ async function nativeBridge() {
     await page.locator('#submit-focus-launch').click();
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'focusing');
     assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).plannedSeconds), 1500);
+    await page.waitForFunction(() => window.__nativeAppearance?.accent === getComputedStyle(document.body).getPropertyValue('--accent').trim());
+    await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).accountTimeZone === 'Asia/Shanghai');
     await page.screenshot({path:path.join(output,'portrait-focusing.png'), fullPage:false});
     await page.locator('#toggle-focus-pause').click();
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'paused');
@@ -179,6 +184,10 @@ async function nativeBridge() {
     await page.locator('#native-runtime-details').getByText('关闭', {exact:true}).click();
     await page.evaluate(() => MutsumiAndroid.performFocusAction('end', JSON.parse(MutsumiAndroid.getFocusRuntime()).revision, ''));
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'ended');
+    await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).startedAtEpochMs > 0);
+    const endedRuntime = await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()));
+    assert(endedRuntime.startedAtEpochMs < endedRuntime.endedAtEpochMs, 'Session endpoints must survive the web/native transition');
+    assert.equal(endedRuntime.accountOffsetSeconds, 28800);
     await page.locator('#native-rest-goal').selectOption('15');
     await page.locator('#start-rest').click();
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'rest');
@@ -226,6 +235,9 @@ async function nativeBridge() {
       document.documentElement.dataset.themeMode = 'dark';
       document.documentElement.dataset.themePalette = 'ocean';
     });
+    await page.evaluate(() => document.dispatchEvent(new CustomEvent('dashboard:appearance')));
+    await page.waitForFunction(() => window.__nativeAppearance?.palette === 'ocean');
+    assert.equal(await page.evaluate(() => window.__nativeAppearance.accent), await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--accent').trim()));
     await page.waitForTimeout(250);
     console.log('Narrow overflow', await page.evaluate(() => ({width:innerWidth, scroll:document.documentElement.scrollWidth,
       elements:[...document.querySelectorAll('*')].filter(el=>el.getBoundingClientRect().right > innerWidth+1 && el.getBoundingClientRect().width).slice(0,12).map(el=>({tag:el.tagName,id:el.id,cls:el.className,right:el.getBoundingClientRect().right,width:el.getBoundingClientRect().width}))})));

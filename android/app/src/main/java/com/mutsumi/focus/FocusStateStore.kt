@@ -17,6 +17,8 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
         pausedSeconds = preferences.getLong("paused_seconds", 0),
         todayFocusSeconds = preferences.getLong("today_focus_seconds", 0),
         todaySessionCount = preferences.getInt("today_session_count", 0),
+        accountTimeZone = preferences.getString("account_time_zone", "").orEmpty(),
+        accountOffsetSeconds = preferences.getInt("account_offset_seconds", 28_800),
         plannedSeconds = preferences.getLong("planned_seconds", 0),
         focusItemId = preferences.getLong("focus_item_id", 0),
         restStartedAtEpochMs = preferences.getLong("rest_started_at", 0),
@@ -38,6 +40,8 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
             .putLong("paused_seconds", state.pausedSeconds)
             .putLong("today_focus_seconds", state.todayFocusSeconds)
             .putInt("today_session_count", state.todaySessionCount)
+            .putString("account_time_zone", state.accountTimeZone)
+            .putInt("account_offset_seconds", state.accountOffsetSeconds)
             .putLong("planned_seconds", state.plannedSeconds)
             .putLong("focus_item_id", state.focusItemId)
             .putLong("rest_started_at", state.restStartedAtEpochMs)

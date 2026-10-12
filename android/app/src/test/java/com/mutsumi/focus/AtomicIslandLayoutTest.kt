@@ -13,7 +13,7 @@ class AtomicIslandLayoutTest {
         val layout = AtomicIslandLayout.from(state, DueReminder(ReminderKind.PAUSED, 0, 2), 11 * minute)
         assertEquals(1, layout.template)
         assertEquals("暂停中", layout.title)
-        assertEquals("00:10:00", layout.rightText)
+        assertEquals("10:00", layout.rightText)
         assertEquals("第 2 轮提醒", layout.core)
         assertEquals(AtomicIslandLayout.Button("继续专注", "resume"), layout.button)
         val wire = layout.wire(true)
@@ -24,14 +24,14 @@ class AtomicIslandLayoutTest {
         assertEquals(4, island["island.superx.rightTemplate"])
         assertEquals(true, island["island.superx.forceShowCard"])
         assertEquals("暂停中", map(island["island.superx.leftInfo"])["island.superx.leftInfo.content"])
-        assertEquals("00:10:00", map(island["island.superx.rightInfo"])["island.superx.rightInfo.content"])
+        assertEquals("10:00", map(island["island.superx.rightInfo"])["island.superx.rightInfo.content"])
         assertEquals(1800L, state.elapsedNow(11 * minute))
     }
 
     @Test fun `short pause never claims that a reminder was sent`() {
         val layout = AtomicIslandLayout.from(FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = minute), null, 2 * minute)
         assertEquals("等待首次提醒", layout.core)
-        assertEquals("00:01:00", layout.rightText)
+        assertEquals("1:00", layout.rightText)
         assertEquals(false, map(layout.wire(false)["notification.superx.island"])["island.superx.forceShowCard"])
     }
 
@@ -55,29 +55,36 @@ class AtomicIslandLayoutTest {
         assertEquals(2, free.template)
         assertEquals(3, free.rightTemplate)
         assertEquals(0, free.progress)
-        assertTrue(free.subtitle.endsWith("自由计时"))
+        assertEquals("已专注 15分钟0秒", free.subtitle)
+        assertEquals("15:00", free.collapsedText)
         val overrun = AtomicIslandLayout.from(FocusRuntimeState(mode = FocusMode.FOCUSING, elapsedSeconds = 9000, plannedSeconds = 1800), null, minute)
         assertEquals(100, overrun.progress)
         assertFalse(overrun.completed)
     }
 
-    @Test fun `session summary uses actual effective and cumulative pause statistics`() {
-        val layout = AtomicIslandLayout.from(FocusRuntimeState(mode = FocusMode.ENDED, elapsedSeconds = 2700, pausedSeconds = 600), null, minute)
+    @Test fun `session summary displays start and end with effective duration on the middle line`() {
+        val start = java.time.Instant.parse("2026-10-11T01:00:00Z").toEpochMilli()
+        val end = start + 55 * minute
+        val layout = AtomicIslandLayout.from(FocusRuntimeState(mode = FocusMode.ENDED, elapsedSeconds = 2700,
+            pausedSeconds = 600, startedAtEpochMs = start, endedAtEpochMs = end, accountTimeZone = "Asia/Shanghai"), null, end)
         assertEquals(3, layout.template)
-        assertEquals("00:45:00", layout.leftValue)
-        assertEquals("00:10:00", layout.rightValue)
-        assertEquals("累计暂停", layout.rightLabel)
+        assertEquals("09:00", layout.leftValue)
+        assertEquals("09:55", layout.rightValue)
+        assertEquals("开始", layout.leftLabel)
+        assertEquals("结束", layout.rightLabel)
+        assertEquals("45分钟0秒", layout.middleValue)
+        assertEquals("累计有效专注", layout.middleLabel)
+        assertEquals("45:00", layout.collapsedText)
         assertTrue(layout.completed)
         val info = map(layout.wire(false)["notification.superx.infos"])
-        assertEquals("有效专注", info["notification.superx.infos.leftSub"])
-        assertEquals("00:10:00", info["notification.superx.infos.rightMain"])
+        assertEquals("45分钟0秒", info["notification.superx.infos.midTopMsg"])
     }
 
     @Test fun `daily summary uses settlement totals rather than the last session`() {
         val layout = AtomicIslandLayout.from(FocusRuntimeState(mode = FocusMode.SETTLED, elapsedSeconds = 900,
             todayFocusSeconds = 25_200, todaySessionCount = 8), null, minute)
         assertEquals(3, layout.template)
-        assertEquals("07:00:00", layout.leftValue)
+        assertEquals("7小时0分钟", layout.leftValue)
         assertEquals("8 段", layout.rightValue)
         assertEquals("专注次数", layout.rightLabel)
         assertEquals(1, map(map(layout.wire(false)["notification.superx.island"])["island.superx.rightInfo"])["island.superx.rightInfo.progressState"])
@@ -89,5 +96,39 @@ class AtomicIslandLayoutTest {
         assertEquals(1, layout.template)
         assertEquals("第 3 轮提醒", layout.core)
         assertEquals(AtomicIslandLayout.Button("开始专注", "next"), layout.button)
+    }
+
+    @Test fun `rest has the same text timer capsule as pause and never caps elapsed time to its goal`() {
+        val state = FocusRuntimeState(mode = FocusMode.REST, restStartedAtEpochMs = minute, restTargetSeconds = 900)
+        val layout = AtomicIslandLayout.from(state, null, 126 * minute + 7000)
+        assertEquals(1, layout.template)
+        assertEquals(4, layout.rightTemplate)
+        assertEquals("休息中", layout.collapsedText)
+        assertEquals("125:07", layout.rightText)
+        assertEquals("2小时5分钟", layout.core)
+        assertEquals(AtomicIslandLayout.Button("结束休息", "endRest"), layout.button)
+        assertNull(ReminderPolicy.due(state, 126 * minute, 0, 0))
+    }
+
+    @Test fun `long pause and focus times do not wrap or collapse when the progress reaches its target`() {
+        val paused = AtomicIslandLayout.from(FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = minute), null, 126 * minute + 7000)
+        assertEquals("125:07", paused.rightText)
+        assertEquals("已暂停 2小时5分钟", paused.subtitle)
+        val focus = AtomicIslandLayout.from(FocusRuntimeState(mode = FocusMode.FOCUSING, elapsedSeconds = 7507,
+            plannedSeconds = 900, observedAtEpochMs = minute), null, minute)
+        assertEquals(100, focus.progress)
+        assertEquals("125:07", focus.collapsedText)
+        assertEquals("已专注 2小时5分钟", focus.subtitle)
+    }
+
+    @Test fun `each live second is reflected while paused effective focus remains frozen`() {
+        val focus = FocusRuntimeState(mode = FocusMode.FOCUSING, elapsedSeconds = 3599, observedAtEpochMs = minute)
+        val pause = focus.copy(mode = FocusMode.PAUSED, pausedAtEpochMs = minute)
+        for (second in 0..12) {
+            val now = minute + second * 1000L
+            assertEquals(IslandTime.small(3599 + second.toLong()), AtomicIslandLayout.from(focus, null, now).collapsedText)
+            assertEquals("0:${second.toString().padStart(2, '0')}", AtomicIslandLayout.from(pause, null, now).rightText)
+            assertEquals(3599, pause.elapsedNow(now))
+        }
     }
 }

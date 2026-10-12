@@ -65,7 +65,14 @@
     }));
   }
 
+  function syncNativeAppearance() {
+    const appearance = document.documentElement.dataset;
+    window.MutsumiAndroid?.setAppearance?.(appearance.themeMode || "system", appearance.themePalette || "clay",
+      getComputedStyle(document.body).getPropertyValue("--accent").trim());
+  }
+
   function renderNativeRuntime() {
+    syncNativeAppearance();
     if (!canManageOwnFocus()) return;
     if (window.MutsumiWeb) {
       const destination = window.MutsumiAndroid?.getFocusDestination?.();
@@ -118,8 +125,7 @@
       $("#native-details-note").textContent = runtime.detail;
       renderRuntimeButtons($("#native-details-actions"), runtime);
     }
-    const appearance = document.documentElement.dataset;
-    window.MutsumiAndroid?.setAppearance?.(appearance.themeMode || "system", appearance.themePalette || "clay");
+    syncNativeAppearance();
   }
 
   function navigateFocus(destination) {
@@ -246,6 +252,8 @@
     setSecondTask("nativeRuntime", renderNativeRuntime);
     document.addEventListener("dashboard:updated", () => { adoptNativeRest(); renderNativeRuntime(); });
     document.addEventListener("dashboard:theme", renderNativeRuntime);
+    document.addEventListener("dashboard:appearance", syncNativeAppearance);
+    syncNativeAppearance();
   }
   const commitSliders = new Map();
   let slidersLifecycleBound = false;
@@ -478,6 +486,19 @@
     showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2400);
   }
 
+  function loadNativeAccountTimeZone() {
+    if (!canManageOwnFocus() || state.nativeTimeZoneLoading || state.accountTimeZone || Date.now() < (state.nativeTimeZoneRetryAt || 0)) return;
+    const viewer = document.body.dataset.viewerId;
+    state.nativeTimeZoneLoading = true;
+    api("/api/settings").then(settings => {
+      if (document.body.dataset.viewerId !== viewer || !canManageOwnFocus()) return;
+      state.accountTimeZone = settings.settings?.timezone || "";
+      window.MutsumiAndroid?.setAccountTimeZone?.(state.accountTimeZone);
+      notifyNativeFocusState();
+    }).catch(() => { state.nativeTimeZoneRetryAt = Date.now() + 60000; })
+      .finally(() => { state.nativeTimeZoneLoading = false; });
+  }
+
   function notifyNativeFocusState(active = state.dashboard?.focus?.active) {
     if (!canManageOwnFocus()) return;
     if (active?.user_id != null && String(active.user_id) !== document.body.dataset.viewerId) {
@@ -485,12 +506,15 @@
       return;
     }
     if (!window.MutsumiAndroid || typeof window.MutsumiAndroid.syncFocusState !== "function") return;
+    loadNativeAccountTimeZone();
     const mode = active?.paused_at ? "paused" : active ? "focusing" : state.dashboard?.daily_settlement ? "settled" : state.restStartedAt ? "rest" : state.recentlyEnded ? "ended" : "idle";
     const payload = {
       mode,
       sessionId: Number(active?.id ?? state.recentlyEnded?.id ?? 0),
       subject: active?.subject ?? state.recentlyEnded?.subject ?? "",
-      startedAtEpochMs: active?.started_at ? Date.parse(active.started_at) : 0,
+      startedAtEpochMs: active?.started_at ? Date.parse(active.started_at) : state.recentlyEnded?.startedAt ?? nativeRuntime().startedAtEpochMs ?? 0,
+      accountTimeZone: state.accountTimeZone || nativeRuntime().accountTimeZone || "",
+      accountOffsetSeconds: accountOffset() * 60,
       pausedAtEpochMs: active?.paused_at ? Date.parse(active.paused_at) : 0,
       endedAtEpochMs: mode === "settled" ? Date.parse(state.dashboard.daily_settlement.settled_at) || 0 : state.recentlyEnded?.endedAt ?? 0,
       elapsedSeconds: active ? focusElapsedSeconds(active) : Number(state.recentlyEnded?.elapsedSeconds || 0),
@@ -1910,6 +1934,8 @@
       state.recentlyEnded = {
         id: previousActive.id,
         subject: previousActive.subject,
+        startedAt: Date.parse(completed?.started_at || previousActive.started_at) || runtime.startedAtEpochMs || 0,
+        pausedSeconds: Number(completed?.paused_seconds ?? runtime.pausedSeconds ?? 0),
         endedAt: Date.parse(completed?.ended_at) || (runtime.sessionId === previousActive.id ? runtime.endedAtEpochMs : 0) || Date.now(),
         elapsedSeconds: completed?.effective_seconds ?? (runtime.mode === "ended" && runtime.sessionId === previousActive.id
           ? runtime.elapsedSeconds : focusElapsedSeconds(previousActive)),
@@ -2218,7 +2244,7 @@
         closeFocusSummary();
         state.restStartedAt = null;
         try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
-        state.recentlyEnded = ended ? { id:ended.id, subject:ended.subject, endedAt:Date.parse(ended.ended_at) || Date.now(), elapsedSeconds:Number(ended.effective_seconds ?? ended.duration_seconds ?? focusElapsedSeconds(ended)), pausedSeconds:Number(ended.paused_seconds || 0) } : null;
+        state.recentlyEnded = ended ? { id:ended.id, subject:ended.subject, startedAt:Date.parse(ended.started_at) || nativeRuntime().startedAtEpochMs || 0, endedAt:Date.parse(ended.ended_at) || Date.now(), elapsedSeconds:Number(ended.effective_seconds ?? ended.duration_seconds ?? focusElapsedSeconds(ended)), pausedSeconds:Number(ended.paused_seconds || 0) } : null;
         state.dashboard = { ...state.dashboard, daily_settlement:result.settlement, focus:{ ...(state.dashboard?.focus || {}), active:null } };
         applyFocusState(null);
         state.recentlyEnded = null;
@@ -2493,6 +2519,8 @@
   async function loadSettings() {
     if (!$("#settings-form")) return;
     const [settings, scores] = await Promise.all([api("/api/settings"), api("/api/scores")]);
+    state.accountTimeZone = settings.settings?.timezone || "";
+    window.MutsumiAndroid?.setAccountTimeZone?.(state.accountTimeZone);
     window.DashboardUI?.applyPreferences(settings.settings);
     Object.entries(settings.settings).forEach(([key, value]) => { const input = document.querySelector(`[name="${key}"]`); if (input) input.value = value; });
     const visibleHours = new Set(String(settings.settings.heatmap_visible_hours || "").split(","));

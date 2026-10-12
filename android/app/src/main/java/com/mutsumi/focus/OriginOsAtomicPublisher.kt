@@ -6,15 +6,19 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.AbsoluteSizeSpan
+import android.text.style.TypefaceSpan
 import com.mutsumi.focus.atomic.VivoAtomicPayload
 
 class OriginOsAtomicPublisher(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
     private val store = FocusStateStore(context)
+    private val glyphs = mutableMapOf<Pair<AtomicIslandLayout.Glyph, Int>, Icon>()
 
     fun ensureChannels() {
         manager.createNotificationChannel(NotificationChannel(CHANNEL_LIVE, "专注与休息实时状态", NotificationManager.IMPORTANCE_LOW).apply {
@@ -36,12 +40,20 @@ class OriginOsAtomicPublisher(private val context: Context) {
         }.getOrDefault(false)
     }
 
-    fun usesAtomicTransport(): Boolean = isVivoDevice()
+    fun palette(state: FocusRuntimeState): IslandPalette {
+        val prefs = context.getSharedPreferences("focus_runtime", Context.MODE_PRIVATE)
+        val name = prefs.getString("theme_palette", "clay").orEmpty()
+        val group = IslandPalette.group(state.mode)
+        return if (prefs.getString("theme_runtime_group", "") == group && prefs.getString("theme_runtime_palette", "") == name)
+            IslandPalette(prefs.getInt("theme_runtime_accent", IslandPalette.fallback(name, state.mode).accent))
+        else IslandPalette.fallback(name, state.mode)
+    }
 
     fun liveNotification(state: FocusRuntimeState, operation: AtomicOperation, retryAction: String = "",
                          forceShowCard: Boolean = false, now: Long = System.currentTimeMillis()): Notification {
         val due = store.due(now)
         val layout = AtomicIslandLayout.from(state, due, now)
+        val colors = palette(state)
         val home = openIntent("home", 1)
         val primary = when (layout.button.action) {
             "resume" -> serviceIntent(FocusService.ACTION_RESUME, 2, state)
@@ -51,11 +63,12 @@ class OriginOsAtomicPublisher(private val context: Context) {
         }
         val content = if (retryAction.isNotBlank()) "操作未确认，请再次点击${layout.button.label}" else when (layout.template) {
             1 -> "${layout.core} · ${layout.description}"
-            3 -> "${layout.leftLabel} ${layout.leftValue} · ${layout.rightLabel} ${layout.rightValue}"
+            3 -> "${layout.leftLabel} ${layout.leftValue} · ${layout.rightLabel} ${layout.rightValue}" +
+                if (layout.middleValue.isNotBlank()) " · ${layout.middleValue}" else ""
             else -> layout.subtitle
         }
         val builder = Notification.Builder(context, CHANNEL_LIVE)
-            .setSmallIcon(R.drawable.ic_notification).setColor(Color.rgb(185, 74, 67))
+            .setSmallIcon(R.drawable.ic_notification).setColor(colors.accent)
             .setContentTitle(layout.title).setContentText(content)
             .setStyle(Notification.BigTextStyle().bigText(content))
             .setContentIntent(home).setOnlyAlertOnce(true).setOngoing(state.mode != FocusMode.IDLE)
@@ -65,12 +78,8 @@ class OriginOsAtomicPublisher(private val context: Context) {
             .setWhen(now - state.elapsedNow(now) * 1000).setShowWhen(true)
         if (state.mode == FocusMode.PAUSED && state.pausedAtEpochMs > 0) builder.setUsesChronometer(true)
             .setWhen(state.pausedAtEpochMs).setShowWhen(true)
-        if (state.mode == FocusMode.REST && state.restStartedAtEpochMs > 0) builder.setUsesChronometer(true).setShowWhen(true).apply {
-            if (state.restTargetSeconds > 0 && state.restElapsed(now) < state.restTargetSeconds) {
-                setChronometerCountDown(true); setWhen(state.restStartedAtEpochMs + state.restTargetSeconds * 1000)
-            } else if (state.restTargetSeconds == 0L) setWhen(state.restStartedAtEpochMs)
-            else setUsesChronometer(false).setShowWhen(false)
-        }
+        if (state.mode == FocusMode.REST && state.restStartedAtEpochMs > 0) builder.setUsesChronometer(true)
+            .setShowWhen(true).setWhen(state.restStartedAtEpochMs)
         if (Build.VERSION.SDK_INT >= 36 && state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST)) {
             val progress = Notification.ProgressStyle().setStyledByProgress(true)
             if (state.mode == FocusMode.FOCUSING && state.plannedSeconds > 0) {
@@ -85,7 +94,7 @@ class OriginOsAtomicPublisher(private val context: Context) {
                 BuildConfig.VIVO_ATOMIC_SCENE, layout.title, content, layout.rightText, home,
                 BuildConfig.VIVO_HISTORICAL_ISLAND_ONLY, store.nextAtomicRecord(), "focus:${state.sessionId}")
             if (operation != AtomicOperation.END && !BuildConfig.VIVO_HISTORICAL_ISLAND_ONLY) {
-                extras.putAll(wireBundle(layout.wire(forceShowCard), primary, home))
+                extras.putAll(wireBundle(layout.wire(forceShowCard, colors), primary, home, colors))
                 // Keep the node stable between genuine mode changes / rounds.
                 extras.putInt("notification.superx.newNode", state.mode.ordinal * 100_000 + (due?.round ?: 0).coerceAtMost(99_999))
             }
@@ -94,22 +103,32 @@ class OriginOsAtomicPublisher(private val context: Context) {
         return builder.build()
     }
 
-    private fun glyph(resource: AtomicIslandLayout.Glyph): Icon = Icon.createWithResource(context, when (resource) {
+    private fun glyph(resource: AtomicIslandLayout.Glyph, colors: IslandPalette): Icon = glyphs.getOrPut(resource to colors.accent) {
+        Icon.createWithResource(context, when (resource) {
         AtomicIslandLayout.Glyph.BRAND -> R.drawable.ic_atomic
         AtomicIslandLayout.Glyph.START -> R.drawable.ic_atomic_node_start
         AtomicIslandLayout.Glyph.COMPLETE -> R.drawable.ic_atomic_node_complete
-    })
+        }).setTint(colors.accent)
+    }
 
     @Suppress("UNCHECKED_CAST")
-    private fun wireBundle(values: Map<String, Any>, primary: PendingIntent, home: PendingIntent): Bundle = Bundle().apply {
+    private fun wireBundle(values: Map<String, Any>, primary: PendingIntent, home: PendingIntent, colors: IslandPalette): Bundle = Bundle().apply {
         values.forEach { (key, value) -> when (value) {
-            is String -> putString(key, value)
+            is String -> if (key == "island.superx.leftInfo.content" || key == "island.superx.rightInfo.content") {
+                // Keep the whole time at the front, with stable narrow numerals.
+                // Only state text yields size; no ScaleX or ellipsis on time.
+                val timer = value.matches(Regex("\\d+:\\d{2}"))
+                val text = SpannableString(value)
+                text.setSpan(AbsoluteSizeSpan(if (timer) 16 else 14, true), 0, value.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                if (timer) text.setSpan(TypefaceSpan("monospace"), 0, value.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                putCharSequence(key, text)
+            } else putString(key, value)
             is Int -> putInt(key, value)
             is Boolean -> putBoolean(key, value)
-            is AtomicIslandLayout.Glyph -> putParcelable(key, glyph(value))
+            is AtomicIslandLayout.Glyph -> putParcelable(key, glyph(value, colors))
             is AtomicIslandLayout.Click -> putParcelable(key, if (value == AtomicIslandLayout.Click.PRIMARY) primary else home)
-            is Map<*, *> -> putBundle(key, wireBundle(value as Map<String, Any>, primary, home))
-            is List<*> -> putParcelableArrayList(key, ArrayList(value.map { glyph(it as AtomicIslandLayout.Glyph) }))
+            is Map<*, *> -> putBundle(key, wireBundle(value as Map<String, Any>, primary, home, colors))
+            is List<*> -> putParcelableArrayList(key, ArrayList(value.map { glyph(it as AtomicIslandLayout.Glyph, colors) }))
             else -> error("Unsupported public atomic field $key")
         } }
     }
@@ -120,7 +139,7 @@ class OriginOsAtomicPublisher(private val context: Context) {
         val primary = if (kind == ReminderKind.PAUSED) serviceIntent(FocusService.ACTION_RESUME, 12, state)
             else openIntent("next", 12)
         return Notification.Builder(context, CHANNEL_REMINDER).setSmallIcon(R.drawable.ic_notification)
-            .setColor(Color.rgb(185, 74, 67)).setContentTitle(if (kind == ReminderKind.PAUSED) "暂停中" else "专注提醒")
+            .setColor(palette(state).accent).setContentTitle(if (kind == ReminderKind.PAUSED) "暂停中" else "专注提醒")
             .setContentText(if (kind == ReminderKind.PAUSED) "第 ${store.due()?.round ?: 1} 轮提醒" else FocusPresentation.reminderTitle(kind))
             .setCategory(Notification.CATEGORY_REMINDER).setContentIntent(open).setAutoCancel(false)
             .setOnlyAlertOnce(silent).setShowWhen(false)

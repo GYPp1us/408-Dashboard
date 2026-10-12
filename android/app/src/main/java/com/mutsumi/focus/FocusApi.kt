@@ -60,7 +60,7 @@ object FocusApi {
                         for (index in 0 until rows.length()) {
                             val row = rows.optJSONObject(index) ?: continue
                             if (row.optLong("id") == localState.sessionId && epochMillis(row.optString("ended_at")) > 0)
-                                return StateResult(true, status, stateFromPayload(row, localState.baseUrl, System.currentTimeMillis()))
+                                return StateResult(true, status, withAccountTime(stateFromPayload(row, localState.baseUrl, System.currentTimeMillis()), localState, data.optString("now")))
                         }
                     }
                 }
@@ -70,7 +70,7 @@ object FocusApi {
             StateResult(
                 true,
                 status,
-                stateFromPayload(active, localState.baseUrl, now),
+                withAccountTime(stateFromPayload(active, localState.baseUrl, now), localState, data.optString("now")),
             )
         } catch (_: Exception) {
             StateResult(false, 0)
@@ -93,7 +93,7 @@ object FocusApi {
                 JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).optJSONObject("session")
             }.getOrNull() else null
             Result(status in 200..299 && (path == "/api/focus/heartbeat" || session != null), status,
-                session?.let { stateFromPayload(it, state.baseUrl, System.currentTimeMillis()) })
+                session?.let { withAccountTime(stateFromPayload(it, state.baseUrl, System.currentTimeMillis()), state) })
         } catch (_: Exception) {
             Result(false, 0)
         } finally {
@@ -122,6 +122,15 @@ object FocusApi {
             )
         return if (data.optString("status") == "active" || data.optString("ended_at").let { it.isBlank() || it == "null" }) state
         else state.copy(mode = FocusMode.ENDED, endedAtEpochMs = epochMillis(data.optString("ended_at")), pausedAtEpochMs = 0)
+    }
+
+    private fun withAccountTime(incoming: FocusRuntimeState, previous: FocusRuntimeState, reference: String = ""): FocusRuntimeState {
+        val serverTime = runCatching { OffsetDateTime.parse(reference) }.getOrNull()
+        val zone = if (serverTime != null && previous.accountTimeZone.isNotEmpty() && runCatching {
+            java.time.ZoneId.of(previous.accountTimeZone).rules.getOffset(serverTime.toInstant()) != serverTime.offset
+        }.getOrDefault(false)) "" else previous.accountTimeZone
+        return incoming.copy(accountTimeZone = zone,
+            accountOffsetSeconds = serverTime?.offset?.totalSeconds ?: previous.accountOffsetSeconds)
     }
 
     internal fun stateFromServerFields(

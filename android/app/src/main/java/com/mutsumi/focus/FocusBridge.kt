@@ -38,11 +38,37 @@ class FocusBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
-    fun setAppearance(mode: String, palette: String) {
+    fun setAppearance(mode: String, palette: String, accent: String) {
         if (mode !in setOf("light", "dark", "system") || palette !in setOf("clay", "sage", "ocean")) return
-        activity.getSharedPreferences("focus_runtime", android.content.Context.MODE_PRIVATE).edit()
-            .putString("theme_mode", mode).putString("theme_palette", palette).apply()
+        activity.runOnUiThread {
+            if (!activity.hasTrustedDocument()) return@runOnUiThread
+            val state = FocusStateStore(activity).read()
+            val group = IslandPalette.group(state.mode)
+            val color = runCatching { android.graphics.Color.parseColor(accent) }.getOrElse {
+                IslandPalette.fallback(palette, state.mode).accent
+            }
+            val prefs = activity.getSharedPreferences("focus_runtime", android.content.Context.MODE_PRIVATE)
+            if (prefs.getString("theme_mode", "system") == mode && prefs.getString("theme_palette", "clay") == palette &&
+                prefs.getString("theme_runtime_group", "") == group && prefs.getInt("theme_runtime_accent", 0) == color) return@runOnUiThread
+            prefs.edit().putString("theme_mode", mode).putString("theme_palette", palette)
+                .putString("theme_runtime_group", group).putString("theme_runtime_palette", palette)
+                .putInt("theme_runtime_accent", color).apply()
+            FocusService.requestReminderCheck(activity)
+        }
     }
+    @JavascriptInterface
+    fun setAccountTimeZone(zone: String) {
+        if (runCatching { java.time.ZoneId.of(zone) }.isFailure) return
+        activity.runOnUiThread {
+            if (!activity.hasTrustedDocument()) return@runOnUiThread
+            val store = FocusStateStore(activity)
+            val state = store.read()
+            if (state.accountTimeZone == zone) return@runOnUiThread
+            store.write(state.copy(accountTimeZone = zone))
+            FocusService.requestReminderCheck(activity)
+        }
+    }
+
     @JavascriptInterface
     fun getDisplayOrientation(): String = activity.getDisplayOrientation()
 
