@@ -85,6 +85,53 @@ class FocusStateStoreTest {
         assertFalse(store.wasPresented(token))
     }
 
+    @Test fun `close pause reminders persists across heartbeat and restarts but resets for the next pause`() {
+        val prefs = MemoryPreferences()
+        val store = FocusStateStore(prefs)
+        store.write(paused)
+        store.closeReminders()
+        val restored = FocusStateStore(prefs)
+        assertTrue(restored.remindersClosed())
+        assertEquals(0L, restored.nextReminderAt())
+        assertNull(restored.due(500 * minute))
+        restored.write(paused.copy(observedAtEpochMs = 400 * minute))
+        assertTrue(restored.remindersClosed())
+        assertEquals(1800L, restored.read().elapsedNow(500 * minute))
+        restored.write(paused.copy(mode = FocusMode.FOCUSING, pausedAtEpochMs = 0))
+        restored.write(paused.copy(pausedAtEpochMs = 500 * minute))
+        assertFalse(restored.remindersClosed())
+        assertEquals(ReminderKind.PAUSED, restored.due(505 * minute)?.kind)
+    }
+
+    @Test fun `close departure reminders stops all later stages without deleting the session`() {
+        val prefs = MemoryPreferences()
+        val store = FocusStateStore(prefs)
+        val ended = paused.copy(mode = FocusMode.ENDED, pausedAtEpochMs = 0, endedAtEpochMs = minute)
+        store.write(ended)
+        assertEquals(ReminderKind.ENDED_15, store.due(16 * minute)?.kind)
+        store.closeReminders()
+        val restored = FocusStateStore(prefs)
+        assertTrue(restored.remindersClosed())
+        assertEquals(0L, restored.nextReminderAt())
+        for (time in listOf(16 * minute, 31 * minute, 61 * minute)) assertNull(restored.due(time))
+        assertEquals(ended.sessionId, restored.read().sessionId)
+        assertEquals(1800L, restored.read().elapsedSeconds)
+        restored.write(ended.copy(observedAtEpochMs = 100 * minute))
+        assertTrue(restored.remindersClosed())
+        restored.write(ended.copy(sessionId = 9, endedAtEpochMs = 200 * minute))
+        assertFalse(restored.remindersClosed())
+        assertEquals(ReminderKind.ENDED_15, restored.due(215 * minute)?.kind)
+    }
+
+    @Test fun `ordinary dismissal still only acknowledges the current departure stage`() {
+        val store = FocusStateStore(MemoryPreferences())
+        store.write(paused.copy(mode = FocusMode.ENDED, pausedAtEpochMs = 0, endedAtEpochMs = minute))
+        store.acknowledgeEnded(1)
+        assertFalse(store.remindersClosed())
+        assertNull(store.due(16 * minute))
+        assertEquals(ReminderKind.ENDED_30, store.due(31 * minute)?.kind)
+    }
+
     @Test fun `rest persists through reload and never schedules a reminder`() {
         val prefs = MemoryPreferences()
         FocusStateStore(prefs).write(FocusRuntimeState(mode = FocusMode.REST,

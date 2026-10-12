@@ -19,7 +19,7 @@
 
   function nativeAction(action, reminder = false) {
     const runtime = nativeRuntime();
-    if (runtime.busy) return;
+    if (runtime.busy && action !== "closeReminders") return;
     window.MutsumiAndroid?.performFocusAction?.(action, Number(runtime.revision || 0), reminder ? runtime.reminderToken || "" : "");
     if (["pause", "resume", "end"].includes(action)) showToast("正在处理…");
     window.setTimeout(renderNativeRuntime, 80);
@@ -37,13 +37,14 @@
   }
 
   function runtimeActions(runtime) {
-    if (runtime.busy) return [];
-    if (runtime.retryAction) return [{ label:"重试", action:runtime.retryAction.split(".").pop().toLowerCase() }];
-    if (runtime.mode === "paused") return [{ label:"继续专注", action:"resume" }];
+    const close = runtime.reminder ? [{ label:"关闭提醒", action:"closeReminders", reminder:true }] : [];
+    if (runtime.busy) return close;
+    if (runtime.retryAction) return [{ label:"重试", action:runtime.retryAction.split(".").pop().toLowerCase() }, ...close];
+    if (runtime.mode === "paused") return [{ label:"继续专注", action:"resume" }, ...close];
     if (runtime.mode === "rest") return [{ label:"结束休息", action:"endRest" }];
     if (runtime.mode === "ended") return [
       { label:"选择下一段", destination:"next" }, { label:"查看总结", destination:"summary" },
-      ...(runtime.reminder ? [{ label:"再等 5 分钟", action:"snooze", reminder:true }, { label:"收起提醒", action:"dismiss", reminder:true }] : []),
+      ...close,
     ];
     if (runtime.mode === "focusing") return [{ label:"暂停", action:"pause" }, { label:"结束本段", action:"end" }];
     return [{ label:runtime.mode === "settled" ? "查看今日总结" : "选择事项", destination:runtime.mode === "settled" ? "summary" : "next" }];
@@ -86,7 +87,7 @@
     const runtime = nativeRuntime();
     const card = $("#native-runtime-card");
     if (card) {
-      card.hidden = runtime.mode === "paused" || (!["rest", "ended", "settled"].includes(runtime.mode) && !runtime.busy && !runtime.retryAction);
+      card.hidden = ["paused", "ended"].includes(runtime.mode) || (!["rest", "settled"].includes(runtime.mode) && !runtime.busy && !runtime.retryAction);
       $("#native-runtime-title").textContent = runtime.busy ? "正在处理…" : runtime.title || "专注状态";
       $("#native-runtime-detail").textContent = runtime.detail || "";
       $("#native-runtime-timer").hidden = !["paused", "rest", "ended"].includes(runtime.mode);
@@ -542,6 +543,15 @@
     const overlay = $("#focus-state-overlay");
     if (!overlay) return;
     const runtime = nativeRuntime();
+    let close = $("#focus-state-overlay-close-reminder");
+    if (!close) {
+      close = document.createElement("button"); close.id = "focus-state-overlay-close-reminder";
+      close.type = "button"; close.className = "ui-button ui-button--secondary"; close.textContent = "关闭提醒";
+      close.onclick = event => { event.stopPropagation(); nativeAction("closeReminders", true); };
+      overlay.querySelector(".focus-state-overlay-card")?.append(close);
+    }
+    close.hidden = runtime.mode !== "paused" || !runtime.reminder;
+    overlay.setAttribute("role", close.hidden ? "button" : "group");
     const panel = document.body.dataset.page === "home" ? $("#dashboard-controls") : null;
     const paused = canManageOwnFocus() && Boolean(panel) && runtime.mode === "paused";
     const wasPaused = !overlay.hidden && overlay.classList.contains("is-panel-overlay");
@@ -601,9 +611,11 @@
     if (!overlay || overlay.dataset.focusOverlayBound) return;
     overlay.dataset.focusOverlayBound = "1";
     overlay?.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
       exitFocusStateOverlay();
     });
     overlay?.addEventListener("keydown", (event) => {
+      if (event.target.closest("button")) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         exitFocusStateOverlay();

@@ -22,8 +22,13 @@ async function nativeBridge() {
   const view = () => {
     const now = Date.now(), state = { ...runtime };
     state.elapsedSeconds = Number(state.elapsedSeconds || 0) + (state.mode === 'focusing' ? Math.floor((now - state.observedAt) / 1000) : 0);
-    state.nextReminderAt = state.snooze || (state.mode === 'paused' ? state.pausedAtEpochMs + 300000 : 0);
-    state.reminder = state.mode === 'paused' && !state.dismissed && now >= state.nextReminderAt ? 'PAUSED' : '';
+    const endedThresholds = [15, 30, 60].map(minutes => minutes * 60000);
+    const endedRound = endedThresholds.findLastIndex(threshold => now - state.endedAtEpochMs >= threshold);
+    state.nextReminderAt = state.remindersClosed ? 0 : state.snooze || (state.mode === 'paused' ? state.pausedAtEpochMs + 300000
+      : state.mode === 'ended' && (state.endedAcknowledged || 0) < 3 ? state.endedAtEpochMs + endedThresholds[state.endedAcknowledged || 0] : 0);
+    state.reminder = !state.remindersClosed && state.nextReminderAt > 0 && now >= state.nextReminderAt
+      ? state.mode === 'paused' && !state.dismissed ? 'PAUSED'
+        : state.mode === 'ended' && endedRound >= (state.endedAcknowledged || 0) ? `ENDED_${[15,30,60][endedRound]}` : '' : '';
     state.reminderToken = state.reminder ? `fixture:${state.sessionId}:${state.nextReminderAt}` : '';
     state.title = ({focusing:'专注中', paused:state.reminder ? '暂停超时' : '专注已暂停', rest:'主动休息', ended:'本段专注已结束', settled:'今日已结算', idle:'准备开始专注'})[state.mode];
     const restElapsed = Math.max(0, Math.floor((now - (state.restStartedAtEpochMs || now)) / 1000));
@@ -38,7 +43,8 @@ async function nativeBridge() {
     endedAtEpochMs:Date.parse(session.ended_at) || 0, plannedSeconds:session.planned_minutes * 60,
     focusItemId:session.focus_item_id, restStartedAtEpochMs:0,
     accountTimeZone:runtime.accountTimeZone || "", accountOffsetSeconds:runtime.accountOffsetSeconds ?? 28800});
-  window.__setNative = payload => update({ ...runtime, ...payload, busy:false, retryAction:'', message:'', dismissed:false, snooze:0 });
+  window.__setNative = payload => update({ ...runtime, ...payload, busy:false, retryAction:'', message:'', dismissed:false, snooze:0,
+    remindersClosed:false, endedAcknowledged:0 });
   window.__nativeActions = [];
   window.MutsumiAndroid = {
     getDisplayOrientation: () => innerWidth > innerHeight ? 'landscape' : 'portrait',
@@ -56,10 +62,15 @@ async function nativeBridge() {
       update(payload);
     },
     performFocusAction: async (action, revision, token) => {
-      if (runtime.busy || revision !== runtime.revision || token && token !== view().reminderToken) return;
+      if (runtime.busy && action !== 'closeReminders' || revision !== runtime.revision || token && token !== view().reminderToken) return;
       window.__nativeActions.push(action);
       if (action === 'snooze') { runtime.snooze = Date.now() + 300000; runtime.message = '已设置 5 分钟后再提醒'; persist(); }
       else if (action === 'dismiss') { runtime.dismissed = true; persist(); }
+      else if (action === 'closeReminders') {
+        runtime.remindersClosed = true; runtime.dismissed = true;
+        if (runtime.mode === 'ended') runtime.endedAcknowledged = 3;
+        persist();
+      }
       else if (action === 'endRest') update({mode:'idle', sessionId:0, elapsedSeconds:0, restStartedAtEpochMs:0});
       else {
         runtime.busy = true; window.MutsumiWeb?.refresh();
@@ -134,6 +145,27 @@ async function nativeBridge() {
     await page.evaluate(payload => { __setNative(payload.native_state); MutsumiWeb.refresh(); }, payload);
     await page.waitForFunction(() => !document.querySelector('#focus-state-overlay').hidden);
     assert(await page.locator('#native-runtime-card').isHidden(), 'Pause must use the v0.6 panel, without a runtime status card');
+    await page.locator('#focus-state-overlay-close-reminder').waitFor({state:'visible'});
+    const closeStyle = await page.locator('#focus-state-overlay-close-reminder').evaluate(button => ({
+      radius:getComputedStyle(button).borderRadius, fontSize:getComputedStyle(button).fontSize,
+      blur:getComputedStyle(button).backdropFilter, height:button.getBoundingClientRect().height,
+    }));
+    assert.equal(closeStyle.radius, '7px');
+    assert.equal(closeStyle.fontSize, '12px');
+    assert(closeStyle.blur.includes('blur(10px)'));
+    assert(Math.abs(closeStyle.height - 34 * 0.6) < 1, 'Close reminder button must keep the compact 60% home scale');
+    await page.screenshot({path:path.join(output,'portrait-paused-reminder.png'), fullPage:false});
+    await page.locator('#focus-state-overlay-close-reminder').focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).remindersClosed);
+    assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode), 'paused', 'Close must not bubble into resume');
+    assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).elapsedSeconds), 1800);
+    assert(await page.locator('#focus-state-overlay-close-reminder').isHidden());
+    await page.reload();
+    await page.waitForFunction(() => window.MutsumiWeb);
+    assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).reminder), '');
+    assert(await page.locator('#focus-state-overlay-close-reminder').isHidden(), 'Closed reminder must stay closed after reload');
+    await page.evaluate(payload => { __setNative(payload.native_state); MutsumiWeb.refresh(); }, payload);
     await page.evaluate(() => MutsumiAndroid.performFocusAction('snooze', JSON.parse(MutsumiAndroid.getFocusRuntime()).revision, JSON.parse(MutsumiAndroid.getFocusRuntime()).reminderToken));
     await page.waitForFunction(() => !JSON.parse(MutsumiAndroid.getFocusRuntime()).reminder);
     const deadline = await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).nextReminderAt);
@@ -188,6 +220,22 @@ async function nativeBridge() {
     const endedRuntime = await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()));
     assert(endedRuntime.startedAtEpochMs < endedRuntime.endedAtEpochMs, 'Session endpoints must survive the web/native transition');
     assert.equal(endedRuntime.accountOffsetSeconds, 28800);
+    assert(await page.locator('#native-runtime-card').isHidden(), 'Ended state must not create a prepare-next-focus panel');
+    const departureScenario = await context.request.post(base + '/api/_test/scenario', {data:{scenario:'ended15min', seconds_before:-2}});
+    const departurePayload = await departureScenario.json();
+    await page.evaluate(payload => __setNative(payload.native_state), departurePayload);
+    await page.reload();
+    await page.waitForFunction(() => window.MutsumiWeb && JSON.parse(MutsumiAndroid.getFocusRuntime()).reminder === 'ENDED_15');
+    assert(await page.locator('#native-runtime-card').isHidden(), 'Departure reminder must not restore the removed panel');
+    await page.evaluate(() => MutsumiWeb.navigateFocus('details'));
+    await page.locator('#native-details-actions').getByRole('button', {name:'关闭提醒', exact:true}).click();
+    await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).remindersClosed);
+    assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).reminder), '');
+    await page.locator('#native-runtime-details').getByText('关闭', {exact:true}).click();
+    await page.reload();
+    await page.waitForFunction(() => window.MutsumiWeb);
+    assert.equal(await page.evaluate(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).reminder), '');
+    assert(await page.locator('#native-runtime-card').isHidden());
     await page.locator('#native-rest-goal').selectOption('15');
     await page.locator('#start-rest').click();
     await page.waitForFunction(() => JSON.parse(MutsumiAndroid.getFocusRuntime()).mode === 'rest');
@@ -246,6 +294,7 @@ async function nativeBridge() {
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output,'web-validation.json'), JSON.stringify({passed:true,layout,glass,checks:[
       'portrait order and scale','planned focus','v0.6 pause panel and advancing pause clock','snooze shared deadline and reload',
+      'pause and departure close reminders persist without resume or prepare-next panel',
       'failed resume retains state and offers retry','details does not resume','target rest and reload',
       'sticky bottom actions and chart expansion','landscape and portrait','settings integrated and draft retained','320px dark ocean layout','real settlement stops reminder and opens report'],errors},null,2));
     console.log(`PASS: APK WebView assets, screenshots and report in ${output}`);

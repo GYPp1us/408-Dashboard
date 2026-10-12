@@ -156,6 +156,11 @@ html.native-app[data-viewport-mode="portrait"] body.page-home { zoom:var(--ui-sc
 html.native-app[data-viewport-mode="portrait"] .page-home .app-shell { min-height:var(--ui-viewport-height,100dvh); }
 html.native-app .native-settings-entry .ui-button { min-height:34px; font-size:12px; border-radius:7px; }
 html.native-app .native-glass-card .ui-button--secondary { background:color-mix(in srgb,var(--surface) 50%,transparent); }
+html.native-app #focus-state-overlay-close-reminder {
+  min-height:34px; font-size:12px; border-radius:7px; margin-top:8px;
+  background:color-mix(in srgb,var(--surface) 50%,transparent);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+}
 html.native-app #native-runtime-message:empty { display:none; }
 html.native-app #native-runtime-card { border-radius:inherit; }
 html.native-app .is-resting #native-runtime-card {

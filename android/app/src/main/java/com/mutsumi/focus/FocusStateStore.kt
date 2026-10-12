@@ -78,6 +78,18 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
 
     fun pausedDismissed(): Boolean = preferences.getBoolean("paused_dismissed", false)
     fun dismissPaused() { preferences.edit().putBoolean("paused_dismissed", true).apply() }
+    fun closeReminders() {
+        when (read().mode) {
+            FocusMode.PAUSED -> dismissPaused()
+            FocusMode.ENDED -> acknowledgeEnded(3)
+            else -> Unit
+        }
+    }
+    fun remindersClosed(state: FocusRuntimeState = read()): Boolean = when (state.mode) {
+        FocusMode.PAUSED -> pausedDismissed()
+        FocusMode.ENDED -> endedAcknowledgedCount() >= 3
+        else -> false
+    }
     fun endedSnoozeUntil(): Long = preferences.getLong("ended_snooze_until", 0)
     fun snoozeEnded(nowEpochMs: Long) {
         preferences.edit().putLong("ended_snooze_until", nowEpochMs + ReminderPolicy.PAUSED_DELAY_MS).apply()

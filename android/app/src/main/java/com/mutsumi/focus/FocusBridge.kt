@@ -26,6 +26,7 @@ class FocusBridge(private val activity: MainActivity) {
             "endRest" -> FocusService.ACTION_END_REST
             "snooze" -> FocusService.ACTION_SNOOZE
             "dismiss" -> FocusService.ACTION_DISMISS
+            "closeReminders" -> FocusService.ACTION_CLOSE_REMINDERS
             else -> return
         }
         activity.runOnUiThread {

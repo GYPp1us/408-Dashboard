@@ -107,6 +107,13 @@ class FocusService : Service() {
                 dismissSurfaces()
                 changed()
             }
+            ACTION_CLOSE_REMINDERS -> {
+                if (store.due() == null) return
+                store.closeReminders()
+                message = "本次提醒已关闭"
+                dismissSurfaces()
+                changed()
+            }
             ACTION_DISMISS, ACTION_OPEN_FROM_REMINDER -> {
                 store.due()?.kind?.let { kind ->
                     if (kind == ReminderKind.PAUSED) store.dismissPaused() else store.acknowledgeEnded(kind.endedIndex)
@@ -318,8 +325,11 @@ class FocusService : Service() {
             val snooze = { handleAction(ACTION_SNOOZE) }
             val open = { handleAction(ACTION_OPEN_FROM_REMINDER); openTimer() }
             val resume = { handleAction(ACTION_RESUME) }
-            overlay.show(due.kind, snooze, open, resume) ||
-                FocusAccessibilityService.show(due.kind, snooze, open, resume)
+            val close = {
+                if (store.due()?.let { store.reminderToken(it.kind) } == token) handleAction(ACTION_CLOSE_REMINDERS)
+            }
+            overlay.show(due.kind, snooze, open, resume, close) ||
+                FocusAccessibilityService.show(due.kind, snooze, open, resume, close)
         }
     }
 
@@ -360,6 +370,7 @@ class FocusService : Service() {
         const val ACTION_END_REST = "com.mutsumi.focus.END_REST"
         const val ACTION_SNOOZE = "com.mutsumi.focus.SNOOZE"
         const val ACTION_DISMISS = "com.mutsumi.focus.DISMISS"
+        const val ACTION_CLOSE_REMINDERS = "com.mutsumi.focus.CLOSE_REMINDERS"
         const val ACTION_OPEN_FROM_REMINDER = "com.mutsumi.focus.OPEN_FROM_REMINDER"
         const val EXTRA_SESSION_ID = "focus_session_id"
         const val EXTRA_REVISION = "focus_revision"
@@ -416,6 +427,7 @@ class FocusService : Service() {
                 put("endedAtEpochMs", state.endedAtEpochMs)
                 put("restStartedAtEpochMs", state.restStartedAtEpochMs); put("restTargetSeconds", state.restTargetSeconds)
                 put("plannedSeconds", state.plannedSeconds); put("nextReminderAt", store.nextReminderAt(state))
+                put("remindersClosed", store.remindersClosed(state))
                 put("reminder", due?.kind?.name.orEmpty()); put("reminderToken", due?.let { store.reminderToken(it.kind, now) }.orEmpty())
                 put("reminderRound", due?.round ?: 0)
                 put("title", FocusPresentation.title(state, due, now)); put("detail", FocusPresentation.detail(state, store.nextReminderAt(state), due, now))

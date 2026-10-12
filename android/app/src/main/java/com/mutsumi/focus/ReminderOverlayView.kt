@@ -8,6 +8,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -17,6 +18,7 @@ class ReminderOverlayView(
     onContinueSlacking: () -> Unit,
     onOpenTimer: () -> Unit,
     onResume: () -> Unit,
+    onClose: () -> Unit,
 ) : FrameLayout(context) {
     init {
         val style = SetupStyle(context)
@@ -82,6 +84,11 @@ class ReminderOverlayView(
             background = rounded(Color.argb(180, 86, 75, 69), 7f)
             setPadding(dp(16), 0, dp(16), 0)
             setOnTouchListener(SwipeListener(this, onContinueSlacking))
+        }, LinearLayout.LayoutParams(-1, dp(34)).apply { topMargin = dp(12) })
+        card.addView(Button(context).apply {
+            text = "关闭提醒"
+            style.button(this)
+            setOnClickListener { onClose() }
         }, LinearLayout.LayoutParams(-1, dp(34)).apply { topMargin = dp(12) })
         card.addView(TextView(context).apply {
             text = "查看提醒 · 返回应用"

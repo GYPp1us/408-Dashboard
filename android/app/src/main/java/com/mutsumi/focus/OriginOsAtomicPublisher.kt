@@ -52,16 +52,21 @@ class OriginOsAtomicPublisher(private val context: Context) {
     fun liveNotification(state: FocusRuntimeState, operation: AtomicOperation, retryAction: String = "",
                          forceShowCard: Boolean = false, now: Long = System.currentTimeMillis()): Notification {
         val due = store.due(now)
-        val layout = AtomicIslandLayout.from(state, due, now)
+        val layout = AtomicIslandLayout.from(state, due, now, store.remindersClosed(state))
         val colors = palette(state)
         val home = openIntent("home", 1)
         val primary = when (layout.button.action) {
             "resume" -> serviceIntent(FocusService.ACTION_RESUME, 2, state)
             "pause" -> serviceIntent(FocusService.ACTION_PAUSE, 2, state)
             "endRest" -> serviceIntent(FocusService.ACTION_END_REST, 2, state)
+            "closeReminders" -> serviceIntent(FocusService.ACTION_CLOSE_REMINDERS, 2, state,
+                due?.let { store.reminderToken(it.kind, now) })
             else -> openIntent(layout.button.action, 2)
         }
-        val content = if (retryAction.isNotBlank()) "操作未确认，请再次点击${layout.button.label}" else when (layout.template) {
+        val content = if (retryAction.isNotBlank()) {
+            if (layout.button.action == "closeReminders") "操作未确认，可关闭本次提醒"
+            else "操作未确认，请再次点击${layout.button.label}"
+        } else when (layout.template) {
             1 -> "${layout.core} · ${layout.description}"
             3 -> "${layout.leftLabel} ${layout.leftValue} · ${layout.rightLabel} ${layout.rightValue}" +
                 if (layout.middleValue.isNotBlank()) " · ${layout.middleValue}" else ""
@@ -145,6 +150,8 @@ class OriginOsAtomicPublisher(private val context: Context) {
             .setOnlyAlertOnce(silent).setShowWhen(false)
             .setDeleteIntent(serviceIntent(FocusService.ACTION_DISMISS, 11, state, token))
             .addAction(Notification.Action.Builder(null, label, primary).build())
+            .addAction(Notification.Action.Builder(null, "关闭提醒",
+                serviceIntent(FocusService.ACTION_CLOSE_REMINDERS, 13, state, token)).build())
             .apply { if (silent) setGroup("focus_reminder_silent").setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY) }
             .build()
     }

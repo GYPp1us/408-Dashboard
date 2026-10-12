@@ -15,7 +15,7 @@ class AtomicIslandLayoutTest {
         assertEquals("暂停中", layout.title)
         assertEquals("10:00", layout.rightText)
         assertEquals("第 2 轮提醒", layout.core)
-        assertEquals(AtomicIslandLayout.Button("继续专注", "resume"), layout.button)
+        assertEquals(AtomicIslandLayout.Button("关闭提醒", "closeReminders"), layout.button)
         val wire = layout.wire(true)
         val base = map(wire["notification.superx.baseInfos"])
         val island = map(wire["notification.superx.island"])
@@ -31,6 +31,7 @@ class AtomicIslandLayoutTest {
     @Test fun `short pause never claims that a reminder was sent`() {
         val layout = AtomicIslandLayout.from(FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = minute), null, 2 * minute)
         assertEquals("等待首次提醒", layout.core)
+        assertEquals(AtomicIslandLayout.Button("继续专注", "resume"), layout.button)
         assertEquals("1:00", layout.rightText)
         assertEquals(false, map(layout.wire(false)["notification.superx.island"])["island.superx.forceShowCard"])
     }
@@ -90,12 +91,35 @@ class AtomicIslandLayoutTest {
         assertEquals(1, map(map(layout.wire(false)["notification.superx.island"])["island.superx.rightInfo"])["island.superx.rightInfo.progressState"])
     }
 
-    @Test fun `departure reminder keeps one primary entry and displays the latest round`() {
+    @Test fun `departure reminder keeps one close entry and displays the latest round`() {
         val layout = AtomicIslandLayout.from(FocusRuntimeState(mode = FocusMode.ENDED, endedAtEpochMs = minute),
             DueReminder(ReminderKind.ENDED_60, 0), 61 * minute)
         assertEquals(1, layout.template)
         assertEquals("第 3 轮提醒", layout.core)
-        assertEquals(AtomicIslandLayout.Button("开始专注", "next"), layout.button)
+        assertEquals(AtomicIslandLayout.Button("关闭提醒", "closeReminders"), layout.button)
+    }
+
+    @Test fun `all reminder kinds have the same themed close capsule in notification and island`() {
+        val palette = IslandPalette(0xFF587EAA.toInt())
+        for (kind in ReminderKind.entries) {
+            val state = FocusRuntimeState(mode = if (kind == ReminderKind.PAUSED) FocusMode.PAUSED else FocusMode.ENDED,
+                pausedAtEpochMs = minute, endedAtEpochMs = minute)
+            val wire = AtomicIslandLayout.from(state, DueReminder(kind, 0), 61 * minute).wire(true, palette)
+            val base = map(wire["notification.superx.baseInfos"])
+            assertEquals("关闭提醒", base["notification.superx.baseInfos.subText"])
+            assertEquals(AtomicIslandLayout.Click.PRIMARY, base["notification.superx.baseInfos.subInfoClickResp"])
+            assertEquals(palette.accent, base["notification.superx.baseInfos.subCapsuleBgColor"])
+            assertEquals(base, map(wire["notification.superx.island"])["island.superx.baseInfos"])
+        }
+    }
+
+    @Test fun `closing a pause reminder restores resume without claiming that reminders are active`() {
+        val state = FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = minute, elapsedSeconds = 1800)
+        val layout = AtomicIslandLayout.from(state, null, 11 * minute, remindersClosed = true)
+        assertEquals("提醒已关闭", layout.core)
+        assertEquals("10:00", layout.rightText)
+        assertEquals(AtomicIslandLayout.Button("继续专注", "resume"), layout.button)
+        assertEquals(1800L, state.elapsedNow(11 * minute))
     }
 
     @Test fun `rest has the same text timer capsule as pause and never caps elapsed time to its goal`() {

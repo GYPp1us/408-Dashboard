@@ -105,7 +105,7 @@ data class AtomicIslandLayout(
     }
 
     companion object {
-        fun from(state: FocusRuntimeState, due: DueReminder?, now: Long): AtomicIslandLayout {
+        fun from(state: FocusRuntimeState, due: DueReminder?, now: Long, remindersClosed: Boolean = false): AtomicIslandLayout {
             val effective = state.elapsedNow(now)
             val elapsed = IslandTime.large(effective)
             val paused = (now - state.pausedAtEpochMs).coerceAtLeast(0) / 1000
@@ -115,8 +115,9 @@ data class AtomicIslandLayout(
             return when (state.mode) {
                 FocusMode.PAUSED -> AtomicIslandLayout(1, "暂停中", "已暂停 ${IslandTime.large(paused)}", 4,
                     rightText = IslandTime.small(paused),
-                    core = if (pauseRound > 0) "第 $pauseRound 轮提醒" else "等待首次提醒",
-                    description = "专注计时已暂停", button = Button("继续专注", "resume"))
+                    core = if (remindersClosed) "提醒已关闭" else if (pauseRound > 0) "第 $pauseRound 轮提醒" else "等待首次提醒",
+                    description = "专注计时已暂停", button = if (due != null) Button("关闭提醒", "closeReminders")
+                        else Button("继续专注", "resume"))
                 FocusMode.FOCUSING -> AtomicIslandLayout(2, "专注中", "已专注 $elapsed",
                     if (state.plannedSeconds > 0) 2 else 3,
                     progress = progress(effective, state.plannedSeconds), button = Button("暂停", "pause"),
@@ -132,7 +133,7 @@ data class AtomicIslandLayout(
                     collapsedText = IslandTime.small(state.todayFocusSeconds))
                 FocusMode.ENDED -> if (due != null) AtomicIslandLayout(1, "专注提醒", "已离开 ${IslandTime.large((now - state.endedAtEpochMs).coerceAtLeast(0) / 1000)}", 3,
                     core = "第 ${due.round} 轮提醒", description = "准备好后开始下一段",
-                    button = Button("开始专注", "next"), collapsedText = IslandTime.small((now - state.endedAtEpochMs).coerceAtLeast(0) / 1000))
+                    button = Button("关闭提醒", "closeReminders"), collapsedText = IslandTime.small((now - state.endedAtEpochMs).coerceAtLeast(0) / 1000))
                 else AtomicIslandLayout(3, "专注结束", "本段专注统计", 2, progress = 100, completed = true,
                     leftValue = IslandTime.point(state.startedAtEpochMs, state), leftLabel = "开始",
                     rightValue = IslandTime.point(state.endedAtEpochMs, state), rightLabel = "结束",

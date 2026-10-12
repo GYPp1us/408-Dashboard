@@ -28,7 +28,7 @@ object FocusPresentation {
         FocusMode.FOCUSING -> "有效专注 ${timer(state, now)}" +
             if (state.plannedSeconds > 0) " · 目标 ${clock(state.plannedSeconds)}" else " · 自由计时"
         FocusMode.PAUSED -> "有效 ${timer(state, now)} · 暂停 ${clock((now - state.pausedAtEpochMs).coerceAtLeast(0) / 1000)} · " +
-            if (due != null) "暂停超时" else if (nextAt > 0) "下次提醒 ${clock((nextAt - now).coerceAtLeast(0) / 1000)} 后" else "本次提醒已收起"
+            if (due != null) "暂停超时" else if (nextAt > 0) "下次提醒 ${clock((nextAt - now).coerceAtLeast(0) / 1000)} 后" else "本次暂停提醒已关闭"
         FocusMode.REST -> (if (state.restTargetSeconds > 0) "休息剩余 " else "已休息 ") + timer(state, now) + " · 不催促专注"
         FocusMode.ENDED -> "有效专注 ${timer(state, now)} · " +
             if (due != null) reminderTitle(due.kind) else if (nextAt > 0) "下次提醒 ${clock((nextAt - now).coerceAtLeast(0) / 1000)} 后" else "离开提醒已完成"
