@@ -12,7 +12,6 @@ import android.os.SystemClock
 import android.util.Log
 import com.mutsumi.focus.atomic.VivoAtomicPayload
 import org.json.JSONObject
-import java.util.concurrent.Executors
 
 class FocusService : Service() {
     private lateinit var store: FocusStateStore
@@ -20,7 +19,7 @@ class FocusService : Service() {
     private lateinit var notifications: NotificationManager
     private lateinit var overlay: ApplicationOverlay
     private val handler = Handler(Looper.getMainLooper())
-    private val network = Executors.newSingleThreadExecutor()
+    private val network = FocusNetworkTasks()
     private var reminderToken = ""
     private var lastSyncAt = 0L
     private var syncing = false
@@ -76,7 +75,7 @@ class FocusService : Service() {
         handler.removeCallbacksAndMessages(null)
         dismissSurfaces()
         releaseWakeLock()
-        network.shutdownNow()
+        network.close()
         super.onDestroy()
     }
 
@@ -140,6 +139,7 @@ class FocusService : Service() {
     }
 
     private fun publish(state: FocusRuntimeState): Boolean {
+        val publishStartedAt = SystemClock.elapsedRealtime()
         val now = System.currentTimeMillis()
         val visible = store.atomicEnabled() && (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST) ||
             state.summaryVisible(now) || store.due(now) != null)
@@ -147,18 +147,17 @@ class FocusService : Service() {
         val token = due?.let { store.reminderToken(it.kind, now) }.orEmpty()
         val atomic = publisher.usesAtomicIsland()
         val forceShowCard = visible && atomic && token.isNotBlank() && !store.wasIslandPresented(token)
-        val clockBucket = if (!visible) 0 else when (state.mode) {
+        val clockBucket = when (state.mode) {
             FocusMode.PAUSED -> (now - state.pausedAtEpochMs).coerceAtLeast(0) / 1000
             FocusMode.REST -> state.restElapsed(now)
             FocusMode.FOCUSING -> state.elapsedNow(now)
             else -> if (due != null) (now - state.endedAtEpochMs).coerceAtLeast(0) / 1000 else 0
         }
-        val signature = listOf(visible, state.mode, state.sessionId, state.pausedAtEpochMs, state.restStartedAtEpochMs,
-            state.startedAtEpochMs, state.endedAtEpochMs, state.plannedSeconds, state.restTargetSeconds, state.elapsedSeconds,
-            state.pausedSeconds, state.todayFocusSeconds, state.todaySessionCount, state.accountTimeZone, state.accountOffsetSeconds,
-            publisher.palette(state).accent, clockBucket, token, retryAction).joinToString(":")
+        val stateKey = AtomicRefreshPolicy.StateKey.from(state, visible, atomic, publisher.palette(state).accent,
+            token, retryAction, store.transitionRevision())
         val elapsedNow = SystemClock.elapsedRealtime()
-        if (!refreshPolicy.shouldPublish(signature, elapsedNow, !foregroundStarted)) return true
+        if (!refreshPolicy.shouldPublish(stateKey, clockBucket, elapsedNow, !foregroundStarted)) return true
+        val stateChanged = refreshPolicy.stateChanged(stateKey)
         val operation = when {
             !visible -> OriginOsAtomicPublisher.AtomicOperation.END
             !islandVisible -> OriginOsAtomicPublisher.AtomicOperation.CREATE
@@ -171,7 +170,9 @@ class FocusService : Service() {
             else notifications.notify(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             foregroundStarted = true
             islandVisible = visible
-            refreshPolicy.published(signature, elapsedNow)
+            refreshPolicy.published(stateKey, clockBucket, elapsedNow)
+            if (stateChanged) Log.i("FocusService", "Notification state=${state.mode} operation=${operation.name} " +
+                "publishMs=${SystemClock.elapsedRealtime() - publishStartedAt}")
             if (forceShowCard) { store.markIslandPresented(token); store.markPresented(token) }
             true
         } catch (error: Exception) {
@@ -188,13 +189,16 @@ class FocusService : Service() {
         syncing = true
         val requested = store.read()
         val revision = store.transitionRevision()
-        network.execute {
+        val requestedAt = SystemClock.elapsedRealtime()
+        network.synchronize { generation ->
             val heartbeat = if (requested.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED) && requested.sessionId > 0)
                 FocusApi.heartbeat(requested) else null
             val response = FocusApi.fetchState(requested)
+            val responseAt = SystemClock.elapsedRealtime()
             handler.post {
                 syncing = false
-                if (destroyed || busy || !FocusStateReducer.canApplyResponse(requested, store.read(), revision, store.transitionRevision())) return@post
+                if (destroyed || busy || !network.isCurrentSync(generation) ||
+                    !FocusStateReducer.canApplyResponse(requested, store.read(), revision, store.transitionRevision())) return@post
                 if (heartbeat?.status in setOf(401, 403) || response.status in setOf(401, 403)) {
                     clear(this)
                     changed()
@@ -204,7 +208,11 @@ class FocusService : Service() {
                     val updated = FocusStateReducer.reduce(store.read(), response.state, store.endedAcknowledgedCount())
                     val transition = !FocusStateReducer.canApplyResponse(store.read(), updated)
                     store.write(updated)
-                    if (transition) { message = ""; retryAction = ""; changed() }
+                    if (transition) {
+                        Log.i("FocusService", "Remote transition=${updated.mode} requestMs=${responseAt - requestedAt} " +
+                            "handoffMs=${SystemClock.elapsedRealtime() - responseAt}")
+                        message = ""; retryAction = ""; changed()
+                    }
                     applyState()
                 }
             }
@@ -217,9 +225,12 @@ class FocusService : Service() {
         message = ""
         retryAction = ""
         val revision = store.transitionRevision()
+        val requestedAt = SystemClock.elapsedRealtime()
+        Log.i("FocusService", "Action=$action requested")
         changed()
-        publish(state)
-        network.execute {
+        network.act {
+            val networkStartedAt = SystemClock.elapsedRealtime()
+            Log.i("FocusService", "Action=$action queueMs=${networkStartedAt - requestedAt}")
             val result = when (action) {
                 ACTION_PAUSE -> FocusApi.setPaused(state, true)
                 ACTION_RESUME -> FocusApi.setPaused(state, false)
@@ -227,6 +238,9 @@ class FocusService : Service() {
             }
             // A timeout may have committed. Read back before offering retry.
             val reconciled = if (!result.successful) FocusApi.fetchState(state) else null
+            val responseAt = SystemClock.elapsedRealtime()
+            Log.i("FocusService", "Action=$action responseMs=${responseAt - networkStartedAt} status=${result.status} " +
+                "reconciled=${reconciled != null}")
             handler.post {
                 busy = false
                 if (destroyed) return@post
@@ -266,6 +280,7 @@ class FocusService : Service() {
                 if (outcome != FocusActionOutcome.UNCONFIRMED) dismissSurfaces()
                 changed()
                 applyState()
+                Log.i("FocusService", "Action=$action appliedMs=${SystemClock.elapsedRealtime() - responseAt} outcome=$outcome")
             }
         }
     }
