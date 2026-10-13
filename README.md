@@ -243,3 +243,7 @@ curl -I https://study.example.com/login
 2. Android Chrome 或 System WebView 是否为较新版本；
 3. 页面是否保持在浏览器前台；
 4. 系统省电策略是否强制释放屏幕唤醒锁。
+
+### 每日打卡与外部打卡上报
+
+0.7.1 加入快速专注、定时专注、打卡三个标签，定时时长保存为栏位参数。打卡可选时间段及地点，热度图新增每日完成度；设置提供独立的外部打卡链接与 key 轮换。详见 [打卡协议](docs/checkin-reporter.md) 和 [0.7.1 发布记录](docs/releases/v0.7.1.md)。

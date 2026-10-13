@@ -12,6 +12,7 @@
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<link rel="stylesheet" href="{{ static_asset('index-challenge.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ static_asset('viewport-scale.css') }}">
   {% if page_name == 'home' %}<link rel="stylesheet" href="{{ static_asset('daily-report.css') }}">{% endif %}
+  <link rel="stylesheet" href="{{ static_asset('focus-entry.css') }}">
   <link rel="stylesheet" href="{{ static_asset('status-bar.css') }}">
 </head>
 <body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}" data-role="{{ 'guest' if is_guest else 'admin' }}" data-settings-tab="{{ settings_tab|default('system') }}" data-viewer-id="{{ ui_preferences.viewer_id if ui_preferences.viewer_id is not none else 'public' }}" data-quick-focus-count="{{ ui_preferences.quick_focus_count }}">
@@ -53,7 +54,7 @@
         <section class="score-paper-strip"><div class="score-paper-label"><span>科目</span><b id="focus-selected-subject">--</b></div><div id="focus-subject-strip" class="score-strip" data-focus-strip="subject" role="listbox" tabindex="0" aria-label="选择专注科目"></div></section>
         <section class="score-paper-strip"><div class="score-paper-label"><span>项目</span><b id="focus-selected-item">--</b></div><div id="focus-item-strip" class="score-strip" data-focus-strip="item" role="listbox" tabindex="0" aria-label="选择专注项目"></div></section>
       </div>
-      <div class="score-entry-preview"><span>即将开始</span><strong id="focus-entry-preview">请选择项目</strong><button id="toggle-focus-pin" class="ui-button ui-button--quiet focus-pin-toggle" type="button" aria-pressed="false">☆ 固定到快捷启动</button></div>
+      <div class="score-entry-preview"><span>即将开始</span><strong id="focus-entry-preview">请选择项目</strong><button id="toggle-focus-pin" class="ui-button ui-button--quiet focus-pin-toggle" type="button" aria-pressed="false">换入栏位</button></div>
       <div class="quick-score-actions"><button id="submit-focus-launch" class="primary" type="submit">开始专注</button></div>
     </form>
   </dialog>{% endif %}
@@ -82,6 +83,7 @@
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('chart-gestures.js') }}" defer></script>{% endif %}
   {% if page_name == 'home' %}<script src="{{ static_asset('dashboard-details.js') }}" defer></script><script src="{{ static_asset('dashboard-index.js') }}" defer></script><script src="{{ static_asset('dashboard-artwork.js') }}" defer></script>{% endif %}
   {% if page_name == 'home' %}<script src="{{ static_asset('daily-report.js') }}" defer></script>{% endif %}
+  <script src="{{ static_asset('focus-entry.js') }}" defer></script>
   <script src="{{ static_asset('app.js') }}" defer></script>
   {% if page_name in ['focus-kline', 'focus_kline'] %}<script src="{{ static_asset('focus_kline.js') }}" defer></script>{% endif %}
 </body>

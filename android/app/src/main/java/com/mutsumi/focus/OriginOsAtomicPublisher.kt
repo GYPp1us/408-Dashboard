@@ -7,6 +7,10 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import android.os.Build
 import android.os.Bundle
 import android.text.SpannableString
@@ -50,7 +54,8 @@ class OriginOsAtomicPublisher(private val context: Context) {
     }
 
     fun liveNotification(state: FocusRuntimeState, operation: AtomicOperation, retryAction: String = "",
-                         forceShowCard: Boolean = false, now: Long = System.currentTimeMillis()): Notification {
+                         forceShowCard: Boolean = false, now: Long = System.currentTimeMillis(),
+                         atomicAvailable: Boolean = usesAtomicIsland()): Notification {
         val due = store.due(now)
         val layout = AtomicIslandLayout.from(state, due, now, store.remindersClosed(state))
         val colors = palette(state)
@@ -79,13 +84,15 @@ class OriginOsAtomicPublisher(private val context: Context) {
             .setContentIntent(home).setOnlyAlertOnce(true).setOngoing(state.mode != FocusMode.IDLE)
             .setShowWhen(false).setVisibility(Notification.VISIBILITY_PUBLIC).setCategory(Notification.CATEGORY_STATUS)
             .addAction(Notification.Action.Builder(null, layout.button.label, primary).build())
-        if (state.mode == FocusMode.FOCUSING) builder.setUsesChronometer(true)
-            .setWhen(now - state.elapsedNow(now) * 1000).setShowWhen(true)
-        if (state.mode == FocusMode.PAUSED && state.pausedAtEpochMs > 0) builder.setUsesChronometer(true)
+        // The vivo template already has a per-second clock. Running a second
+        // Android chronometer / ProgressStyle can restart its compact card.
+        if (!atomicAvailable && state.mode == FocusMode.FOCUSING) builder.setUsesChronometer(true)
+            .setWhen(state.observedAtEpochMs / 1000 * 1000 - state.elapsedSeconds * 1000).setShowWhen(true)
+        if (!atomicAvailable && state.mode == FocusMode.PAUSED && state.pausedAtEpochMs > 0) builder.setUsesChronometer(true)
             .setWhen(state.pausedAtEpochMs).setShowWhen(true)
-        if (state.mode == FocusMode.REST && state.restStartedAtEpochMs > 0) builder.setUsesChronometer(true)
+        if (!atomicAvailable && state.mode == FocusMode.REST && state.restStartedAtEpochMs > 0) builder.setUsesChronometer(true)
             .setShowWhen(true).setWhen(state.restStartedAtEpochMs)
-        if (Build.VERSION.SDK_INT >= 36 && state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST)) {
+        if (!atomicAvailable && Build.VERSION.SDK_INT >= 36 && state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST)) {
             val progress = Notification.ProgressStyle().setStyledByProgress(true)
             if (state.mode == FocusMode.FOCUSING && state.plannedSeconds > 0) {
                 progress.setProgressSegments(listOf(Notification.ProgressStyle.Segment(state.plannedSeconds.toInt())))
@@ -109,11 +116,23 @@ class OriginOsAtomicPublisher(private val context: Context) {
     }
 
     private fun glyph(resource: AtomicIslandLayout.Glyph, colors: IslandPalette): Icon = glyphs.getOrPut(resource to colors.accent) {
-        Icon.createWithResource(context, when (resource) {
-        AtomicIslandLayout.Glyph.BRAND -> R.drawable.ic_atomic
-        AtomicIslandLayout.Glyph.START -> R.drawable.ic_atomic_node_start
-        AtomicIslandLayout.Glyph.COMPLETE -> R.drawable.ic_atomic_node_complete
-        }).setTint(colors.accent)
+        if (resource == AtomicIslandLayout.Glyph.BRAND) Icon.createWithResource(context, R.drawable.ic_atomic).setTint(colors.accent)
+        else {
+            // Padded, opaque node centers keep the progress track out of the
+            // visible glyph. Cache the two small images per actual theme color.
+            val bitmap = Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = colors.buttonText }
+            canvas.drawCircle(24f, 24f, 12f, paint)
+            paint.color = colors.accent
+            if (resource == AtomicIslandLayout.Glyph.START) canvas.drawCircle(24f, 24f, 5f, paint)
+            else {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = 3f
+                paint.strokeCap = Paint.Cap.ROUND; paint.strokeJoin = Paint.Join.ROUND
+                canvas.drawPath(Path().apply { moveTo(17f, 24f); lineTo(22f, 29f); lineTo(31f, 19f) }, paint)
+            }
+            Icon.createWithBitmap(bitmap)
+        }
     }
 
     @Suppress("UNCHECKED_CAST")

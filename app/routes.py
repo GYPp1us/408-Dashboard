@@ -25,6 +25,7 @@ from .focus_kline import (
     validate_setting_payload,
 )
 from .focus_reporter import ReporterError, apply_frame, authenticate_reporter, connection_details
+from .checkins import heatmap as checkin_heatmap
 from .focus_challenge import account_now, challenge_decisions, challenge_payload, set_challenge
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 from .settlement_report import build_settlement_report
@@ -634,6 +635,12 @@ def register_routes(app):
             daily_settlement = get_daily_settlement(connection, viewer_id, settlement_date)
             focus_sessions = _focus_sessions(connection, now, pauses, viewer_id)
             sessions = [(start, end) for _, start, end in focus_sessions]
+            focus_heat = aggregate_focus_heatmap(sessions, now)
+            first_checkin = connection.execute("SELECT min(created_day) FROM checkin_rules WHERE user_id=?", (viewer_id,)).fetchone()[0]
+            if first_checkin:
+                checkin_days = (now.date() - datetime.fromisoformat(first_checkin).date()).days + 1
+                if checkin_days > len(focus_heat):
+                    focus_heat = [[0] * 12 for _ in range(checkin_days - len(focus_heat))] + focus_heat
             today_rows = _today_focus_rows(connection, now, pauses, viewer_id)
             today_focus = summarize_today_focus(sessions, now)
             today_focus["count"] = len(today_rows)
@@ -666,7 +673,8 @@ def register_routes(app):
                 "focus_modes": list_focus_modes(connection, viewer_id),
                 "subjects": list_subjects(connection, viewer_id) if viewer_id is not None else [],
                 "focus_messages": get_focus_messages(connection, viewer_id),
-                "heatmap": aggregate_focus_heatmap(sessions, now),
+                "heatmap": focus_heat,
+                "checkin_heatmap": checkin_heatmap(connection, viewer_id, now, len(focus_heat)),
                 "heatmap_visible_hours": heatmap_visible_hours,
                 "scores": scores,
                 "score_history": score_history,

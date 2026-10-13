@@ -12,6 +12,7 @@ from .focus_monitor import start_focus_monitor
 from .focus_reporter import materialize_legacy_reporter_keys
 from .routes import register_routes
 from .dashboard_artwork import register_dashboard_artwork
+from .checkins import register_checkins
 
 
 def register_static_assets(app: Flask) -> None:
@@ -66,6 +67,7 @@ def create_app(overrides: dict | None = None) -> Flask:
     register_auth(app)
     register_routes(app)
     register_dashboard_artwork(app)
+    register_checkins(app)
     start_focus_monitor(app)
 
     return app

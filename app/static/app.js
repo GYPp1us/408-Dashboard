@@ -592,7 +592,7 @@
     const grid = $("#heat-grid");
     const days = $("#heat-days");
     if (!hours || !grid || !days) return;
-    const signature = JSON.stringify([heatmap, visibleHours, String(state.dashboard?.now || "").slice(0, 10)]);
+    const signature = JSON.stringify([heatmap, state.dashboard?.checkin_heatmap, visibleHours, String(state.dashboard?.now || "").slice(0, 10)]);
     if (grid.dataset.signature === signature) { state.heatGeometryUpdate?.(); return; }
     grid.dataset.signature = signature;
     const configuredHours = [...new Set((visibleHours || []).map(Number))].filter((hour) => Number.isInteger(hour) && hour >= 0 && hour < 24 && hour % 2 === 0);
@@ -605,7 +605,7 @@
     const wasAtLatest = state.heatWindowStart === null || state.heatWindowStart >= previousMaxStart;
     state.heatWindowStart = wasAtLatest ? maxStart : Math.min(maxStart, Math.max(0, state.heatWindowStart));
     state.heatHistoryLength = historyDays.length;
-    hours.innerHTML = shownHours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("");
+    hours.innerHTML = shownHours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("") + "<span>打卡</span>";
     const max = Math.max(120, ...historyDays.flatMap((day) => buckets.map((bucket) => day[bucket] || 0)));
     let suppressClickUntil = 0;
     const formatDay = (absoluteIndex) => {
@@ -629,6 +629,17 @@
     const renderWindow = () => {
       const displayDays = historyDays.slice(state.heatWindowStart, state.heatWindowStart + dayCount);
       grid.innerHTML = buckets.map((bucket) => displayDays.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, state.heatWindowStart + dayIndex, bucket)).join("")).join("");
+      const checkins = state.dashboard?.checkin_heatmap || [];
+      grid.innerHTML += displayDays.map((_, dayIndex) => {
+        const index = state.heatWindowStart + dayIndex;
+        const row = checkins[index];
+        const date = new Date(`${String(state.dashboard?.now || new Date().toISOString()).slice(0, 10)}T12:00:00Z`);
+        date.setUTCDate(date.getUTCDate() - (historyDays.length - 1 - index));
+        const dayKey = row?.date || date.toISOString().slice(0, 10);
+        const level = row?.completed ? Math.min(4, Math.ceil(row.completion * 4)) : 0;
+        const text = row?.total ? `${row.completed}/${row.total} · ${Math.round(row.completion * 100)}%` : "未配置";
+        return `<button type="button" role="gridcell" tabindex="-1" class="heat-cell heat-checkin-cell${level ? ` l${level}` : ""}${fadeClass(dayIndex)}" data-detail-kind="checkin-day" data-detail-date="${dayKey}" data-detail-hour="checkin" data-detail-key="${dayKey}" data-detail="${dayKey} 打卡 ${text}" aria-label="${dayKey} 打卡 ${text}" title="${text}"></button>`;
+      }).join("");
       grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
         if (Date.now() < suppressClickUntil) return;
         $("#heat-detail").textContent = cell.dataset.detail;
@@ -636,6 +647,8 @@
         const button = $("#open-heat-detail");
         if (button) {
           button.disabled = false;
+          button.dataset.detailKind = cell.dataset.detailKind;
+          button.textContent = cell.dataset.detailKind === "checkin-day" ? "打卡详情 ↗" : "时段详情 ↗";
           button.dataset.detailDate = cell.dataset.detailDate;
           button.dataset.detailHour = cell.dataset.detailHour;
           button.dataset.detailKey = cell.dataset.detailKey;
@@ -661,9 +674,9 @@
       const cell = width / (dayCount + (dayCount - 1) * gapRatio);
       const gap = cell * gapRatio;
       grid.style.gridTemplateColumns = `repeat(${dayCount},${cell}px)`;
-      grid.style.gridTemplateRows = `repeat(${buckets.length},${cell}px)`;
+      grid.style.gridTemplateRows = `repeat(${buckets.length + 1},${cell}px)`;
       grid.style.gap = `${gap}px`;
-      hours.style.gridTemplateRows = `repeat(${buckets.length},${cell}px)`;
+      hours.style.gridTemplateRows = `repeat(${buckets.length + 1},${cell}px)`;
       hours.style.gap = `${gap}px`;
     };
     state.heatGeometryUpdate = updateGeometry;
@@ -1240,6 +1253,12 @@
   }
 
   function renderModes(modes = []) {
+    if (window.FocusEntry && canManageOwnFocus()) {
+      FocusEntry.render(modes, { count: quickFocusCount(), quickIds: quickModeIds(modes),
+        bind: initDragLaunchers, dispose: disposeCommitSlider, preview: updateFocusLaunchPreview,
+        data: () => state.dashboard, refresh: refreshCurrentPage });
+      return;
+    }
     const target = $("#focus-modes");
     if (!target) return;
     const byId = new Map(modes.map((item) => [Number(item.id), item]));
@@ -1282,6 +1301,7 @@
     const submit = $("#submit-focus-launch");
     if (submit) submit.disabled = !item;
     const pin = $("#toggle-focus-pin");
+    if (window.FocusEntry) { FocusEntry.updateLaunch(item); return; }
     if (pin) {
       const pinned = Boolean(item && state.quickFocus.pinned.includes(Number(item.id)));
       pin.disabled = !item;
@@ -1393,6 +1413,7 @@
   function openFocusLaunch() {
     const modal = $("#focus-launch-modal");
     if (!modal || modal.open || state.dashboard?.focus?.active) return;
+    window.FocusEntry?.prepareLaunch();
     renderFocusLaunch();
     modal.showModal();
     requestAnimationFrame(() => {
@@ -1416,7 +1437,7 @@
     event.preventDefault();
     const item = selectedFocusLaunchItem();
     if (!item) return;
-    if (await startFocusItem(Number(item.id))) closeFocusLaunch();
+    if (await startFocusItem(Number(item.id), window.FocusEntry?.launchMinutes() || 0)) closeFocusLaunch();
   }
 
   function bindFocusLaunch() {
@@ -1427,7 +1448,7 @@
     $("#focus-launch-form")?.addEventListener("submit", submitFocusLaunch);
     $("#toggle-focus-pin")?.addEventListener("click", () => {
       const item = selectedFocusLaunchItem();
-      if (item) toggleQuickPin(item.id);
+      if (item) { if (window.FocusEntry) FocusEntry.assignLaunch(item); else toggleQuickPin(item.id); }
     });
     modal.addEventListener("cancel", (event) => { event.preventDefault(); closeFocusLaunch(); });
   }
@@ -1570,11 +1591,11 @@
     });
   }
 
-  async function startFocusItem(focusItemId) {
+  async function startFocusItem(focusItemId, plannedMinutes = 0) {
     if (!canManageOwnFocus() || state.starting || state.settling) return false;
     state.starting = true;
     try {
-      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(focusItemId), mode: "专注", planned_minutes: 0, client_token: createClientToken() }) });
+      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(focusItemId), mode: "专注", planned_minutes: plannedMinutes, client_token: createClientToken() }) });
       rememberFocusItem(focusItemId);
       state.recentlyEnded = null;
       const today = state.dashboard?.focus?.today || [];
@@ -1593,7 +1614,7 @@
 
   async function commitFocusStart(track, thumb) {
     track.classList.add("armed");
-    try { await startFocusItem(Number(track.dataset.focusItemId)); }
+    try { await startFocusItem(Number(track.dataset.focusItemId), Number(track.dataset.plannedMinutes || 0)); }
     finally { resetCommitSlider(track, thumb); }
   }
 
@@ -1757,6 +1778,7 @@
       day: String(data.now || "").slice(0, 10),
       timezoneOffset: accountOffset(data.now),
       heatmap: data.heatmap,
+      checkins: data.checkin_heatmap,
       heatmapVisibleHours: data.heatmap_visible_hours,
       preferences: data.preferences,
       friends: (data.friends || []).map((friend) => [friend.id, friend.today_seconds, friend.delta_seconds]),

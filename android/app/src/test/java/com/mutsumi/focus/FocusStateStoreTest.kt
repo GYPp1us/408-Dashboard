@@ -9,6 +9,26 @@ class FocusStateStoreTest {
     private val paused = FocusRuntimeState(mode = FocusMode.PAUSED, sessionId = 8,
         pausedAtEpochMs = minute, elapsedSeconds = 1800, observedAtEpochMs = minute)
 
+    @Test fun `an active reminder keeps expansion through clock updates and recreation until closed`() {
+        val prefs = MemoryPreferences()
+        val store = FocusStateStore(prefs)
+        store.write(paused)
+        val token = store.reminderToken(ReminderKind.PAUSED, 6 * minute)
+        assertEquals(AtomicRefreshPolicy.ReminderPresentation(true, true),
+            AtomicRefreshPolicy.reminderPresentation(true, true, token, store.wasIslandPresented(token)))
+        store.markIslandPresented(token)
+        val restored = FocusStateStore(prefs)
+        for (second in 0..12) {
+            val latest = restored.reminderToken(ReminderKind.PAUSED, 6 * minute + second * 1000)
+            assertEquals(AtomicRefreshPolicy.ReminderPresentation(true, false),
+                AtomicRefreshPolicy.reminderPresentation(true, true, latest, restored.wasIslandPresented(latest)))
+        }
+        restored.closeReminders()
+        assertNull(restored.due(8 * minute))
+        assertFalse(AtomicRefreshPolicy.reminderPresentation(true, true, "", false).expanded)
+        assertFalse(AtomicRefreshPolicy.reminderPresentation(true, false, token, false).expanded)
+    }
+
     @Test fun `island reminder expansion is persisted per round and reset for a new pause`() {
         val prefs = MemoryPreferences()
         val store = FocusStateStore(prefs)

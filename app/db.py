@@ -68,6 +68,37 @@ CREATE TABLE IF NOT EXISTS focus_reporter_keys (
     created_at TEXT NOT NULL,
     token TEXT
 );
+CREATE TABLE IF NOT EXISTS checkin_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    time_start TEXT,
+    time_end TEXT,
+    place_label TEXT NOT NULL DEFAULT '',
+    latitude REAL,
+    longitude REAL,
+    radius_meters INTEGER NOT NULL DEFAULT 200,
+    created_at TEXT NOT NULL,
+    created_day TEXT NOT NULL,
+    archived_at TEXT,
+    archived_day TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_checkin_rules_user ON checkin_rules(user_id, id);
+CREATE TABLE IF NOT EXISTS checkin_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rule_id INTEGER NOT NULL REFERENCES checkin_rules(id),
+    local_day TEXT NOT NULL,
+    accepted_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    UNIQUE(user_id, rule_id, local_day)
+);
+CREATE INDEX IF NOT EXISTS idx_checkin_records_day ON checkin_records(user_id, local_day);
+CREATE TABLE IF NOT EXISTS checkin_reporter_keys (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS user_subjects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1494,6 +1525,8 @@ def export_migration_data(connection: sqlite3.Connection, now: datetime) -> dict
             "focus_sessions": _rows(connection, "SELECT * FROM focus_sessions ORDER BY id"),
             "focus_pauses": _rows(connection, "SELECT * FROM focus_pauses ORDER BY id"),
             "daily_settlements": _rows(connection, "SELECT * FROM daily_settlements ORDER BY id"),
+            "checkin_rules": _rows(connection, "SELECT * FROM checkin_rules ORDER BY id"),
+            "checkin_records": _rows(connection, "SELECT * FROM checkin_records ORDER BY id"),
             "focus_kline_challenge_events": _rows(connection, "SELECT * FROM focus_kline_challenge_events ORDER BY id") if _table_exists(connection, "focus_kline_challenge_events") else [],
             "scores": list_scores(connection),
             "plans": list_plans(connection),

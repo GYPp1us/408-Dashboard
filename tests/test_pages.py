@@ -133,7 +133,8 @@ def test_quick_score_shortcut_and_compact_focus_modes_are_in_assets(authenticate
     assert '<span>时间</span>' not in javascript
     assert '<span>diff</span>' not in javascript
     assert "历日排名" in javascript
-    assert "async function startFocusItem(focusItemId)" in javascript
+    assert "async function startFocusItem(focusItemId, plannedMinutes = 0)" in javascript
+    assert "planned_minutes: plannedMinutes" in javascript
     assert "focus_item_id: Number(focusItemId)" in javascript
     assert 'id="score-paper-bands"' in authenticated_client.get("/owner").get_data(as_text=True)
     assert "function renderScoreEntry()" in javascript

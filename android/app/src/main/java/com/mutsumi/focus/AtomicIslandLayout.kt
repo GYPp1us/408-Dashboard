@@ -91,7 +91,9 @@ data class AtomicIslandLayout(
             "notification.superx.shortInfos" to mapOf(
                 "notification.superx.shortInfos.icon" to Glyph.BRAND,
                 "notification.superx.shortInfos.image" to Glyph.BRAND,
-                "notification.superx.shortInfos.coreInfoShort" to when (template) { 1 -> core; 3 -> leftValue; else -> subtitle },
+                // A fixed-format clock avoids changing unit words / width on
+                // the desktop compact card; statistics still update each second.
+                "notification.superx.shortInfos.coreInfoShort" to when (template) { 1 -> core; 3 -> leftValue; else -> collapsedText },
                 "notification.superx.shortInfos.describeShort" to title,
             ),
             "notification.superx.capsule" to mapOf(

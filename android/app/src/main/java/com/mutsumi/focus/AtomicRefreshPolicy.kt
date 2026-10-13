@@ -2,6 +2,13 @@ package com.mutsumi.focus
 
 /** State changes publish immediately; only clock-only updates wait for the next second. */
 class AtomicRefreshPolicy {
+    data class ReminderPresentation(val expanded: Boolean, val first: Boolean)
+    companion object {
+        fun reminderPresentation(visible: Boolean, atomicAvailable: Boolean, token: String, alreadyPresented: Boolean): ReminderPresentation {
+            val expanded = visible && atomicAvailable && token.isNotBlank()
+            return ReminderPresentation(expanded, expanded && !alreadyPresented)
+        }
+    }
     data class StateKey(
         val content: FocusRuntimeState,
         val visible: Boolean,

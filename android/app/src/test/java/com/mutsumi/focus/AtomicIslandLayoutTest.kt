@@ -7,6 +7,20 @@ class AtomicIslandLayoutTest {
     private val minute = 60_000L
     private fun map(value: Any?) = value as Map<*, *>
 
+    @Test fun `compact focus clock stays short and updates each second without changing templates or nodes`() {
+        val state = FocusRuntimeState(mode = FocusMode.FOCUSING, elapsedSeconds = 3599, plannedSeconds = 10800,
+            observedAtEpochMs = minute)
+        for (second in 0..12) {
+            val layout = AtomicIslandLayout.from(state, null, minute + second * 1000L)
+            val wire = layout.wire(false)
+            assertEquals(2, wire["notification.superx.template"])
+            assertEquals(IslandTime.small(3599 + second.toLong()),
+                map(wire["notification.superx.shortInfos"])["notification.superx.shortInfos.coreInfoShort"])
+            assertEquals(listOf(AtomicIslandLayout.Glyph.START, AtomicIslandLayout.Glyph.COMPLETE),
+                map(wire["notification.superx.infos"])["notification.superx.infos.nodeIcon"])
+        }
+    }
+
     @Test fun `paused island separates pause duration from frozen focus and has one capsule`() {
         val state = FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = minute, elapsedSeconds = 1800,
             subject = "这是一段很长的事项名称，不能把它塞进胶囊，也不能让它挤掉时钟")

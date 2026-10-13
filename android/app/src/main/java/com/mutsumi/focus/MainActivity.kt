@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -44,6 +45,21 @@ class MainActivity : ComponentActivity() {
     @Volatile private var fileChooserReturnedAt = 0L
     @Volatile private var systemOrientation = Configuration.ORIENTATION_UNDEFINED
     @Volatile private var pendingFocusDestination: String? = null
+    private var geolocationCallback: GeolocationPermissions.Callback? = null
+    private var geolocationOrigin: String? = null
+    private var geolocationPage: String? = null
+    private val locationPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val samePage = !isFinishing && !isDestroyed && ::webView.isInitialized && webView.url == geolocationPage && hasTrustedDocument()
+        finishGeolocation(samePage && (it[android.Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            it[android.Manifest.permission.ACCESS_COARSE_LOCATION] == true))
+    }
+
+    private fun finishGeolocation(allowed: Boolean) {
+        val callback = geolocationCallback
+        val origin = geolocationOrigin
+        geolocationCallback = null; geolocationOrigin = null; geolocationPage = null
+        if (callback != null && origin != null) callback.invoke(origin, allowed, false)
+    }
     private val imageChooser = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         fileChooserReturnedAt = SystemClock.uptimeMillis()
         if (BuildConfig.DEBUG) Log.d("MutsumiPicker", "result cancelled=${uri == null}")
@@ -124,6 +140,7 @@ class MainActivity : ComponentActivity() {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
+            setGeolocationEnabled(true)
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
@@ -143,6 +160,19 @@ class MainActivity : ComponentActivity() {
                 SystemClock.uptimeMillis() - fileChooserReturnedAt < 300)
         }
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
+                if (!hasTrustedDocument() || !isTrustedUrl(origin) || geolocationCallback != null) {
+                    callback.invoke(origin, false, false)
+                    return
+                }
+                geolocationCallback = callback; geolocationOrigin = origin; geolocationPage = webView.url
+                val allowed = listOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                    .any { ContextCompat.checkSelfPermission(this@MainActivity, it) == android.content.pm.PackageManager.PERMISSION_GRANTED }
+                if (allowed) finishGeolocation(true) else locationPermission.launch(arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+            }
+
+            override fun onGeolocationPermissionsHidePrompt() { finishGeolocation(false) }
             override fun onShowFileChooser(
                 view: WebView,
                 callback: ValueCallback<Array<Uri>>,
@@ -182,6 +212,8 @@ class MainActivity : ComponentActivity() {
                     "/static/viewport-scale.css" -> "viewport-scale.css"
                     "/static/viewport-scale.js" -> "viewport-scale.js"
                     "/static/dashboard-details.js" -> "dashboard-details.js"
+                    "/static/focus-entry.js" -> "focus-entry.js"
+                    "/static/focus-entry.css" -> "focus-entry.css"
                     else -> return null
                 }
                 return WebResourceResponse(if (asset.endsWith(".css")) "text/css" else "application/javascript",
@@ -189,6 +221,7 @@ class MainActivity : ComponentActivity() {
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                finishGeolocation(false)
                 // Retry cache at most once per navigation, including a second
                 // offline visit to the same route after reconnection.
                 if (cacheFallbackPending && url == cacheFallbackUrl) {
@@ -313,6 +346,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        finishGeolocation(false)
         completeFileChooser(null)
         webView.removeJavascriptInterface("MutsumiAndroid")
         webView.destroy()

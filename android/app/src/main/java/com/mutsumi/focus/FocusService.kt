@@ -153,7 +153,11 @@ class FocusService : Service() {
         val due = store.due(now)
         val token = due?.let { store.reminderToken(it.kind, now) }.orEmpty()
         val atomic = publisher.usesAtomicIsland()
-        val forceShowCard = visible && atomic && token.isNotBlank() && !store.wasIslandPresented(token)
+        // Carry the same active reminder's expansion request on clock UPDATEs.
+        // Close removes the token; persisting presentation remains once/round.
+        val presentation = AtomicRefreshPolicy.reminderPresentation(visible, atomic, token, store.wasIslandPresented(token))
+        val forceShowCard = presentation.expanded
+        val firstPresentation = presentation.first
         val clockBucket = when (state.mode) {
             FocusMode.PAUSED -> (now - state.pausedAtEpochMs).coerceAtLeast(0) / 1000
             FocusMode.REST -> state.restElapsed(now)
@@ -172,7 +176,7 @@ class FocusService : Service() {
         }
         return try {
             val notification = publisher.liveNotification(state, operation, retryAction = retryAction,
-                forceShowCard = forceShowCard, now = now)
+                forceShowCard = forceShowCard, now = now, atomicAvailable = atomic)
             if (!foregroundStarted) startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             else notifications.notify(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             foregroundStarted = true
@@ -180,7 +184,7 @@ class FocusService : Service() {
             refreshPolicy.published(stateKey, clockBucket, elapsedNow)
             if (stateChanged) Log.i("FocusService", "Notification state=${state.mode} operation=${operation.name} " +
                 "publishMs=${SystemClock.elapsedRealtime() - publishStartedAt}")
-            if (forceShowCard) { store.markIslandPresented(token); store.markPresented(token) }
+            if (firstPresentation) { store.markIslandPresented(token); store.markPresented(token) }
             true
         } catch (error: Exception) {
             Log.w("FocusService", "Foreground promotion failed", error)
