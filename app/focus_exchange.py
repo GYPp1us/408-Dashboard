@@ -14,6 +14,7 @@ from threading import RLock
 from typing import Callable
 
 MODEL = "focus-exchange-v1"
+ENGINE_REVISION = 2
 TICK = 0.001
 INTERVAL_MS = 100
 

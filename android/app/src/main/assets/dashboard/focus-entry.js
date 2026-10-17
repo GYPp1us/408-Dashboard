@@ -8,6 +8,7 @@
   const itemLabel = item => [item?.subject,item?.name].filter(Boolean).join('-') || item?.label || '';
   let hooks={},items=[],count=4,slots=null,tab='quick',launchMode='quick',launchTime=60,signature='';
   let rules=[],catalogDay='',loading=false,catalogStamp='',reloadAgain=false;
+  const feedback=new Map();let feedbackContext='';
   const errorText={checkin_outside_time_window:'现在不在打卡时间段内。',checkin_location_required:'需要本次定位才能验证地点。',checkin_location_accuracy_required:'请重新定位以获取位置精度。',checkin_location_too_inaccurate:'定位精度不足，请重新定位或调整地点半径。',checkin_outside_location:'当前位置不在设定地点范围内。',invalid_checkin_time_window:'请设置有效的时间段，支持跨午夜。',invalid_checkin_location:'请输入有效的经纬度。',invalid_checkin_radius:'半径需要 50～10000 米。',invalid_checkin_name:'名称需要 1～40 个字。',authentication_required:'请先登录。'};
   async function api(url,options={}) { const r=await fetch(url,{...options,headers:{'Content-Type':'application/json',...options.headers}}),data=await r.json();if(!r.ok)throw new Error(errorText[data.error]||'操作失败，请检查输入后重试。');return data; }
   const message = text => {const node=$('#entry-status');if(node)node.textContent=text;};
@@ -46,8 +47,47 @@
   }
   function locationOnce(){if(!navigator.geolocation)return Promise.reject(new Error('当前环境无法定位。'));return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy}),e=>reject(new Error(e.code===1?'需要允许本次定位才能验证地点。':'暂时无法定位，请稍后重试。')),{enableHighAccuracy:true,timeout:15000,maximumAge:0}));}
   async function loadRules(force=false){if(!own())return;if(loading){if(force)reloadAgain=true;return;}if(!force&&catalogDay===String(hooks.data?.()?.now||'').slice(0,10))return;loading=true;try{const result=await api('/api/checkins');rules=result.checkin_items;catalogDay=result.date;renderRules();}catch(e){message(e.message);}finally{loading=false;if(reloadAgain){reloadAgain=false;loadRules(true);}}}
-  function renderRules(){const host=$('#checkin-list');if(!host)return;const sig=JSON.stringify(rules);if(host.dataset.signature===sig)return;host.dataset.signature=sig;host.innerHTML=rules.length?rules.map(r=>`<div class="checkin-row"><div><b>${esc(r.name)}</b><small>${r.time_start?`${r.time_start}–${r.time_end}`:'任意时间'}${r.latitude!==null?' · '+esc(r.place_label||'指定地点')+' '+r.radius_meters+'m':''}</small></div><button type="button" class="ui-button ${r.completed_at?'ui-button--quiet':'ui-button--primary'}" data-checkin="${r.id}" ${r.completed_at?'disabled':''}>${r.completed_at?'已完成':'打卡'}</button><button type="button" class="ui-button ui-button--quiet" data-edit-checkin="${r.id}">编辑</button></div>`).join(''):'<p class="entry-status">每天每项一次；时间段和地点条件可分别启用。</p>';
-    host.querySelectorAll('[data-checkin]').forEach(b=>b.onclick=async()=>{const rule=rules.find(r=>r.id===Number(b.dataset.checkin));b.disabled=true;try{const position=rule.latitude!==null?await locationOnce():{},result=await api('/api/checkins/frame',{method:'POST',body:JSON.stringify({source:'app',state:'checkin',checkin_item_id:rule.id,...position})});message(result.changed?'打卡已完成。':'今天已经完成这一项。');await loadRules(true);await hooks.refresh?.();}catch(e){message(e.message);b.disabled=false;}});host.querySelectorAll('[data-edit-checkin]').forEach(b=>b.onclick=()=>editRule(rules.find(r=>r.id===Number(b.dataset.editCheckin))));
+  function ruleStatus(rule){const status=feedback.get(rule.id);return rule.completed_at?{state:'success',text:status?.state==='success'?status.text:'今天已完成'}:status||{state:'idle',text:''};}
+  function conditionText(rule){return `${rule.time_start?`${rule.time_start}–${rule.time_end}`:'任意时间'}${rule.latitude!==null?' · '+(rule.place_label||'指定地点')+' '+rule.radius_meters+'m':''}`;}
+  function paintRule(track,rule){
+    const status=ruleStatus(rule),busy=status.state==='pending',done=status.state==='success';
+    const text=status.text||conditionText(rule),thumb=track.querySelector('.drag-thumb');
+    track.dataset.feedback=status.state;track.setAttribute('aria-busy',String(busy));track.setAttribute('aria-disabled',String(busy||done));
+    track.title=`${rule.name} · ${text}`;track.setAttribute('aria-label',track.title);
+    track.querySelector('.drag-label').innerHTML=`<b>${esc(rule.name)}${done?' · 已打卡':status.state==='failure'?' · 未完成':''}</b><small>${esc(text)}</small>`;
+    thumb.textContent=done?'✓':busy?'…':status.state==='failure'?'!':'→';thumb.tabIndex=done?-1:0;
+    thumb.setAttribute('aria-label',done?`${rule.name}已完成`:`滑动打卡 ${rule.name}`);
+  }
+  async function submitRule(id){
+    const rule=rules.find(r=>r.id===id);if(!rule||rule.completed_at||feedback.get(id)?.state==='pending')return;
+    const context=feedbackContext;feedback.set(id,{state:'pending',text:rule.latitude!==null?'正在定位…':'正在验证…'});
+    const paint=()=>{const track=$(`#checkin-list [data-checkin="${id}"]`);if(track&&feedbackContext===context)paintRule(track,rule);};paint();
+    try{
+      const position=rule.latitude!==null?await locationOnce():{};
+      if(feedbackContext!==context)return;
+      const result=await api('/api/checkins/frame',{method:'POST',body:JSON.stringify({source:'app',state:'checkin',checkin_item_id:id,...position})});
+      if(feedbackContext!==context)return;
+      rule.completed_at=result.accepted_at;feedback.set(id,{state:'success',text:result.changed?'打卡成功':'今天已完成'});paint();
+      // A refresh failure must not turn an accepted check-in into a failure.
+      loadRules(true);Promise.resolve(hooks.refresh?.()).catch(()=>{});
+    }catch(error){if(feedbackContext===context){feedback.set(id,{state:'failure',text:error.message});paint();}}
+  }
+  function bindRules(host){
+    host.querySelectorAll('[data-checkin]').forEach(track=>{
+      const rule=rules.find(r=>r.id===Number(track.dataset.checkin));paintRule(track,rule);
+      const id=rule.id;
+      hooks.slider?.(track,()=>!rules.find(r=>r.id===id)?.completed_at&&feedback.get(id)?.state!=='pending',()=>submitRule(id),max=>rules.find(r=>r.id===id)?.completed_at?max:0);
+    });
+  }
+  function renderRules(){
+    const host=$('#checkin-list');if(!host)return;
+    const context=`${document.body.dataset.viewerId}:${String(hooks.data?.()?.now||'').slice(0,10)}`;
+    if(context!==feedbackContext){feedback.clear();feedbackContext=context;}
+    const sig=JSON.stringify(rules.map(({completed_at,...rule})=>rule));if(host.dataset.signature===sig){bindRules(host);return;}host.dataset.signature=sig;
+    host.querySelectorAll('.checkin-launch').forEach(track=>hooks.dispose?.(track));
+    host.innerHTML=rules.length?rules.map(rule=>`<div class="checkin-row"><div class="drag-launch checkin-launch" data-checkin="${rule.id}" role="group" aria-live="polite"><div class="drag-fill"></div><span class="drag-label"></span><span class="drag-thumb" role="button" tabindex="0">→</span></div><button type="button" class="ui-button ui-button--quiet" data-edit-checkin="${rule.id}">编辑</button></div>`).join(''):'<p class="entry-status">每天每项一次；时间段和地点条件可分别启用。</p>';
+    bindRules(host);
+    host.querySelectorAll('[data-edit-checkin]').forEach(button=>button.onclick=()=>editRule(rules.find(r=>r.id===Number(button.dataset.editCheckin))));
   }
   function editRule(rule={}){
     let dialog=$('#checkin-edit-dialog');if(!dialog){dialog=document.createElement('dialog');dialog.id='checkin-edit-dialog';dialog.className='entry-dialog native-glass-card';document.body.append(dialog);}

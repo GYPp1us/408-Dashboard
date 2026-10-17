@@ -31,7 +31,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .db import FOCUS_DYNAMICS_EFFECTIVE_KEY, FOCUS_EXCHANGE_EFFECTIVE_KEY, REPORTER_HEARTBEAT_TIMEOUT_SECONDS
-from .focus_exchange import ExchangeParameters, MODEL as EXCHANGE_MODEL, simulate_day
+from .focus_exchange import ENGINE_REVISION as EXCHANGE_REVISION, ExchangeParameters, MODEL as EXCHANGE_MODEL, simulate_day
 from .focus_challenge import CHALLENGE_LIMIT, challenge_decisions, challenge_payload, limit_at, limit_policy, policy_fingerprint
 
 
@@ -860,6 +860,9 @@ def build_focus_klines(
     config = _as_parameters(parameters)
     target_zone = now.tzinfo if now and now.tzinfo else timezone.utc
     current = _coerce_now(now, target_zone)
+    # Durable rollout timestamps are UTC. The legacy prefix must still use
+    # the account's local market windows on the rollout day.
+    exchange_at = _coerce_datetime(exchange_at,target_zone) if exchange_at is not None else None
     normalized_sessions = normalize_trading_sessions(trading_sessions)
     normalized_seconds = {_date_key(key): max(0, int(float(value))) for key, value in daily_focus_seconds.items()}
     normalized_segments: dict[str, Sequence[tuple[datetime, datetime]]] = {
@@ -1315,7 +1318,7 @@ def build_cached_focus_klines(
                 "initial_price": _price(initial_price), "timezone": timezone_name,
                 "windows": [{"name": item["name"], "start": item["start"].isoformat(), "end": item["end"].isoformat()} for item in windows],
                 "policy": policy_fingerprint(policy, day_end), "dynamics_at": dynamics_key,
-                **({'exchange':{'model':EXCHANGE_MODEL,'at':exchange_at.isoformat(),'parameters':asdict(exchange_config)}}
+                **({'exchange':{'model':EXCHANGE_MODEL,'revision':EXCHANGE_REVISION,'at':exchange_at.isoformat(),'parameters':asdict(exchange_config)}}
                    if exchange_at is not None and exchange_at<windows[-1]['end'] else {}),
             })
             fingerprints[key] = (source_hash, cache_hash)

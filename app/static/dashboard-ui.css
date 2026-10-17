@@ -179,10 +179,10 @@ body.page-focus-kline { background: var(--canvas); }
 :root[data-theme="dark"] .score-entry-preview, :root[data-theme="dark"] .confirm-dialog-head, :root[data-theme="dark"] .friend-diff-head,
 :root[data-theme="dark"] .focus-leaderboard-row, :root[data-theme="dark"] .subject-settings-row, :root[data-theme="dark"] .settings-list > div,
 :root[data-theme="dark"] .account-profile, :root[data-theme="dark"] .friend-list > div, :root[data-theme="dark"] .invitation-list > div { background: var(--surface); border-color: var(--line); color: var(--ink); }
-:root[data-theme="dark"] .investment-trend.up, :root[data-theme="dark"] .focus-comparison-view.ahead .focus-compare-trend,
+:root[data-theme="dark"] .investment-trend.up, :root[data-theme="dark"] .focus-compare-trend.is-ahead,
 :root[data-theme="dark"] .friend-diff-row em.ahead,
 :root[data-theme="dark"] .focus-trust-state { background: #203e35; color: var(--score-positive); }
-:root[data-theme="dark"] .investment-trend.down, :root[data-theme="dark"] .focus-comparison-view.behind .focus-compare-trend,
+:root[data-theme="dark"] .investment-trend.down, :root[data-theme="dark"] .focus-compare-trend.is-behind,
 :root[data-theme="dark"] .friend-diff-row em.behind,
 :root[data-theme="dark"] .focus-trust-state.untrusted { background: #472e31; color: var(--score-negative); }
 @media (prefers-color-scheme: dark) {

@@ -41,11 +41,17 @@ test('missing execution ranges and stale connections reconcile without fabricate
   assert.equal(tape.step(market,origin+5000).value,103,'closing auction adopts the actual settled quote');
 });
 
-test('quote styling follows the last trade rather than the daily net change and remains steady while flat',()=>{
+test('daily change colors digits while the last trade independently colors the background',()=>{
   const {Market}=harness(),quote=new Element('strong'); quote.textContent='110.000';
-  Market.paintQuote(quote,109.999,-1);
+  Market.paintQuote(quote,109.999,-1,100);
   assert(quote.classList.contains('is-tick-down')); assert(!quote.classList.contains('is-tick-up'));
-  Market.paintQuote(quote,109.999,0);
+  assert(quote.classList.contains('is-day-up')); assert(!quote.classList.contains('is-day-down'));
+  Market.paintQuote(quote,109.999,0,100);
   assert(quote.classList.contains('is-tick-down'));
   assert.equal(quote.textContent,'109.999');
+  Market.paintQuote(quote,99.999,1,100);
+  assert(quote.classList.contains('is-day-down')); assert(quote.classList.contains('is-tick-up'));
+  Market.paintQuote(quote,100,0,100);
+  assert(!quote.classList.contains('is-day-up')); assert(!quote.classList.contains('is-day-down'));
+  assert(quote.classList.contains('is-tick-up'));
 });

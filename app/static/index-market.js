@@ -179,11 +179,14 @@
     };
   }
 
-  function paintQuote(target,value,direction) {
+  function paintQuote(target,value,direction,previousClose) {
     if (!target) return;
     const next=finite(value).toFixed(3),before=Number(target.textContent);
     if (direction===undefined) direction=Number.isFinite(before) && target.textContent!==next ? Math.sign(value-before) : 0;
     target.classList.add('trade-quote');
+    const dayChange=Number.isFinite(Number(previousClose)) ? value-Number(previousClose) : 0;
+    target.classList.toggle('is-day-up',dayChange>.0005);
+    target.classList.toggle('is-day-down',dayChange<-.0005);
     if (direction) {
       target.classList.toggle('is-tick-up',direction>0);
       target.classList.toggle('is-tick-down',direction<0);

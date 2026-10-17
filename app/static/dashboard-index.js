@@ -133,7 +133,7 @@
   }
   function updateQuote(value, previous, direction) {
     const target = $("[data-index-points]");
-    Market.paintQuote(target,value,direction);
+    Market.paintQuote(target,value,direction,previous);
     const change = value - number(previous, 100);
     const pct = previous ? change / previous * 100 : 0;
     $("[data-index-change]").textContent = signed(change);
@@ -327,7 +327,7 @@
     const paintDetailQuote = (value, previous, direction) => {
       const quote = host.querySelector(".index-detail-quote"), target = quote?.querySelector("strong"), delta = quote?.querySelector("span");
       const change = value - previous;
-      Market.paintQuote(target,value,direction);
+      Market.paintQuote(target,value,direction,previous);
       if (delta) delta.textContent = `${signed(change)} (${signed(previous ? change / previous * 100 : 0, 2)}%)`;
       quote?.classList.toggle("index-rise", change >= 0); quote?.classList.toggle("index-fall", change < 0);
       const currentMetric = host.querySelector('[data-index-detail-metric="current"]');

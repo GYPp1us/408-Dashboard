@@ -224,7 +224,7 @@
     const previousClose = finite(selected.previousClose, selected.open);
     const change = price - previousClose;
     const changePct = previousClose ? change / previousClose * 100 : 0;
-    Market.paintQuote($("#kline-current"),price,direction);
+    Market.paintQuote($("#kline-current"),price,direction,previousClose);
     setText("#kline-change", signedPoint(change));
     setText("#kline-change-pct", signedPercent(changePct));
     setText("#focus-kline-points", point(price));
@@ -583,7 +583,7 @@
     const previous=finite(data.today.previousClose,data.today.open);
     const change = data.exchange ? displayed-previous : finite(data.today.change, data.current - data.today.open);
     const changePct = data.exchange ? previous ? change/previous*100 : 0 : finite(data.today.changePct, data.today.open ? change / data.today.open * 100 : 0);
-    Market.paintQuote($("#kline-current"),displayed,useTape ? 0 : data.exchange?.direction);
+    Market.paintQuote($("#kline-current"),displayed,useTape ? 0 : data.exchange?.direction,previous);
     setText("#kline-change", signedPoint(change));
     setText("#kline-change-pct", signedPercent(changePct));
     setText("#focus-kline-points", point(displayed));

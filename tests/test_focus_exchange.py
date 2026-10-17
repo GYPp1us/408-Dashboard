@@ -102,6 +102,20 @@ def test_cutover_preserves_old_points_and_close_remains_a_separate_value_auction
     assert close['close']==legacy['close']
     assert close['intraday'][-1]['closing_auction'] is True
 
+
+def test_utc_rollout_keeps_local_morning_prefix_and_matches_equivalent_local_time():
+    from datetime import timezone
+    cutover=DAY.replace(hour=12,minute=5,second=58,microsecond=465036)
+    kwargs={'daily_focus_seconds':{DAY.date():3*3600},
+            'daily_segments':{DAY.date():[(DAY,DAY+timedelta(hours=3))]},'user_key':28}
+    now=DAY.replace(hour=14,minute=52)
+    local=build_focus_klines(now=now,exchange_at=cutover,**kwargs)[0]
+    utc=build_focus_klines(now=now,exchange_at=cutover.astimezone(timezone.utc),**kwargs)[0]
+    assert utc==local
+    old=build_focus_klines(now=cutover,**kwargs)[0]
+    prefix=[p for p in utc['intraday'] if datetime.fromisoformat(p['timestamp'])<=cutover]
+    assert prefix==old['intraday']
+
 def database(tmp_path):
     db=connect(str(tmp_path/'exchange.sqlite3'));init_db(db)
     owner=ensure_site_owner(db,'owner','owner@example.invalid','unused')

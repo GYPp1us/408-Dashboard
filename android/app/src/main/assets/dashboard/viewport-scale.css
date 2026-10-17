@@ -55,7 +55,10 @@ html.native-app #native-runtime-card { margin-top:14px; }
 html.native-app #native-runtime-reminder { color:var(--accent-deep); font-size:12px; }
 html.native-app .native-goal-choice { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 0; font-size:12px; }
 html.native-app .native-goal-choice select { min-height:34px; padding:4px 10px; border:1px solid var(--line); border-radius:7px; background:color-mix(in srgb,var(--surface) 50%,transparent); color:var(--ink); font-size:12px; }
-html.native-app #native-focus-progress { width:100%; height:8px; accent-color:var(--accent); margin:12px 0; }
+html.native-app #native-focus-progress { appearance:none;-webkit-appearance:none;width:100%;height:14px;border:0;border-radius:4px;overflow:hidden;background:#e5e9e7;margin:12px 0; }
+html.native-app #native-focus-progress::-webkit-progress-bar { background:#e5e9e7;border-radius:4px; }
+html.native-app #native-focus-progress::-webkit-progress-value { background:var(--accent);border-radius:4px; }
+html.native-app #native-focus-progress::-moz-progress-bar { background:var(--accent);border-radius:4px; }
 html.native-app #native-runtime-details { width:min(540px,calc(var(--ui-viewport-width) - 32px)); }
 html.native-app #native-runtime-details::backdrop { background:#18202b70; backdrop-filter:blur(6px); }
 html.native-app .native-details-head { display:flex; gap:12px; align-items:center; justify-content:space-between; }
@@ -94,11 +97,11 @@ html.native-app[data-viewport-mode="portrait"] .focus-subject-viewport { max-hei
 html.native-app[data-viewport-mode="portrait"] #focus-timer { font-size:clamp(44px,12vw,68px); line-height:1.3; letter-spacing:0; margin:14px 0; }
 html.native-app[data-viewport-mode="portrait"] .focus-modes { height:auto; max-height:none; gap:10px; }
 html.native-app[data-viewport-mode="portrait"] .mode { min-height:54px; padding:6px 44px 6px 6px; }
-html.native-app[data-viewport-mode="portrait"] :is(.drag-launch,.drag-action) { min-height:48px; height:48px; }
+html.native-app[data-viewport-mode="portrait"] :is(.drag-launch,.drag-action) { min-height:38px; height:38px; }
 html.native-app[data-viewport-mode="portrait"] .drag-label { font-size:16px; }
-html.native-app[data-viewport-mode="portrait"] .drag-thumb { min-width:44px; min-height:44px; }
+html.native-app[data-viewport-mode="portrait"] .drag-thumb { min-width:32px; width:32px; min-height:32px; height:32px; }
 html.native-app[data-viewport-mode="portrait"] .quick-pin { width:40px; height:44px; right:2px; }
-html.native-app[data-viewport-mode="portrait"] .focus-launch-actions { min-height:48px; height:auto; gap:10px; }
+html.native-app[data-viewport-mode="portrait"] .focus-launch-actions { min-height:38px; height:auto; gap:10px; }
 html.native-app[data-viewport-mode="portrait"] :is(.ui-button,.primary,.outline-button) { min-height:34px; font-size:12px; border-radius:7px; }
 html.native-app[data-viewport-mode="portrait"] .focus-pause-button { width:60px; }
 html.native-app[data-viewport-mode="portrait"] .key-list { font-size:15px; }

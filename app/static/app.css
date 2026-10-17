@@ -169,14 +169,16 @@ button { cursor:pointer; }
 .investment-legend b { margin-left:auto; color:var(--ink); font-size:10px; }
 .focus-comparison-view { min-height:0; animation:focus-enter .42s ease both; }
 .focus-compare-overview { padding:12px 0 16px; border-bottom:1px solid var(--line); }
-.focus-compare-value { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:end; gap:4px 10px; }
-.focus-compare-value > span { grid-column:1; grid-row:1; color:var(--muted); font-size:11px; }
-.focus-compare-time { grid-column:2; grid-row:1; color:var(--muted); font-size:11px; text-align:left; }
-.focus-compare-value > strong,.focus-compare-trend { display:flex; grid-row:2; align-items:center; height:38px; min-width:0; }
-.focus-compare-value > strong { font-size:31px; line-height:1; }
+.focus-compare-value { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); align-items:end; gap:8px; }
+.focus-compare-total > span { display:block;color:var(--muted);font-size:11px;margin-bottom:4px; }
+.focus-compare-total > strong,.focus-compare-trend { display:flex; align-items:center; height:30px; min-width:0; }
+.focus-compare-total > strong { font-size:22px;line-height:1;white-space:nowrap; }
 .focus-compare-trend { width:100%; padding:0 10px; justify-content:center; border-radius:5px; background:#edf0ef; color:var(--muted); font-size:13px; text-align:center; white-space:nowrap; }
-.focus-comparison-view.ahead .focus-compare-trend { background:#e7f3ef; color:var(--score-positive); }
-.focus-comparison-view.behind .focus-compare-trend { background:#faebe8; color:var(--score-negative); }
+.focus-compare-trend.is-ahead { background:#e7f3ef; color:var(--score-positive); }
+.focus-compare-trend.is-behind { background:#faebe8; color:var(--score-negative); }
+.focus-compare-diffs { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px; }
+.focus-compare-diffs > div > span { display:block;color:var(--muted);font-size:11px;margin-bottom:4px; }
+.focus-compare-diffs .focus-compare-trend { height:30px;padding:0 4px;font-size:12px; }
 .friend-diff-board { margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
 .friend-diff-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:5px; }
 .friend-diff-head span { color:var(--accent-deep); font-size:11px; font-weight:750; }
@@ -194,9 +196,11 @@ button { cursor:pointer; }
 .chart-detail { display:flex; flex-wrap:wrap; align-items:center; gap:7px 12px; min-height:28px; margin-top:7px; color:var(--muted); font-size:11px; }
 .chart-detail strong { color:var(--ink); }
 .chart-detail span { color:var(--accent-deep); }
-.trade-quote { border-radius:4px; }
-.trade-quote.is-tick-up { --trade-color:var(--index-rise,#d66c58); color:var(--trade-color); }
-.trade-quote.is-tick-down { --trade-color:var(--index-fall,#4d8a73); color:var(--trade-color); }
+.trade-quote { border-radius:4px;color:var(--ink); }
+.trade-quote.is-day-up { color:var(--index-rise,#d66c58); }
+.trade-quote.is-day-down { color:var(--index-fall,#4d8a73); }
+.trade-quote.is-tick-up { --trade-color:var(--index-rise,#d66c58); }
+.trade-quote.is-tick-down { --trade-color:var(--index-fall,#4d8a73); }
 .trade-quote.is-tick-up,.trade-quote.is-tick-down { --trade-wash:color-mix(in srgb,var(--trade-color) 12%,var(--surface,#fff)); background:linear-gradient(90deg,var(--trade-wash) 0%,var(--trade-wash) 50%,transparent 100%); }
 .focus-summary-view { animation:focus-enter .35s ease both; }
 .summary-close { display:grid; width:26px; height:26px; padding:0; place-items:center; border:1px solid var(--accent-border); border-radius:5px; background:var(--accent-soft); color:var(--accent-deep); font-size:19px; line-height:1; }

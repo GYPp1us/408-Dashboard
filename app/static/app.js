@@ -1,5 +1,5 @@
 (() => {
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, heatWindowStart: null, heatHistoryLength: 0, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "index", insightView: "investment", summaryReturnView: "investment", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, heatWindowStart: null, heatHistoryLength: 0, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "index", insightView: "comparison", summaryReturnView: "comparison", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
   const DAILY_TARGET_SECONDS = 7 * 3600;
   const chartColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const quickFocusCount = () => Number(window.DashboardUI?.preferences.quick_focus_count || 4);
@@ -881,12 +881,14 @@
       const extraSeconds = activeExtraSeconds(active, fetchedAt, now);
       const todaySeconds = Number(investment.today_seconds || 0) + extraSeconds;
       const yesterdayTotal = Number(investment.yesterday_seconds || 0);
-      const yesterdayBaseline = Math.round(yesterdayTotal * workWindowProgress(new Date(serverNow(now)), state.dashboard?.windows));
-      const delta = todaySeconds - yesterdayBaseline;
-      view.classList.toggle("ahead", delta > 0);
-      view.classList.toggle("behind", delta < 0);
+      const progress = workWindowProgress(new Date(serverNow(now)), state.dashboard?.windows);
       $("#focus-compare-today").textContent = formatSeconds(todaySeconds);
-      $("#focus-compare-trend").textContent = delta > 0 ? `提前 +${formatSeconds(delta)}` : delta < 0 ? `落后 −${formatSeconds(Math.abs(delta))}` : "持平 ±00:00:00";
+      for (const [selector,total] of [["#focus-compare-target",8*3600],["#focus-compare-trend",yesterdayTotal]]) {
+        const node=$(selector);if(!node)continue;
+        const delta=todaySeconds-Math.round(total*progress);
+        node.classList.toggle("is-ahead",delta>0);node.classList.toggle("is-behind",delta<0);
+        node.textContent=delta>0?`提前 +${formatSeconds(delta)}`:delta<0?`落后 −${formatSeconds(Math.abs(delta))}`:"持平 ±00:00:00";
+      }
       renderFocusLeaderboard(state.dashboard?.focus_leaderboard, extraSeconds);
     };
     if (active) setSecondTask("focusComparison", tick);
@@ -1026,7 +1028,7 @@
 
   function selectInsightView(name) {
     const summaryAvailable = state.summaryCharts.length > 0;
-    state.insightView = ["investment", "comparison", "summary"].includes(name) && (name !== "summary" || summaryAvailable) ? name : "investment";
+    state.insightView = ["investment", "comparison", "summary"].includes(name) && (name !== "summary" || summaryAvailable) ? name : "comparison";
     ["investment", "comparison", "summary"].forEach((view) => {
       const target = $(view === "investment" ? "#focus-investment-view" : view === "comparison" ? "#focus-comparison-view" : "#focus-summary");
       if (target) target.hidden = state.insightView !== view;
@@ -1287,7 +1289,7 @@
   function renderModes(modes = []) {
     if (window.FocusEntry && canManageOwnFocus()) {
       FocusEntry.render(modes, { count: quickFocusCount(), quickIds: quickModeIds(modes),
-        bind: initDragLaunchers, dispose: disposeCommitSlider, preview: updateFocusLaunchPreview,
+        bind: initDragLaunchers, slider: bindCommitSlider, dispose: disposeCommitSlider, preview: updateFocusLaunchPreview,
         data: () => state.dashboard, refresh: refreshCurrentPage });
       return;
     }
@@ -1618,7 +1620,7 @@
   }
 
   function initDragLaunchers() {
-    document.querySelectorAll(".drag-launch").forEach((track) => {
+    document.querySelectorAll(".drag-launch[data-focus-item-id]").forEach((track) => {
       bindCommitSlider(track, () => canManageOwnFocus() && !state.dashboard?.focus?.active && !state.starting && !state.settling, commitFocusStart);
     });
   }
