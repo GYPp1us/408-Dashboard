@@ -7,9 +7,13 @@
     a_high_hours: 9,
     k_low_percent_per_hour: 3.33,
     k_high_percent_per_hour: 5,
+    support_percent: 1.2,
+    resistance_percent: 1.2,
+    switch_minutes: 8,
   };
   const state = { payload: null, charts: [], resizeObservers: [], resizeTimer: null, rangeDays: 0, selectedDate: null, liveTickTimer: null, livePollTimer: null, liveTickClearTimer: null, nowMarkerTimer: null, liveTickGeneration: 0, liveResumeDispose: null, liveDailySeries: null, liveDailyCandle: null, liveIntraday: null, liveSnapshot: null };
   const Market = window.IndexMarket;
+  state.tradeTape=Market.tradeTape();
   const acceptPolicy = (data) => !data.challenge || !window.IndexChallenge || window.IndexChallenge.accept(data.challenge);
   let summaryPending = null, summaryRefreshDue = false, summaryRequestVersion = 0;
   let loadRequestVersion = 0, challengeLoadDue = false;
@@ -49,6 +53,9 @@
       a_high_hours: ["a_high_hours", "a_high", "high_anchor_hours"],
       k_low_percent_per_hour: ["k_low_percent_per_hour", "k_low", "low_rate_percent_per_hour"],
       k_high_percent_per_hour: ["k_high_percent_per_hour", "k_high", "high_rate_percent_per_hour"],
+      support_percent: ["support_percent"],
+      resistance_percent: ["resistance_percent"],
+      switch_minutes: ["switch_minutes"],
     };
     return Object.fromEntries(Object.entries(DEFAULT_PARAMETERS).map(([key, fallback]) => {
       const candidate = aliases[key].map((name) => source[name]).find((value) => value !== undefined && value !== null && value !== "");
@@ -148,6 +155,7 @@
       initialIndex: finite(source.initial_index, 100),
       priceTick: finite(source.price_tick, .001),
       challenge: source.challenge,
+      exchange: source.exchange,
     };
   }
 
@@ -202,7 +210,6 @@
     state.liveSnapshot = null;
     state.liveTickGeneration += 1;
     const quote = $("#kline-current");
-    quote?.classList.remove("is-tick-up", "is-tick-down");
     const tape = $("#kline-tick-tape");
     if (tape) {
       tape.hidden = true;
@@ -217,7 +224,7 @@
     const previousClose = finite(selected.previousClose, selected.open);
     const change = price - previousClose;
     const changePct = previousClose ? change / previousClose * 100 : 0;
-    setText("#kline-current", point(price));
+    Market.paintQuote($("#kline-current"),price,direction);
     setText("#kline-change", signedPoint(change));
     setText("#kline-change-pct", signedPercent(changePct));
     setText("#focus-kline-points", point(price));
@@ -238,15 +245,6 @@
       state.liveDailySeries.update(state.liveDailyCandle);
     }
 
-    const quote = $("#kline-current");
-    if (direction) {
-      quote?.classList.remove("is-tick-up", "is-tick-down");
-      if (quote) void quote.offsetWidth;
-      quote?.classList.add(direction > 0 ? "is-tick-up" : "is-tick-down");
-      window.clearTimeout(state.liveTickClearTimer);
-      state.liveTickClearTimer = window.setTimeout(() => quote?.classList.remove("is-tick-up", "is-tick-down"), 480);
-    }
-
     setText("#kline-high", point(liveHigh));
     setText("#kline-low", point(liveLow));
     setText("#kline-close", point(price));
@@ -256,6 +254,7 @@
   function startLiveTicks(data, selected, series, latestPoint) {
     if (!selected || selected.date !== data.today.date || selected.date !== Market.dateAt(Date.now() / 1000, state.liveIntraday?.market.offset)) return;
     const generation = state.liveTickGeneration;
+    const tradeTape=state.tradeTape;
     let lastPrice = latestPoint?.value ?? selected.close;
     let tickCount = 0;
     let liveHigh = selected.high, liveLow = selected.low, polling = false, refreshDue = false, requestVersion = 0, pollPending = null;
@@ -263,7 +262,7 @@
       const snapshot = state.liveSnapshot;
       if (document.hidden || generation !== state.liveTickGeneration || !snapshot || snapshot.requestVersion !== requestVersion) return;
       const view = state.liveIntraday;
-      const projection = Market.project(snapshot, view?.market);
+      const projection = snapshot.live_tick?.kind==='executions' ? tradeTape.step(view?.market) : Market.project(snapshot, view?.market);
       if (!projection) return;
       const price = projection.value;
       const group = projection.active ? view.timeline.append(projection.time, price) : -1;
@@ -273,7 +272,7 @@
         $("#kline-intraday-empty").hidden = true;
         $("#kline-intraday-chart").closest(".kline-intraday-card")?.classList.toggle("is-empty", false);
       }
-      const direction = point(price) === point(lastPrice) ? 0 : price > lastPrice ? 1 : -1;
+      const direction = projection.direction ?? (point(price) === point(lastPrice) ? 0 : price > lastPrice ? 1 : -1);
       if (direction) tickCount += 1;
       lastPrice = price;
       liveHigh = Math.max(liveHigh, price); liveLow = Math.min(liveLow, price);
@@ -300,6 +299,7 @@
         snapshot.requestVersion = version;
         if (snapshot.intraday_date !== selected.date) { loadKline(); return; }
         state.liveSnapshot = snapshot;
+        tradeTape.accept(snapshot);
         data.challenge = snapshot.challenge || data.challenge;
         data.limits = { low:finite(snapshot.limit_down, data.limits.low), high:finite(snapshot.limit_up, data.limits.high) };
         setText("#kline-limit-low", point(data.limits.low)); setText("#kline-limit-high", point(data.limits.high));
@@ -341,8 +341,8 @@
       document.removeEventListener("dashboard:focus-refreshed", refreshFocus);
       window.removeEventListener("pageshow", resume);
     };
-    state.liveTickTimer = window.setInterval(run, 1000);
-    state.livePollTimer = window.setInterval(poll, 15000);
+    state.liveTickTimer = window.setInterval(run, 100);
+    state.livePollTimer = window.setInterval(poll, 1000);
     return poll();
   }
 
@@ -578,12 +578,15 @@
   }
 
   function renderQuote(data) {
-    const change = finite(data.today.change, data.current - data.today.open);
-    const changePct = finite(data.today.changePct, data.today.open ? change / data.today.open * 100 : 0);
-    setText("#kline-current", point(data.current));
+    const useTape=data.exchange && state.tradeTape.initialized && state.tradeTape.date===data.today.date && (!state.selectedDate || state.selectedDate===data.today.date);
+    const displayed=useTape ? state.tradeTape.value : data.current;
+    const previous=finite(data.today.previousClose,data.today.open);
+    const change = data.exchange ? displayed-previous : finite(data.today.change, data.current - data.today.open);
+    const changePct = data.exchange ? previous ? change/previous*100 : 0 : finite(data.today.changePct, data.today.open ? change / data.today.open * 100 : 0);
+    Market.paintQuote($("#kline-current"),displayed,useTape ? 0 : data.exchange?.direction);
     setText("#kline-change", signedPoint(change));
     setText("#kline-change-pct", signedPercent(changePct));
-    setText("#focus-kline-points", point(data.current));
+    setText("#focus-kline-points", point(displayed));
     setText("#focus-kline-change", signedPercent(changePct));
     setText("#focus-kline-hours", formatSeconds(data.focusSeconds));
     const changeLine = $(".kline-change-line");

@@ -25,12 +25,13 @@ import math
 import random
 import sqlite3
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .db import FOCUS_DYNAMICS_EFFECTIVE_KEY, REPORTER_HEARTBEAT_TIMEOUT_SECONDS
+from .db import FOCUS_DYNAMICS_EFFECTIVE_KEY, FOCUS_EXCHANGE_EFFECTIVE_KEY, REPORTER_HEARTBEAT_TIMEOUT_SECONDS
+from .focus_exchange import ExchangeParameters, MODEL as EXCHANGE_MODEL, simulate_day
 from .focus_challenge import CHALLENGE_LIMIT, challenge_decisions, challenge_payload, limit_at, limit_policy, policy_fingerprint
 
 
@@ -81,6 +82,24 @@ def dynamics_effective_at(connection: sqlite3.Connection) -> datetime | None:
     except (TypeError, ValueError):
         return None
 
+
+def exchange_effective_at(connection: sqlite3.Connection) -> datetime | None:
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").fetchone():
+        return None
+    row = connection.execute("SELECT value FROM settings WHERE key=?", (FOCUS_EXCHANGE_EFFECTIVE_KEY,)).fetchone()
+    try:
+        value = datetime.fromisoformat(row[0]) if row else None
+        return value if value and value.tzinfo else None
+    except (TypeError, ValueError):
+        return None
+
+
+def exchange_parameters_for(connection, user_id):
+    from .db import get_settings
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").fetchone():
+        return ExchangeParameters()
+    return ExchangeParameters.from_settings(get_settings(connection,user_id))
+
 # Settings are persisted by the existing user-settings store.  The values in
 # storage use percentage points for K values because that is friendlier to a
 # numeric settings form; the algorithm itself uses decimal returns.
@@ -90,6 +109,9 @@ SETTING_KEYS = {
     "a_high_hours": "focus_kline_a_high",
     "k_low_percent_per_hour": "focus_kline_k_low_percent",
     "k_high_percent_per_hour": "focus_kline_k_high_percent",
+    "support_percent": "focus_kline_support_percent",
+    "resistance_percent": "focus_kline_resistance_percent",
+    "switch_minutes": "focus_kline_switch_minutes",
 }
 
 
@@ -187,6 +209,9 @@ def validate_setting_payload(payload: Mapping[str, Any], current: Mapping[str, A
         "a_high_hours": ("a_high", "a_high_hours", SETTING_KEYS["a_high_hours"]),
         "k_low_percent_per_hour": ("k_low", "k_low_percent", "k_low_percent_per_hour", SETTING_KEYS["k_low_percent_per_hour"]),
         "k_high_percent_per_hour": ("k_high", "k_high_percent", "k_high_percent_per_hour", SETTING_KEYS["k_high_percent_per_hour"]),
+        "support_percent": ("support_percent", SETTING_KEYS["support_percent"]),
+        "resistance_percent": ("resistance_percent", SETTING_KEYS["resistance_percent"]),
+        "switch_minutes": ("switch_minutes", SETTING_KEYS["switch_minutes"]),
     }
 
     def read(field: str, default: float) -> float:
@@ -211,12 +236,17 @@ def validate_setting_payload(payload: Mapping[str, Any], current: Mapping[str, A
         raise ValueError("invalid_focus_kline_anchors")
     if not (0 <= k_low <= 20 and 0 <= k_high <= 20):
         raise ValueError("invalid_focus_kline_slopes")
+    exchange=ExchangeParameters(support_percent=read("support_percent",1.2),
+        resistance_percent=read("resistance_percent",1.2),switch_minutes=read("switch_minutes",8))
     return {
         SETTING_KEYS["a_low_hours"]: f"{a_low:g}",
         SETTING_KEYS["a_mid_hours"]: f"{a_mid:g}",
         SETTING_KEYS["a_high_hours"]: f"{a_high:g}",
         SETTING_KEYS["k_low_percent_per_hour"]: f"{k_low:g}",
         SETTING_KEYS["k_high_percent_per_hour"]: f"{k_high:g}",
+        SETTING_KEYS["support_percent"]: f"{exchange.support_percent:g}",
+        SETTING_KEYS["resistance_percent"]: f"{exchange.resistance_percent:g}",
+        SETTING_KEYS["switch_minutes"]: f"{exchange.switch_minutes:g}",
     }
 
 
@@ -814,6 +844,8 @@ def build_focus_klines(
     trading_sessions: Sequence[Sequence[str | time] | Mapping[str, Any]] | None = None,
     policy: Sequence[Mapping[str, Any]] = (),
     dynamics_at: datetime | None = None,
+    exchange_at: datetime | None = None,
+    exchange_parameters: ExchangeParameters | None = None,
     end_date: date | str | None = None,
 ) -> list[dict[str, Any]]:
     """Build a complete chronological daily OHLC series from aggregated data.
@@ -884,6 +916,8 @@ def build_focus_klines(
         activation_hours = ((_focus_seconds_between(segments, day_start, activation) if has_segment_detail else focus_seconds) / 3600.0) if activation else None
         fundamental_return = _fundamental_return(focus_hours, config, full_challenge=full_challenge, activation_hours=activation_hours)
         target_close = min(max(_price(reference_price * (1.0 + fundamental_return)), lower_bound), upper_bound)
+        exchange_enabled=exchange_at is not None and exchange_at<market_close and market_cutoff>exchange_at
+        exchange_start=max(market_open,exchange_at) if exchange_enabled else None
         path = _intraday_path(
             day=day,
             reference_price=reference_price,
@@ -891,17 +925,46 @@ def build_focus_klines(
             target_close=target_close,
             parameters=config,
             segments=segments,
-            now=current,
+            now=min(current,exchange_start) if exchange_enabled else current,
             user_key=user_key,
             bar_minutes=bar_minutes,
             sessions=normalized_sessions,
             lunch_gap_return=lunch_gap,
-            complete_day=complete_day,
+            complete_day=False if exchange_enabled else complete_day,
             aggregate_focus_seconds=None if has_segment_detail else focus_seconds,
             policy=policy,
             dynamics_at=dynamics_at,
         )
-        close = _price(path[-1]["price"]) if path else open_price
+        exchange=None
+        if exchange_enabled:
+            exchange=simulate_day(windows=windows,segments=segments,cutoff=market_cutoff,start=exchange_start,
+                price=path[-1]["price"] if path else open_price,reference=reference_price,market_open=open_price,
+                lunch_gap=lunch_gap,legacy=path,user_key=f'{user_key}:{key}',
+                parameters=exchange_parameters or ExchangeParameters(),config_key=tuple(config.to_mapping().items()),
+                fundamental=lambda hours,full,activated: _fundamental_return(hours,config,full_challenge=full,activation_hours=activated),
+                limit_events=[(event['at'],event['limit_return']) for event in policy],activation=activation,
+                aggregate_focus_seconds=None if has_segment_detail else focus_seconds)
+            samples=exchange.pop('samples')
+            sample_origins={w['name']:w['start'] for w in windows}
+            for point in samples:
+                at=datetime.fromtimestamp(point.pop('timestamp_ms')/1000,target_zone)
+                elapsed_sample=(at-sample_origins[point['session']]).total_seconds()
+                if not point.get('changed') and not point.get('opening_auction') and elapsed_sample%(max(1,int(bar_minutes))*60):
+                    continue
+                point['timestamp']=at.isoformat()
+                if path and point['timestamp']==path[-1]['timestamp'] and point['price']==path[-1]['price']:
+                    continue
+                path.append(point)
+            if complete_day:
+                # Daily value settlement is a closing auction, distinct from
+                # continuous single-tick executions and existing floor resets.
+                path.append({'timestamp':market_close.isoformat(),'price':target_close,'state':path[-1]['state'] if path else 'idle',
+                             'session':windows[-1]['name'],'changed':False,'closing_auction':True})
+                exchange['direction']=1 if target_close>exchange['price'] else -1 if target_close<exchange['price'] else exchange['direction']
+                exchange['last_trade_ms']=int(market_close.timestamp()*1000)
+                exchange['price']=target_close
+                exchange['closing_auction']=True
+        close = exchange['price'] if exchange is not None else _price(path[-1]["price"]) if path else open_price
         if complete_day:
             close = target_close
             if path:
@@ -914,6 +977,9 @@ def build_focus_klines(
             if path:
                 path[-1]["price"] = close
                 path[-1]["floor_reset"] = True
+            if exchange is not None:
+                exchange['direction']=1 if close>exchange['price'] else -1 if close<exchange['price'] else exchange['direction']
+                exchange['price']=close
         if below_reset_threshold:
             status = "below_floor"
         elif day != current.date():
@@ -929,6 +995,7 @@ def build_focus_klines(
         else:
             status = "closed"
         prices = [float(point["price"]) for point in path] or [open_price, close]
+        if exchange is not None: prices.extend([exchange['high'],exchange['low'],close])
         low = min(max(_price(min(prices)), lower_bound), open_price, close)
         high = max(min(_price(max(prices)), upper_bound), open_price, close)
         change = _price(abs(close - reference_price), floor=0.001) if close != reference_price else 0.0
@@ -961,6 +1028,7 @@ def build_focus_klines(
                     for item in windows
                 ],
                 "intraday": path,
+                **({'exchange':exchange} if exchange is not None else {}),
             }
         )
         previous_close = _price(close)
@@ -1069,6 +1137,8 @@ def recompute_focus_klines(
         trading_sessions=trading_sessions,
         policy=policy,
         dynamics_at=dynamics_effective_at(connection),
+        exchange_at=exchange_effective_at(connection),
+        exchange_parameters=exchange_parameters_for(connection,int(user_id)),
     )
     ensure_focus_kline_schema(connection)
     connection.execute("DELETE FROM focus_klines WHERE user_id = ?", (int(user_id),))
@@ -1216,6 +1286,8 @@ def build_cached_focus_klines(
             seconds_by_day.setdefault(first_policy_day, 0)
         first_key = min(min(seconds_by_day or {today_key}), today_key)
         dynamics_at = dynamics_effective_at(connection)
+        exchange_at = exchange_effective_at(connection)
+        exchange_config = exchange_parameters_for(connection,user_id)
         stored = [dict(row) for row in connection.execute(
             "SELECT * FROM focus_klines WHERE user_id=? ORDER BY trading_date", (user_id,)
         )]
@@ -1243,6 +1315,8 @@ def build_cached_focus_klines(
                 "initial_price": _price(initial_price), "timezone": timezone_name,
                 "windows": [{"name": item["name"], "start": item["start"].isoformat(), "end": item["end"].isoformat()} for item in windows],
                 "policy": policy_fingerprint(policy, day_end), "dynamics_at": dynamics_key,
+                **({'exchange':{'model':EXCHANGE_MODEL,'at':exchange_at.isoformat(),'parameters':asdict(exchange_config)}}
+                   if exchange_at is not None and exchange_at<windows[-1]['end'] else {}),
             })
             fingerprints[key] = (source_hash, cache_hash)
             cached = by_date.get(key)
@@ -1283,6 +1357,7 @@ def build_cached_focus_klines(
                 now=current, user_key=user_id, parameters=config, bar_minutes=bar_minutes,
                 initial_price=previous_close, trading_sessions=sessions, policy=policy,
                 dynamics_at=dynamics_at, end_date=today - timedelta(days=1),
+                exchange_at=exchange_at, exchange_parameters=exchange_config,
             )
             columns = (*_CACHE_CONTENT_FIELDS, "content_fingerprint")
             update_columns = [field for field in columns if field not in {"user_id", "trading_date"}]
@@ -1326,6 +1401,7 @@ def build_cached_focus_klines(
         daily_segments={today_key: segments_by_day[today_key]} if today_key in segments_by_day else {},
         now=current, user_key=user_id, parameters=config, bar_minutes=bar_minutes,
         initial_price=previous_close, trading_sessions=sessions, policy=policy, dynamics_at=dynamics_at,
+        exchange_at=exchange_at, exchange_parameters=exchange_config,
     )[0]
     selected = (intraday_date if intraday_date == "latest_available" else _date_key(intraday_date)) if intraday_date is not None else None
     if selected == "latest_available" or (selected is not None and not (first_key <= selected <= today_key)):
@@ -1400,6 +1476,7 @@ def build_focus_kline(
         "k_high_percent_per_hour": round(float(config.k_high) * 100.0, 6),
     }
     latest = candles[-1] if candles else None
+    public_parameters.update((latest.get('exchange',{}).get('parameters') if latest else None) or ExchangeParameters.from_settings(settings).public())
     previous_close = candles[-2]["close"] if len(candles) > 1 else INITIAL_INDEX
     focus = current_focus_state(connection, int(user_id))
     latest_status = focus["state"]
@@ -1426,7 +1503,8 @@ def build_focus_kline(
         "updated_at": latest.get("updated_at") if latest else datetime.now(timezone.utc).isoformat(),
         "latest": latest,
         "current": latest,
-        "model_version": MODEL_VERSION,
+        "model_version": EXCHANGE_MODEL if latest and latest.get('exchange') else MODEL_VERSION,
+        **({'exchange':latest['exchange']} if latest and latest.get('exchange') else {}),
         "initial_index": INITIAL_INDEX,
         "price_tick": PRICE_TICK,
         "intraday_bar_minutes": DEFAULT_BAR_MINUTES,
@@ -1480,9 +1558,11 @@ def build_live_focus_kline(
     path = latest["intraday"]
     market_active = any(window["start"] <= current < window["end"] for window in trading_session_windows(today, sessions, target_zone=current.tzinfo))
     focus = current_focus_state(connection, int(user_id))
-    quote = path[-1] if path else {"timestamp": current.isoformat(), "price": latest["open"]}
+    exchange=latest.get('exchange')
+    quote = ({'timestamp':datetime.fromtimestamp(exchange['timestamp_ms']/1000,current.tzinfo).isoformat(),'price':exchange['price']}
+             if exchange else path[-1] if path else {"timestamp": current.isoformat(), "price": latest["open"]})
     per_second = 0.0
-    if market_active:
+    if market_active and not exchange:
         per_second = _live_slope(path, latest["previous_close"])
     return {
         "challenge": challenge,
@@ -1505,8 +1585,10 @@ def build_live_focus_kline(
         "live_tick": {
             "value_at": quote["price"], "timestamp": quote["timestamp"],
             "per_second": per_second, "active": market_active,
+            **({'kind':'executions','price_tick':PRICE_TICK,'minimum_trade_interval_ms':100,'direction':exchange['direction']} if exchange else {}),
         },
-        "model_version": MODEL_VERSION,
+        "model_version": EXCHANGE_MODEL if exchange else MODEL_VERSION,
+        **({'exchange':{k:v for k,v in exchange.items() if k!='trades'},'trades':exchange['trades']} if exchange else {}),
     }
 
 

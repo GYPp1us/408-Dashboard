@@ -194,6 +194,10 @@ button { cursor:pointer; }
 .chart-detail { display:flex; flex-wrap:wrap; align-items:center; gap:7px 12px; min-height:28px; margin-top:7px; color:var(--muted); font-size:11px; }
 .chart-detail strong { color:var(--ink); }
 .chart-detail span { color:var(--accent-deep); }
+.trade-quote { border-radius:4px; }
+.trade-quote.is-tick-up { --trade-color:var(--index-rise,#d66c58); color:var(--trade-color); }
+.trade-quote.is-tick-down { --trade-color:var(--index-fall,#4d8a73); color:var(--trade-color); }
+.trade-quote.is-tick-up,.trade-quote.is-tick-down { --trade-wash:color-mix(in srgb,var(--trade-color) 12%,var(--surface,#fff)); background:linear-gradient(90deg,var(--trade-wash) 0%,var(--trade-wash) 50%,transparent 100%); }
 .focus-summary-view { animation:focus-enter .35s ease both; }
 .summary-close { display:grid; width:26px; height:26px; padding:0; place-items:center; border:1px solid var(--accent-border); border-radius:5px; background:var(--accent-soft); color:var(--accent-deep); font-size:19px; line-height:1; }
 .summary-goal { display:grid; grid-template-columns:82px 1fr; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); }

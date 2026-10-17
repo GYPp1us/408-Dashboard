@@ -17,8 +17,6 @@ body.page-focus-kline .app-main { padding-top:18px; }
 .kline-symbol { display:flex; align-items:baseline; gap:9px; color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.9px; }
 .kline-symbol small { color:#9aa49f; font-size:10px; font-weight:500; letter-spacing:0; }
 .kline-quote-main > strong { display:block; margin-top:8px; color:var(--ink); font-family:inherit; font-size:42px; font-weight:650; letter-spacing:-1.8px; line-height:1; }
-.kline-quote-main > strong.is-tick-up { color:var(--score-negative); animation:kline-tick-pulse .46s ease-out; }
-.kline-quote-main > strong.is-tick-down { color:var(--score-positive); animation:kline-tick-pulse .46s ease-out; }
 @keyframes kline-tick-pulse { 0%, 25% { opacity:.66; } 100% { opacity:1; } }
 .kline-change-line { display:flex; align-items:baseline; gap:9px; margin-top:8px; font-family:inherit; }
 .kline-change-line b { color:var(--muted); font-size:15px; }

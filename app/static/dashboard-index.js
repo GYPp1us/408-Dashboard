@@ -13,6 +13,7 @@
   let latest = null, live = null, dashboardNow = "", fetchedAt = 0, attemptedAt = 0, pending = null, livePending = null, context = null, homeChart = null, drawerDispose = null, refreshDue = false;
   let dashboardClock = null, liveRefreshDue = false, liveRequestVersion = 0, fullRequestVersion = 0;
   const Market = window.IndexMarket;
+  const liveTape = Market.tradeTape();
   const LIVE_POLL_MS = 1000;
   const acceptPolicy = (data) => !data.challenge || !window.IndexChallenge || window.IndexChallenge.accept(data.challenge);
   const marketDay = (data) => String(data?.intraday_date || data?.day?.date || data?.today?.date || todayDate() || "").slice(0, 10);
@@ -116,7 +117,10 @@
     instance.hasData = samples.groups.some((group) => group.length);
   }
   function render(data) {
-    updateQuote(data.current, data.previous_close);
+    if (!data.exchange || !liveTape.initialized || liveTape.date!==marketDay(data)) {
+      updateQuote(data.current, data.previous_close);
+      if (data.exchange) liveTape.accept({...data,market_active:data.day?.status==='active'});
+    }
     updateDayMetrics(data, data.current);
     const date = data.intraday_date;
     $("[data-index-updated]").textContent = `${date && date !== todayDate() ? `回看 ${date} · ` : ""}更新 ${updateClock(data.updated_at, data)}`;
@@ -127,16 +131,9 @@
     empty.hidden = Boolean(homeChart?.hasData);
     empty.textContent = !window.LightweightCharts ? "图表组件未加载，可打开详情查看数值" : data.intraday?.length ? "" : "暂无分时记录 · 开始专注后生成";
   }
-  function updateQuote(value, previous) {
+  function updateQuote(value, previous, direction) {
     const target = $("[data-index-points]");
-    const next = points(value);
-    const before = Number(target.textContent);
-    if (target.textContent.trim() && Number.isFinite(before) && target.textContent !== next) {
-      target.classList.remove("is-tick-up", "is-tick-down");
-      void target.offsetWidth;
-      target.classList.add(value > before ? "is-tick-up" : "is-tick-down");
-    }
-    target.textContent = next;
+    Market.paintQuote(target,value,direction);
     const change = value - number(previous, 100);
     const pct = previous ? change / previous * 100 : 0;
     $("[data-index-change]").textContent = signed(change);
@@ -202,14 +199,15 @@
     if (!visible() || !latest) return;
     const snapshot = live;
     if (snapshot && snapshot.requestVersion === liveRequestVersion && marketDay(snapshot) === marketDay(latest)) {
-      const projection = Market.project(snapshot, homeChart?.market || marketFor(latest));
+      const market=homeChart?.market || marketFor(latest);
+      const projection = snapshot.live_tick?.kind==='executions' ? liveTape.step(market) : Market.project(snapshot,market);
       if (!projection) return;
       const value = projection.value;
       const previous = number(snapshot.previous_close, number(latest.previous_close, 100));
       latest.current = value;
       latest.change = value - previous;
       latest.pct = previous ? latest.change / previous * 100 : 0;
-      updateQuote(value, previous);
+      updateQuote(value, previous, projection.direction);
       updateDayMetrics(latest, value, projection);
       appendLive(homeChart, projection);
       paintNow(homeChart, projection.now * 1000);
@@ -265,6 +263,7 @@
       snapshot.receivedAt = Date.now();
       snapshot.requestVersion = requestVersion;
       live = snapshot;
+      liveTape.accept(snapshot);
       latest.challenge = snapshot.challenge || latest.challenge;
       latest.limit_down = snapshot.limit_down ?? latest.limit_down;
       latest.limit_up = snapshot.limit_up ?? latest.limit_up;
@@ -300,7 +299,16 @@
     const day = data.day;
     const metrics = [["开盘", points(day.open ?? 100)], ["最高", points(day.high ?? data.current)], ["最低", points(day.low ?? data.current)], ["收盘 / 当前", points(data.current), "current"], ["振幅", `${(number(day.open) ? (number(day.high) - number(day.low)) / number(day.open) * 100 : 0).toFixed(2)}%`], ["今日专注", duration(data.today_focus_seconds), "focus"], ["跌停", points(data.limit_down), "low"], ["涨停", points(data.limit_up), "high"], ["状态", data.is_paused ? "已暂停" : data.is_focusing ? "专注中" : "休息中", "status"]];
     const params = data.parameters || {};
-    const parameters = [["低位锚点 A_low", params.a_low_hours, "小时", "对应低位收益区间的专注时长。"], ["目标锚点 A_mid", params.a_mid_hours, "小时", "对应中位收益的目标时长。"], ["高位锚点 A_high", params.a_high_hours, "小时", "对应高位收益区间的专注时长。"], ["低区倍率 K_low", params.k_low_percent_per_hour, "% / 小时", "控制目标时长以下的线性收益变化。"], ["高区倍率 K_high", params.k_high_percent_per_hour, "% / 小时", "控制目标时长以上的线性收益变化。"]];
+    const parameters = [
+      ["低位锚点 A_low", params.a_low_hours, "小时", "对应低位收益区间的专注时长。"],
+      ["目标锚点 A_mid", params.a_mid_hours, "小时", "对应中位收益的目标时长。"],
+      ["高位锚点 A_high", params.a_high_hours, "小时", "对应高位收益区间的专注时长。"],
+      ["低区倍率 K_low", params.k_low_percent_per_hour, "% / 小时", "控制目标时长以下的线性收益变化。"],
+      ["高区倍率 K_high", params.k_high_percent_per_hour, "% / 小时", "控制目标时长以上的线性收益变化。"],
+      ["价值支撑距离", params.support_percent, "%", "以昨收为基准，低于价值这段距离后逐渐积累向上动量；偏离越远回拉越强，允许继续向外成交。"],
+      ["价值压力距离", params.resistance_percent, "%", "以昨收为基准，高于价值这段距离后逐渐积累向下动量；偏离越远回拉越强，允许继续向外成交。"],
+      ["切换冲击释放", params.switch_minutes, "分钟", "开始、结束或暂停的额外压力在这段时间内释放；反向未释放压力相互抵消。"],
+    ];
     const dates = data.candles.map((row) => row.date).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
     const quoteMeta = `相对前一日收盘 · ${day.date || "暂无交易记录"} · 数据时间 ${data.updated_at || "未知"} · 盘中逐秒更新，历史保留正式采样和状态事件`;
     return `<div class="index-detail"><div class="index-detail-quote ${data.change < 0 ? "index-fall" : "index-rise"}" data-tooltip="${escape(quoteMeta)}" tabindex="0"><strong>${points(data.current)}</strong><span>${signed(data.change)} (${signed(data.pct, 2)}%)</span></div><dl class="index-detail-grid">${metrics.map(([key, value, metric]) => `<div><dt>${escape(key)}</dt><dd ${metric ? `data-index-detail-metric="${metric}"` : ""}>${escape(value)}</dd></div>`).join("")}</dl><section><h3 data-tooltip="红涨绿跌；点击日 K 查看当天分时" tabindex="0">历史日线</h3><div class="index-detail-chart" data-index-daily role="img" aria-label="专注指数日线 K 线"></div><p data-index-daily-note class="sr-only">${dates.length ? "红涨绿跌 · 点击日线查看当天分时" : "暂无历史数据"}</p></section><section><div class="index-detail-select"><h3 data-tooltip="横轴固定展示所选日期开盘至收盘；圆点标记专注切换，箭头标记收盘重置" tabindex="0">分时走势</h3><select data-index-day aria-label="选择分时日期" ${dates.length ? "" : "disabled"}>${dates.map((date) => `<option value="${escape(date)}" ${date === data.intraday_date ? "selected" : ""}>${escape(date)}</option>`).join("")}</select></div><div class="index-detail-chart" data-index-intraday role="img" aria-label="所选日期交易时段分时图"></div><p data-index-path-note class="sr-only">${data.intraday?.length ? `${escape(data.intraday_date)} · 1 分钟正式采样` : "暂无分时记录"}</p></section><section><h3 data-tooltip="普通限制 ±10%，挑战限制 ±20%；各日按当时生效的政策计算；低于 10 点时收盘重置至 10 点" tabindex="0">指数参数</h3>${window.IndexChallenge?.controlHtml() || ""}<dl class="index-params">${parameters.map(([label, value, unit, explanation]) => `<div><dt data-tooltip="${escape(explanation)}" tabindex="0">${escape(label)} · ${value === undefined ? "—" : escape(value)} ${escape(unit)}</dt></div>`).join("")}</dl></section><a href="/focus-kline" class="index-detail-link">打开完整行情与参数设置 ↗</a></div>`;
@@ -313,18 +321,13 @@
     const path = createChart(host.querySelector("[data-index-intraday]"));
     let disposed = false, sequence = 0, dateController = null;
     const select = host.querySelector("[data-index-day]");
+    const detailTape=Market.tradeTape();
     const note = host.querySelector("[data-index-path-note]");
     const unmountChallenge = window.IndexChallenge?.mount(host);
-    const paintDetailQuote = (value, previous) => {
+    const paintDetailQuote = (value, previous, direction) => {
       const quote = host.querySelector(".index-detail-quote"), target = quote?.querySelector("strong"), delta = quote?.querySelector("span");
       const change = value - previous;
-      if (target) {
-        const before = number(target.textContent, value), next = points(value);
-        if (target.textContent !== next) {
-          target.classList.remove("is-tick-up", "is-tick-down"); void target.offsetWidth;
-          target.classList.add(value > before ? "is-tick-up" : "is-tick-down"); target.textContent = next;
-        }
-      }
+      Market.paintQuote(target,value,direction);
       if (delta) delta.textContent = `${signed(change)} (${signed(previous ? change / previous * 100 : 0, 2)}%)`;
       quote?.classList.toggle("index-rise", change >= 0); quote?.classList.toggle("index-fall", change < 0);
       const currentMetric = host.querySelector('[data-index-detail-metric="current"]');
@@ -333,7 +336,7 @@
     const summary = (next) => {
       const values = { current:points(next.index?.current ?? next.current), focus:duration(next.today_focus_seconds), low:points(next.limit_down), high:points(next.limit_up), status:next.is_paused ? "已暂停" : next.is_focusing ? "专注中" : "休息中" };
       Object.entries(values).forEach(([key, value]) => { const target = host.querySelector(`[data-index-detail-metric="${key}"]`); if (target) target.textContent = value; });
-      paintDetailQuote(number(next.index?.current ?? next.current), number(next.previous_close, 100));
+      if (!detailTape.initialized || !next.exchange) paintDetailQuote(number(next.index?.current ?? next.current), number(next.previous_close, 100));
     };
     if (daily) {
       daily.series.setData(data.candles.filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date)).map((row) => ({ time:row.date, open:number(row.open), high:number(row.high), low:number(row.low), close:number(row.close) })));
@@ -345,12 +348,12 @@
       if (disposed || !path?.market || select.value !== todayDate()) return;
       const snapshot = detailSnapshot;
       if (!snapshot || snapshot.requestVersion !== liveRequestVersion || marketDay(snapshot) !== select.value) { paintNow(path, serverNow()); return; }
-      const projection = Market.project(snapshot, path.market);
+      const projection = snapshot.live_tick?.kind==='executions' ? detailTape.step(path.market) : Market.project(snapshot, path.market);
       if (!projection) return;
       appendLive(path, projection);
       paintNow(path, projection.now * 1000);
       const previous = number(snapshot.previous_close, selectedData.previous_close);
-      paintDetailQuote(projection.value, previous);
+      paintDetailQuote(projection.value, previous, projection.direction);
     };
     const detailPoll = () => {
       if (disposed || document.hidden || select.value !== todayDate()) return;
@@ -374,6 +377,7 @@
       if (select.value !== todayDate() || marketDay(snapshot) !== select.value) return;
       if (detailSnapshot && Market.parse(snapshot.generated_at) < Market.parse(detailSnapshot.generated_at)) return;
       detailSnapshot = snapshot;
+      detailTape.accept(snapshot);
       selectedData = { ...selectedData, intraday:snapshot.intraday || selectedData.intraday, intraday_date:snapshot.intraday_date, updated_at:snapshot.generated_at, change:number(snapshot.index?.current, 100) - number(snapshot.previous_close, 100) };
       setLine(path, selectedData); detailSecond();
     };
@@ -383,8 +387,8 @@
     document.addEventListener("dashboard:index-invalidated", detailInvalidated);
     const challengeChanged = () => { if (!disposed) { detailSnapshot = null; choose(select.value); } };
     document.addEventListener("dashboard:challenge-updated", challengeChanged);
-    detailTimer = setInterval(detailSecond, 1000);
-    detailPollTimer = setInterval(detailPoll, 15000);
+    detailTimer = setInterval(detailSecond, 100);
+    detailPollTimer = setInterval(detailPoll, 1000);
     detailPoll(); detailSecond();
     async function choose(date) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
@@ -462,7 +466,7 @@
   $("[data-index-retry]").addEventListener("click", () => refreshFull(true));
   new MutationObserver(() => { if (visible()) { if (refreshDue || !latest) refreshFull(); else { render(latest); liveSecond(); refreshLive(); } } }).observe(view, { attributes:true, attributeFilter:["hidden", "class", "style"] });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { if (refreshDue || !latest) refreshFull(); else refreshLive(true); } });
-  setInterval(liveSecond, 1000);
+  setInterval(liveSecond, 100);
   setInterval(() => { if (visible()) refreshLive(); }, LIVE_POLL_MS);
   window.DashboardIndex = { refresh:() => latest ? refreshLive(true) : refreshFull(true), resize:() => { if (homeChart && visible()) { homeChart.chart.applyOptions({ width:$("[data-index-chart]").clientWidth, height:Math.max(70, $("[data-index-chart]").clientHeight) }); Market.pin(homeChart.chart, homeChart.market); liveSecond(); } else if (latest && visible()) render(latest); } };
   refreshFull();

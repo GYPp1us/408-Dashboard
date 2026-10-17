@@ -103,6 +103,13 @@
     const age = Math.max(0, (nowMs - finite(snapshot.receivedAt, nowMs)) / 1000);
     const now = generated + age;
     const tick = snapshot.live_tick || {};
+    if (tick.kind === "executions" || snapshot.exchange?.model === "focus-exchange-v1") {
+      const time=parse(tick.timestamp || snapshot.generated_at || snapshot.updated_at);
+      const group=sessionIndex(session,generated,false);
+      return {value:finite(snapshot.index?.current,snapshot.exchange?.price),time,now,
+        active:Boolean(snapshot.market_active && group>=0),stale:age>3,group,
+        direction:finite(tick.direction,snapshot.exchange?.direction),executed:false};
+    }
     const anchor = parse(tick.timestamp);
     const base = finite(tick.value_at, finite(snapshot.index?.current, 100));
     const serverGroup = sessionIndex(session, generated, false);
@@ -116,6 +123,72 @@
     const raw = snapshot.market_active && serverGroup >= 0 ? base + finite(tick.per_second) * elapsed : finite(snapshot.index?.current, base);
     const value = Math.max(finite(snapshot.limit_down, -Infinity), Math.min(finite(snapshot.limit_up, Infinity), raw));
     return { value, now, time:Math.floor(projectedAt), active:active && age <= 20, stale:age > 20, group };
+  }
+
+  function tradeTape() {
+    let date=null,session=null,value=null,time=0,direction=0,lastId=0,pending=[],snapshot=null;
+    let generated=-Infinity,receivedAt=0,lastPaint=-Infinity;
+    function reset(next,stamp,now,rows) {
+      date=next.intraday_date || next.today?.date; session=next.exchange?.session || null;
+      value=finite(next.index?.current,next.exchange?.price); time=parse(next.live_tick?.timestamp || next.generated_at || next.updated_at);
+      direction=finite(next.live_tick?.direction,next.exchange?.direction); pending=[];
+      lastId=Math.max(0,...rows.map(t=>t.id)); lastPaint=now;
+    }
+    return {
+      get date() { return date; },
+      get initialized() { return value!==null; },
+      get value() { return value; },
+      accept(next,now=Date.now()) {
+        if (next.live_tick?.kind!=="executions" && next.exchange?.model!=="focus-exchange-v1") return false;
+        const stamp=parse(next.generated_at || next.updated_at)*1000;
+        if (!Number.isFinite(stamp) || stamp<generated) return true;
+        const rows=(next.trades || next.exchange?.trades || []).filter(t=>Number.isFinite(t.id) && Number.isFinite(t.price) && Number.isFinite(t.timestamp_ms) && t.timestamp_ms<=stamp)
+          .sort((a,b)=>a.id-b.id);
+        const incoming=rows.filter(t=>t.id>lastId);
+        const previous=pending.at(-1)?.price ?? value;
+        const broken=incoming.length && previous!==null && Math.abs(Math.abs(incoming[0].price-previous)-.001)>1e-7;
+        if (value===null || date!==(next.intraday_date || next.today?.date) || session!==(next.exchange?.session || null)
+            || pending.length+incoming.length>30 || broken
+            || (!next.market_active && Math.abs(finite(next.index?.current,next.exchange?.price)-value)>.0005)
+            || (!incoming.length && !pending.length && Math.abs(finite(next.index?.current,next.exchange?.price)-value)>.0005)) {
+          reset(next,stamp,now,rows);
+        } else {
+          let prior=previous;
+          for (const trade of incoming) {
+            if (Math.abs(Math.abs(trade.price-prior)-.001)>1e-7) { reset(next,stamp,now,rows); break; }
+            pending.push({...trade,playAt:now+(trade.timestamp_ms-stamp)+1000});
+            prior=trade.price; lastId=trade.id;
+          }
+        }
+        snapshot=next; generated=stamp; receivedAt=now;
+        return true;
+      },
+      step(market,now=Date.now()) {
+        if (!snapshot || value===null) return null;
+        const serverNow=generated/1000+Math.max(0,(now-receivedAt)/1000);
+        const group=sessionIndex(market,serverNow,false);
+        const active=Boolean(snapshot.market_active && group>=0 && now-receivedAt<=3000);
+        let executed=false;
+        if (active && pending.length && pending[0].playAt<=now && now-lastPaint>=100) {
+          const trade=pending.shift(); value=trade.price; time=trade.timestamp_ms/1000; direction=trade.direction;
+          lastPaint=now; executed=true;
+        }
+        if (!active) pending=[];
+        return {value,time,direction,executed,now:serverNow,active,group,stale:now-receivedAt>3000};
+      },
+    };
+  }
+
+  function paintQuote(target,value,direction) {
+    if (!target) return;
+    const next=finite(value).toFixed(3),before=Number(target.textContent);
+    if (direction===undefined) direction=Number.isFinite(before) && target.textContent!==next ? Math.sign(value-before) : 0;
+    target.classList.add('trade-quote');
+    if (direction) {
+      target.classList.toggle('is-tick-up',direction>0);
+      target.classList.toggle('is-tick-down',direction<0);
+    }
+    if (target.textContent!==next) target.textContent=next;
   }
   const pin = (chart, session) => { if (session) { chart.setMarket?.(session); chart.timeScale().setVisibleRange({ from:session.open, to:session.close }); } };
   const coordinate = (chart, time) => chart.timeScale().timeToCoordinate(time);
@@ -272,5 +345,5 @@
     };
   }
   const createSeriesMarkers = (series, markers = []) => { series.setMarkers(markers); return { setMarkers:(next) => series.setMarkers(next) }; };
-  window.IndexMarket = { parse, offsetOf, clock, clockSeconds, dateAt, market, sessionIndex, samples, timeline, breakSegments, project, pin, coordinate, createChart, createSeriesMarkers };
+  window.IndexMarket = { parse, offsetOf, clock, clockSeconds, dateAt, market, sessionIndex, samples, timeline, breakSegments, project, tradeTape, paintQuote, pin, coordinate, createChart, createSeriesMarkers };
 })();

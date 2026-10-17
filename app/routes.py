@@ -26,6 +26,7 @@ from .focus_kline import (
 )
 from .focus_reporter import ReporterError, apply_frame, authenticate_reporter, connection_details
 from .checkins import heatmap as checkin_heatmap
+from .focus_exchange import ExchangeParameters, MODEL as EXCHANGE_MODEL
 from .focus_challenge import account_now, challenge_decisions, challenge_payload, set_challenge
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 from .settlement_report import build_settlement_report
@@ -261,11 +262,11 @@ def _focus_kline_payload(
     # intraday series in the response; the browser requests another date only
     # when the user selects that daily candle.
     compact_candles = [
-        {**row, "intraday": row["intraday"] if row["date"] == selected_intraday_date else []}
+        {**{k:v for k,v in row.items() if k!='exchange'}, "intraday": row["intraday"] if row["date"] == selected_intraday_date else []}
         for row in candles
     ]
-    compact_daily = [{**row, "intraday": []} for row in candles]
-    compact_latest = {**latest, "intraday": []} if latest else None
+    compact_daily = [{**{k:v for k,v in row.items() if k!='exchange'}, "intraday": []} for row in candles]
+    compact_latest = {**{k:v for k,v in latest.items() if k!='exchange'}, "intraday": []} if latest else None
     previous_close = candles[-2]["close"] if len(candles) > 1 else INITIAL_INDEX
     focus = current_focus_state(connection, int(user_id)) if user_id is not None else {
         "state": "rest",
@@ -273,7 +274,7 @@ def _focus_kline_payload(
         "is_paused": False,
     }
     status = focus["state"]
-    public_parameters = _focus_kline_public_parameters(parameters)
+    public_parameters = _focus_kline_public_parameters(parameters,settings)
     return {
         "challenge": challenge_payload(decisions, current, timezone_name),
         "parameters": public_parameters,
@@ -294,7 +295,8 @@ def _focus_kline_payload(
         "updated_at": current.isoformat(),
         "latest": compact_latest,
         "current": compact_latest,
-        "model_version": MODEL_VERSION,
+        "model_version": EXCHANGE_MODEL if latest and latest.get('exchange') else MODEL_VERSION,
+        **({'exchange':latest['exchange']} if latest and latest.get('exchange') else {}),
         "initial_index": INITIAL_INDEX,
         "price_tick": PRICE_TICK,
         "intraday_bar_minutes": DEFAULT_BAR_MINUTES,
@@ -303,13 +305,14 @@ def _focus_kline_payload(
     }
 
 
-def _focus_kline_public_parameters(parameters: FocusKlineParameters) -> dict:
+def _focus_kline_public_parameters(parameters: FocusKlineParameters, settings=None) -> dict:
     return {
         "a_low_hours": parameters.a_low,
         "a_mid_hours": parameters.a_mid,
         "a_high_hours": parameters.a_high,
         "k_low_percent_per_hour": round(float(parameters.k_low) * 100, 6),
         "k_high_percent_per_hour": round(float(parameters.k_high) * 100, 6),
+        **ExchangeParameters.from_settings(settings).public(),
     }
 
 
@@ -533,7 +536,7 @@ def register_routes(app):
                 connection.commit()
                 settings = get_settings(connection, user_id)
                 _refresh_focus_kline(connection, user_id, settings)
-            parameters = _focus_kline_public_parameters(_focus_kline_parameters(settings))
+            parameters = _focus_kline_public_parameters(_focus_kline_parameters(settings),settings)
             result = jsonify(
                 settings={key: settings.get(key) for key in SETTING_KEYS.values()},
                 parameters=parameters,

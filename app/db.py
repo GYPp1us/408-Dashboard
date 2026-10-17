@@ -10,6 +10,7 @@ from typing import Any
 
 REPORTER_HEARTBEAT_TIMEOUT_SECONDS = 45
 FOCUS_DYNAMICS_EFFECTIVE_KEY = "focus_kline_dynamics_v041_effective_at"
+FOCUS_EXCHANGE_EFFECTIVE_KEY = "focus_kline_exchange_v1_effective_at"
 
 
 SCHEMA = """
@@ -235,6 +236,9 @@ DEFAULT_SETTINGS = {
     "focus_kline_a_high": "9",
     "focus_kline_k_low_percent": "3.333333",
     "focus_kline_k_high_percent": "5",
+    "focus_kline_support_percent": "1.2",
+    "focus_kline_resistance_percent": "1.2",
+    "focus_kline_switch_minutes": "8",
     "focus_messages_json": json.dumps(DEFAULT_FOCUS_MESSAGES, ensure_ascii=False, separators=(",", ":")),
 }
 
@@ -948,6 +952,8 @@ def init_db(connection: sqlite3.Connection, *, allow_subject_migration_review: b
     # Settings are part of the existing database export and survive restart.
     connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
                        (FOCUS_DYNAMICS_EFFECTIVE_KEY, datetime.now(timezone.utc).isoformat()))
+    connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
+                       (FOCUS_EXCHANGE_EFFECTIVE_KEY, datetime.now(timezone.utc).isoformat()))
     connection.commit()
 
 

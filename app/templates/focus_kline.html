@@ -51,7 +51,7 @@
       <div class="kline-focus-meter"><div><span>当日累计专注</span><strong id="kline-focus-meter-value">00:00:00</strong></div><div class="kline-meter-track"><i id="kline-focus-meter-fill"></i></div></div>
     </article>
     <article class="kline-market-card kline-params-card">
-      <div class="kline-card-head"><div><h2 title="五个参数控制专注时长对应的收盘收益">指数参数</h2></div><button id="kline-reset-defaults" class="kline-quiet-button" type="button" data-focus-kline-reset>恢复默认值</button></div>
+      <div class="kline-card-head"><div><h2 title="时长参数控制收盘收益；支撑、压力和释放时间控制盘中成交">指数参数</h2></div><button id="kline-reset-defaults" class="kline-quiet-button" type="button" data-focus-kline-reset>恢复默认值</button></div>
       <div class="index-challenge" data-index-challenge><div class="index-challenge-copy"><strong>连胜挑战</strong><span data-index-challenge-status role="status">读取挑战状态</span></div><button type="button" class="ui-button ui-button--secondary ui-button--sm" data-index-challenge-toggle disabled>开启挑战</button><p class="index-challenge-feedback" data-index-challenge-feedback role="alert" hidden></p></div>
       <form id="kline-params-form" class="kline-params-form">
         <label>低位锚点 A_low <span>小时</span><input id="kline-param-a-low" name="a_low_hours" data-focus-kline-setting="a_low" type="number" min="0" max="24" step="0.25" inputmode="decimal"></label>
@@ -59,6 +59,9 @@
         <label>高位锚点 A_high <span>小时</span><input id="kline-param-a-high" name="a_high_hours" data-focus-kline-setting="a_high" type="number" min="0" max="24" step="0.25" inputmode="decimal"></label>
         <label>低区倍率 K_low <span>% / h</span><input id="kline-param-k-low" name="k_low_percent_per_hour" data-focus-kline-setting="k_low_percent" type="number" min="0" max="20" step="0.01" inputmode="decimal"></label>
         <label>高区倍率 K_high <span>% / h</span><input id="kline-param-k-high" name="k_high_percent_per_hour" data-focus-kline-setting="k_high_percent" type="number" min="0" max="20" step="0.01" inputmode="decimal"></label>
+        <label title="低于价值这段距离后逐渐积累向上动量，允许继续向外成交">价值支撑距离 <span>%</span><input name="support_percent" type="number" min="0.2" max="5" step="0.1" inputmode="decimal" value="1.2"></label>
+        <label title="高于价值这段距离后逐渐积累向下动量，允许继续向外成交">价值压力距离 <span>%</span><input name="resistance_percent" type="number" min="0.2" max="5" step="0.1" inputmode="decimal" value="1.2"></label>
+        <label>切换冲击释放 <span>分钟</span><input name="switch_minutes" type="number" min="5" max="10" step="0.5" inputmode="decimal" value="8"></label>
         <button class="kline-save-button" type="submit">应用参数</button>
       </form>
       <p id="kline-param-feedback" class="kline-param-feedback" role="status"></p>

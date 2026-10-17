@@ -1349,6 +1349,27 @@
     return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
   }
 
+  function scoreChartStyle(index) {
+    const dark = document.documentElement.dataset.theme === "dark";
+    const shades = dark
+      ? ["#eeeeee", "#aaaaaa", "#cccccc", "#999999", "#dddddd", "#bbbbbb", "#eeeeee", "#aaaaaa"]
+      : ["#303030", "#848484", "#5c5c5c", "#444444", "#747474", "#383838", "#666666", "#888888"];
+    const shapes = ["circle", "rect", "triangle", "rectRot", "crossRot", "star", "cross", "rectRounded"];
+    return { color: shades[index % shades.length], shape: shapes[index % shapes.length] };
+  }
+
+  function scoreChartPosition(chart, event) {
+    const native = event.native;
+    const pointer = native?.touches?.[0] || native?.changedTouches?.[0] || native;
+    if (!Number.isFinite(pointer?.clientX) || !Number.isFinite(pointer?.clientY)) return null;
+    const rect = chart.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    // Chart.js touch coordinates are viewport pixels; its drawing coordinates
+    // are logical pixels. The page can have CSS zoom in either orientation.
+    return { x: (pointer.clientX - rect.left) * chart.width / rect.width,
+      y: (pointer.clientY - rect.top) * chart.height / rect.height };
+  }
+
   function renderScoreChart(history) {
     const canvas = $("#score-chart");
     const empty = $("#score-chart-empty");
@@ -1356,10 +1377,13 @@
     if (!canvas || !empty || !detail || !window.Chart) return;
     state.scoreChart?.destroy();
     state.scoreChart = null;
+    detail.hidden = true;
+    detail.style.pointerEvents = "none";
     const grouped = new Map();
     (history || []).forEach((item) => {
       const date = String(item.exam_date || "").slice(0, 10);
-      if (!date || !item.subject || Number(item.target) <= 0) return;
+      if (!date || !item.subject || !Number.isFinite(Number(item.score))
+          || !Number.isFinite(Number(item.target)) || Number(item.target) <= 0) return;
       if (!grouped.has(date)) grouped.set(date, new Map());
       grouped.get(date).set(item.subject, item);
     });
@@ -1373,53 +1397,58 @@
     }
     canvas.hidden = false;
     empty.hidden = true;
-    const subjects = [...new Set(dates.flatMap((date) => [...grouped.get(date).keys()]))];
-    const palette = getThemePalette();
-    const datasets = subjects.map((subject, index) => ({
-      label: subject,
-      data: dates.map((date) => {
-        const item = grouped.get(date).get(subject);
-        return item ? Math.round((Number(item.score) / Number(item.target)) * 1000) / 10 : null;
-      }),
-      borderColor: palette[index % palette.length],
-      backgroundColor: palette[index % palette.length],
-      pointBackgroundColor: chartColor("--surface"),
-      pointBorderWidth: 2,
-      pointRadius: 3,
-      pointHoverRadius: 5,
-      borderWidth: 2,
-      tension: 0.28,
-      spanGaps: false,
-    }));
+    const present = new Set(dates.flatMap((date) => [...grouped.get(date).keys()]));
+    const catalog = [...new Set((state.dashboard?.subjects || []).map((item) => item.name))];
+    const allSubjects = [...catalog, ...[...present].filter((subject) => !catalog.includes(subject)).sort((a, b) => a.localeCompare(b, "zh-CN"))];
+    const datasets = allSubjects.filter((subject) => present.has(subject)).map((subject) => {
+      const index = allSubjects.indexOf(subject);
+      const style = scoreChartStyle(index);
+      return {
+        label: subject,
+        scoreStyleIndex: index,
+        data: dates.map((date) => {
+          const item = grouped.get(date).get(subject);
+          return item ? Math.round((Number(item.score) / Number(item.target)) * 1000) / 10 : null;
+        }),
+        borderColor: style.color,
+        backgroundColor: style.color,
+        pointBackgroundColor: style.color,
+        pointBorderColor: style.color,
+        pointStyle: style.shape,
+        pointBorderWidth: 1.5,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        pointHitRadius: 12,
+        borderWidth: 2,
+        tension: 0.28,
+        // Other subjects' dates are gaps in this series, not breaks in its trend.
+        spanGaps: true,
+      };
+    });
     const maxValue = Math.max(100, ...datasets.flatMap((dataset) => dataset.data.filter((value) => value !== null)));
     const crosshairPlugin = {
       id: "scoreCrosshair",
-      afterDraw(chart) {
+      beforeEvent(chart, args) {
+        const position = scoreChartPosition(chart, args.event);
+        if (position) {
+          Object.assign(args.event, position);
+          args.inChartArea = chart.isPointInArea(args.event);
+        }
+      },
+      beforeDatasetsDraw(chart) {
         const active = chart.tooltip?.getActiveElements?.() || [];
         if (!active.length) return;
         const index = active[0].index;
         const x = chart.scales.x.getPixelForValue(index);
         const context = chart.ctx;
         context.save();
-        context.strokeStyle = "rgba(32, 39, 47, .24)";
+        context.strokeStyle = chartColor("--muted");
+        context.globalAlpha = 0.45;
         context.setLineDash([4, 4]);
         context.beginPath();
         context.moveTo(x, chart.chartArea.top);
         context.lineTo(x, chart.chartArea.bottom);
         context.stroke();
-        chart.data.datasets.forEach((dataset, datasetIndex) => {
-          if (dataset.data[index] === null) return;
-          const point = chart.getDatasetMeta(datasetIndex).data[index];
-          if (!point) return;
-          context.fillStyle = dataset.borderColor;
-          context.beginPath();
-          context.arc(point.x, point.y, 5, 0, Math.PI * 2);
-          context.fill();
-          context.fillStyle = chartColor("--surface");
-          context.beginPath();
-          context.arc(point.x, point.y, 2, 0, Math.PI * 2);
-          context.fill();
-        });
         context.restore();
       },
     };
@@ -1431,7 +1460,7 @@
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
-        interaction: { mode: "index", intersect: false },
+        interaction: { mode: "index", axis: "x", intersect: false },
         scales: {
           x: { grid: { display: false }, ticks: { color: chartColor("--muted"), font: { size: 11 } } },
           y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: chartColor("--line") }, ticks: { color: chartColor("--muted"), font: { size: 11 }, callback: (value) => `${value}%` } },
@@ -1446,7 +1475,7 @@
                 return;
               }
               const date = dates[tooltip.dataPoints[0].dataIndex];
-              const items = [...grouped.get(date).values()];
+              const items = tooltip.dataPoints.map((point) => grouped.get(date).get(point.dataset.label)).filter(Boolean);
               detail.innerHTML = `<strong>${formatScoreDate(date)}</strong>${items.map((item) => `<span>${escapeHtml(item.subject)} ${Math.round((Number(item.score) / Number(item.target)) * 1000) / 10}% · ${item.score} / ${item.target}</span>`).join("")}`;
               detail.hidden = false;
             },
@@ -1460,10 +1489,13 @@
     const palette = getThemePalette(Boolean(active));
     if (state.scoreChart) {
       state.scoreChart.data.datasets.forEach((dataset, index) => {
-        dataset.borderColor = palette[index % palette.length];
-        dataset.backgroundColor = palette[index % palette.length];
-        dataset.pointBackgroundColor = chartColor("--surface");
+        const style = scoreChartStyle(dataset.scoreStyleIndex ?? index);
+        dataset.borderColor = dataset.backgroundColor = dataset.pointBackgroundColor = dataset.pointBorderColor = style.color;
+        dataset.pointStyle = style.shape;
       });
+      const options = state.scoreChart.options;
+      options.scales.x.ticks.color = options.scales.y.ticks.color = options.plugins.legend.labels.color = chartColor("--muted");
+      options.scales.y.grid.color = chartColor("--line");
       state.scoreChart.update("none");
     }
     if (state.focusTrendChart) {

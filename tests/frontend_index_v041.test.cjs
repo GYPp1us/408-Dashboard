@@ -31,7 +31,8 @@ test('one-second live requests adopt real motion, serialize in-flight work and l
     assert.equal(env.get('[data-index-points]').classList.contains('is-tick-up'), true);
   }
   assert.equal(env.calls.filter(url => !url.endsWith('/live')).length, fullCount);
-  assert.equal(env.intervals.filter(timer => timer.delay === 1000).length, 2);
+  assert.equal(env.intervals.filter(timer => timer.delay === 1000).length, 1);
+  assert.equal(env.intervals.filter(timer => timer.delay === 100).length, 1);
   env.clock.now += 1000; const release = env.hold(); const pending = env.api.live(); const before = env.calls.length;
   env.clock.now += 1000; env.api.live(); env.api.live(); assert.equal(env.calls.length, before);
   release({ ok:false, status:503 }); await pending;
