@@ -99,7 +99,8 @@
     const source = item || {};
     return {
       time: source.time ?? source.at ?? source.timestamp ?? source.created_at ?? index,
-      value: finite(source.value ?? source.price ?? source.index ?? source.market ?? source.close, fallbackValue),
+      // `value` on exchange samples is the anchor, while `price` is the execution.
+      value: finite(source.price ?? source.value ?? source.index ?? source.market ?? source.close, fallbackValue),
       status: normalizeStatus(source.status ?? source.state ?? source.mode),
       event: Boolean(source.event || source.transition || source.marker || source.changed),
       floorReset: Boolean(source.floor_reset || source.floorReset),
@@ -310,7 +311,7 @@
         renderStatus({ ...data, status:normalizeStatus(snapshot.status) });
         if (Array.isArray(snapshot.intraday) && state.liveIntraday) {
           const view = state.liveIntraday;
-          const samples = view.timeline.reconcile(snapshot.intraday, (item) => item.time ?? item.at ?? item.timestamp, (item) => item.value ?? item.price ?? item.close);
+          const samples = view.timeline.reconcile(snapshot.intraday, (item) => item.time ?? item.at ?? item.timestamp, (item) => item.price ?? item.value ?? item.close);
           const hasPoints = samples.groups.some((group) => group.length);
           $("#kline-intraday-empty").hidden = hasPoints;
           $("#kline-intraday-chart").closest(".kline-intraday-card")?.classList.toggle("is-empty", !hasPoints);

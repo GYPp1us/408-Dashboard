@@ -98,7 +98,8 @@
     ensureMarket(instance, market);
     const colors = indexColors();
     if (!market) return;
-    instance.timeline.reconcile(data.intraday, (item) => item.time ?? item.at ?? item.timestamp, (item) => item.value ?? item.price ?? item.close);
+    // Exchange samples carry both a traded price and a fundamental value anchor.
+    instance.timeline.reconcile(data.intraday, (item) => item.time ?? item.at ?? item.timestamp, (item) => item.price ?? item.value ?? item.close);
     const samples = instance.timeline;
     const activeIndex = samples.groups.findLastIndex((group) => group.length);
     while (instance.lines.length < samples.groups.length) {
@@ -147,7 +148,7 @@
     if (!market || market.date !== date) return null;
     const candle = [data.day, data.today, ...(data.candles || [])].find((row) => row?.date === date);
     if (!candle || !Number.isFinite(Number(candle.open))) return null;
-    const samples = Market.timeline(market).reconcile(data.intraday || [], (item) => item.time ?? item.at ?? item.timestamp, (item) => item.value ?? item.price ?? item.close);
+    const samples = Market.timeline(market).reconcile(data.intraday || [], (item) => item.time ?? item.at ?? item.timestamp, (item) => item.price ?? item.value ?? item.close);
     if (projection?.active) samples.append(projection.time, value);
     let integral = 0, elapsed = 0;
     const values = [Number(candle.open), value];
