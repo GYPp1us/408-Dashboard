@@ -221,7 +221,7 @@
     tooltip.className = "market-intraday-tooltip";
     tooltip.hidden = true;
     host.append(svg, tooltip);
-    let options = initialOptions, range = null, removed = false, frame = null, session = null;
+    let options = initialOptions, range = null, removed = false, frame = null, session = null, openingPrice = null;
     const lines = [], listeners = new Set(), sizeListeners = new Set();
     const clipId = `market-clip-${++chartId}`;
     const geometry = () => {
@@ -244,6 +244,7 @@
       const fontFamily = options.layout?.fontFamily || "Arial, sans-serif";
       const label = (x, y, text, anchor = "start", color = textColor) => node("text", { x, y, fill:color, "font-size":10, "font-family":fontFamily, "text-anchor":anchor }, text);
       const values = lines.filter((line) => line.options.visible !== false).flatMap((line) => line.data).filter((point) => Number.isFinite(point.value)).map((point) => point.value);
+      if (Number.isFinite(openingPrice)) values.push(openingPrice);
       if (!range) return;
       const minimum = values.length ? Math.min(...values) : 100, maximum = values.length ? Math.max(...values) : 100;
       const padding = Math.max((maximum - minimum) * .14, Math.abs(values.at(-1) ?? 100) * .0004, .015);
@@ -268,6 +269,11 @@
       }
       svg.append(label(g.right, g.height - 7, clock(range.to, offset), "end"));
       const plot = node("g", { "clip-path":`url(#${clipId})` }), markerLayer = node("g");
+      if (Number.isFinite(openingPrice)) {
+        const y = yAt(openingPrice);
+        plot.append(node("line", { class:"market-open-line", "data-price":openingPrice, x1:g.left, x2:g.right, y1:y, y2:y,
+          stroke:textColor, "stroke-width":.9, "stroke-opacity":.6, "stroke-dasharray":"3 4" }));
+      }
       const visibleLines = lines.filter((line) => line.options.visible !== false && line.options.color !== "transparent");
       const breakPoints = visibleLines.flatMap((line) => line.data);
       const asOf = Number.isFinite(session?.asOf) ? session.asOf + Math.max(0, Date.now() / 1000 - session.receivedAt) : Date.now() / 1000;
@@ -333,6 +339,7 @@
     return {
       linearTime:true,
       setMarket(next) { session = next; },
+      setOpeningPrice(next) { openingPrice = next == null || !Number.isFinite(Number(next)) ? null : Number(next); schedule(); },
       timeScale:() => scale,
       addSeries(_type, seriesOptions = {}) {
         const line = { options:seriesOptions, data:[], markers:[], priceLines:[],

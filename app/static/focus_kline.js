@@ -311,6 +311,8 @@
         renderStatus({ ...data, status:normalizeStatus(snapshot.status) });
         if (Array.isArray(snapshot.intraday) && state.liveIntraday) {
           const view = state.liveIntraday;
+          if (snapshot.today?.date === selected.date) selected.open = finite(snapshot.today.open, selected.open);
+          view.chart.setOpeningPrice(selected.open);
           const samples = view.timeline.reconcile(snapshot.intraday, (item) => item.time ?? item.at ?? item.timestamp, (item) => item.price ?? item.value ?? item.close);
           const hasPoints = samples.groups.some((group) => group.length);
           $("#kline-intraday-empty").hidden = hasPoints;
@@ -377,12 +379,12 @@
     return { ...base, ...overrides, timeScale: { ...base.timeScale, ...(overrides.timeScale || {}) }, localization: { ...base.localization, ...(overrides.localization || {}) } };
   }
 
-  function addLimitLines(series, data) {
+  function addLimitLines(series, data, initialBaseline = true) {
     const library = window.LightweightCharts;
     const dashed = library.LineStyle?.Dashed ?? 2;
     series.createPriceLine({ price: data.limits.high, color: "#d78c7d", lineWidth: 1, lineStyle: dashed, axisLabelVisible: true, title: "涨停" });
     series.createPriceLine({ price: data.limits.low, color: "#78a58f", lineWidth: 1, lineStyle: dashed, axisLabelVisible: true, title: "跌停" });
-    series.createPriceLine({ price: data.initialIndex, color: "#b7c1bc", lineWidth: 1, lineStyle: library.LineStyle?.Dotted ?? 1, axisLabelVisible: false, title: "基准" });
+    if (initialBaseline) series.createPriceLine({ price: data.initialIndex, color: "#b7c1bc", lineWidth: 1, lineStyle: library.LineStyle?.Dotted ?? 1, axisLabelVisible: false, title: "基准" });
   }
 
   function observeChart(host, chart, reapplyRange = null) {
@@ -514,6 +516,7 @@
     const library = window.LightweightCharts;
     const chart = Market.createChart(host, lightweightOptions(host));
     chart.setMarket(market);
+    chart.setOpeningPrice(selected.open);
     if (selected.date === Market.dateAt(Date.now() / 1000, market.offset)) {
       const marker = document.createElement("div");
       marker.className = "kline-now-marker";
@@ -542,7 +545,7 @@
       time:event.time, value:event.value, position:event.floorReset ? "belowBar" : "aboveBar", shape:event.floorReset ? "arrowUp" : "circle", color:event.floorReset ? "#8067b3" : "#b47a59", text:event.floorReset ? "复位" : "",
     }))) || null);
     const priceSeries = lineSeries[Math.max(0, lastGroup)];
-    if (priceSeries) addLimitLines(priceSeries, data);
+    if (priceSeries) addLimitLines(priceSeries, data, false);
     const breakClose = market.windows.length > 1 ? market.windows[0].end : null;
     if (breakClose && samples.groups[0].length) {
       const marker = document.createElement("div");

@@ -98,6 +98,8 @@
     ensureMarket(instance, market);
     const colors = indexColors();
     if (!market) return;
+    const selected = [ ...(data.candles || []), data.day, data.today ].find((row) => row?.date === market.date);
+    instance.chart.setOpeningPrice(selected?.open);
     // Exchange samples carry both a traded price and a fundamental value anchor.
     instance.timeline.reconcile(data.intraday, (item) => item.time ?? item.at ?? item.timestamp, (item) => item.price ?? item.value ?? item.close);
     const samples = instance.timeline;
