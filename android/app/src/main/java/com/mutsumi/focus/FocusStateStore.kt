@@ -5,6 +5,31 @@ import android.content.SharedPreferences
 
 class FocusStateStore internal constructor(private val preferences: SharedPreferences) {
     constructor(context: Context) : this(context.getSharedPreferences("focus_runtime", Context.MODE_PRIVATE))
+    private var contextRaw: String? = null
+    private var cachedContext = IslandContext()
+
+    fun islandContext(): IslandContext {
+        val raw = preferences.getString("island_context", "").orEmpty()
+        if (raw != contextRaw) {
+            contextRaw = raw
+            cachedContext = runCatching {
+                val data = org.json.JSONObject(raw)
+                IslandContext.fromJson(data, data.optLong("received_at"))
+            }.getOrNull() ?: IslandContext()
+        }
+        return cachedContext
+    }
+
+    fun writeIslandContext(context: IslandContext) {
+        val raw = context.toJson()
+        preferences.edit().putString("island_context", raw).apply()
+        contextRaw = raw; cachedContext = context
+    }
+
+    fun clearIslandContext() {
+        preferences.edit().remove("island_context").apply()
+        contextRaw = ""; cachedContext = IslandContext()
+    }
 
     fun read(): FocusRuntimeState = FocusRuntimeState(
         mode = FocusMode.fromWire(preferences.getString("mode", null)),
@@ -58,6 +83,7 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
                     editor.putBoolean("paused_dismissed", false)
                     editor.putString("presented_reminder", "")
                     editor.putString("island_presented_reminder", "")
+                    editor.remove("island_presented_at").remove("island_collapsed_reminder")
                     editor.putLong("ended_snooze_until", 0)
                     if (previous.sessionId != state.sessionId || previous.mode != state.mode)
                         editor.putInt("ended_acknowledged", 0)
@@ -106,7 +132,13 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
     fun wasPresented(token: String): Boolean = preferences.getString("presented_reminder", "") == token
     fun markPresented(token: String) { preferences.edit().putString("presented_reminder", token).apply() }
     fun wasIslandPresented(token: String): Boolean = preferences.getString("island_presented_reminder", "") == token
-    fun markIslandPresented(token: String) { preferences.edit().putString("island_presented_reminder", token).apply() }
+    fun islandPresentedAt(token: String): Long? = if (wasIslandPresented(token)) preferences.getLong("island_presented_at", 0) else null
+    fun islandCollapseSent(token: String): Boolean = preferences.getString("island_collapsed_reminder", "") == token
+    fun markIslandPresented(token: String, now: Long = System.currentTimeMillis()) {
+        preferences.edit().putString("island_presented_reminder", token).putLong("island_presented_at", now)
+            .remove("island_collapsed_reminder").apply()
+    }
+    fun markIslandCollapsed(token: String) { preferences.edit().putString("island_collapsed_reminder", token).apply() }
     fun nextAtomicRecord(): Int {
         val next = (preferences.getInt("atomic_record", 0).toLong() + 1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         // Persist before notify so a process restart cannot send a lower record.

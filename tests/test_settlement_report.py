@@ -9,6 +9,82 @@ from app.db import connect, create_user, export_migration_data, get_daily_settle
 from app.focus_challenge import account_now
 
 
+def seed_checkin(application, user, name, *, created="2026-09-30T00:00:00+00:00", archived=None, times=None):
+    connection = connect(application.config["DATABASE"])
+    try:
+        cursor = connection.execute("""INSERT INTO checkin_rules(user_id,name,created_at,created_day,archived_at,time_start,time_end)
+            VALUES (?,?,?,?,?,?,?)""", (user,name,created,created[:10],archived,*(times or (None,None))))
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def seed_checkin_record(application, user, rule, at):
+    connection = connect(application.config["DATABASE"])
+    local = datetime.fromisoformat(at).astimezone(__import__('zoneinfo').ZoneInfo('Asia/Shanghai'))
+    connection.execute("INSERT INTO checkin_records(user_id,rule_id,local_day,accepted_at,source) VALUES (?,?,?,?,?)",
+                       (user,rule,local.date().isoformat(),at,'test'))
+    connection.commit(); connection.close()
+
+
+def test_checkin_settlement_covers_exact_rolling_24h_and_freezes_task_names_and_completions(settlement_app):
+    application, owner, current = settlement_app
+    current[0] = datetime.fromisoformat("2026-10-02T22:00:00+08:00")
+    bedtime = seed_checkin(application,owner,'睡前任务')
+    work = seed_checkin(application,owner,'工作日打卡')
+    boundary = seed_checkin(application,owner,'窗口左边界')
+    seed_checkin(application,owner,'未完成事项',archived='2026-10-02T13:00:00+00:00')
+    seed_checkin(application,owner,'很早已移出',archived='2026-10-01T13:00:00+00:00')
+    seed_checkin(application,owner,'尚未创建',created='2026-10-03T00:00:00+00:00')
+    seed_checkin_record(application,owner,bedtime,'2026-10-01T23:30:00+08:00')
+    seed_checkin_record(application,owner,bedtime,'2026-10-02T00:30:00+08:00')
+    seed_checkin_record(application,owner,work,'2026-10-02T14:00:00+00:00')
+    seed_checkin_record(application,owner,boundary,'2026-10-01T22:00:00+08:00')
+    client = signed_client(application,owner)
+    result = client.post('/api/daily-settlement',json={}).get_json()
+    summary = result['report']['checkins']
+    assert summary['window_start']=='2026-10-01T14:00:00+00:00'
+    assert summary['window_end']=='2026-10-02T14:00:00+00:00'
+    assert (summary['completed'],summary['total'],summary['record_count'])==(2,4,3)
+    assert summary['completion']==0.5
+    assert next(item for item in summary['items'] if item['id']==bedtime)['count']==2
+    assert not next(item for item in summary['items'] if item['id']==boundary)['completed']
+    connection = connect(application.config['DATABASE'])
+    connection.execute("UPDATE checkin_rules SET name='已修改的名字' WHERE id=?",(bedtime,))
+    connection.commit(); connection.close()
+    current[0] = datetime.fromisoformat('2026-10-03T00:10:00+08:00')
+    saved = client.get('/api/daily-settlement/report?date=2026-10-02').get_json()['report']
+    assert saved==result['report']
+
+
+def test_checkin_after_settlement_survives_midnight_and_enters_next_rolling_report(settlement_app):
+    application, owner, current = settlement_app
+    current[0] = datetime.fromisoformat('2026-10-02T22:00:00+08:00')
+    rule = seed_checkin(application,owner,'结算后的睡前任务',times=('23:00','02:00'))
+    client = signed_client(application,owner)
+    first = client.post('/api/daily-settlement',json={}).get_json()['report']
+    assert first['checkins']['completed']==0
+    seed_checkin_record(application,owner,rule,'2026-10-02T23:30:00+08:00')
+    current[0] = datetime.fromisoformat('2026-10-03T21:00:00+08:00')
+    second = client.post('/api/daily-settlement',json={}).get_json()['report']
+    assert second['checkins']['completed']==second['checkins']['total']==1
+    assert second['checkins']['items'][0]['name']=='结算后的睡前任务'
+    assert client.get('/api/daily-settlement/report?date=2026-10-02').get_json()['report']==first
+
+
+def test_native_island_context_contains_only_own_timed_task_display_inputs(settlement_app):
+    application, owner, _ = settlement_app
+    timed = seed_checkin(application,owner,'定时打卡',times=('15:00','17:00'))
+    seed_checkin(application,owner,'不限时打卡')
+    client = signed_client(application,owner)
+    data = client.get('/api/dashboard').get_json()['island_context']
+    assert len(data['sessions'])==2 and data['timezone']=='Asia/Shanghai'
+    assert data['checkins']==[{'id':timed,'name':'定时打卡','start':'15:00','end':'17:00','completed_day':None}]
+    guest = application.test_client();guest.get('/guest')
+    assert guest.get('/api/dashboard').get_json()['island_context'] is None
+
+
 @pytest.fixture()
 def settlement_app(tmp_path, monkeypatch):
     current = [datetime.fromisoformat("2026-10-02T16:00:00+08:00")]

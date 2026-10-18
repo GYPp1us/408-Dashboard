@@ -76,6 +76,51 @@ def heatmap(connection, user_id, now, day_count):
     return result
 
 
+def settlement_snapshot(connection, user_id, settled_at):
+    """Freeze distinct completed tasks in (settled_at - 24h, settled_at].
+
+    Completion days are deliberately irrelevant here: bedtime check-ins after
+    yesterday's settlement must survive midnight and appear in today's report.
+    """
+    end = settled_at.astimezone(timezone.utc)
+    start = end - timedelta(hours=24)
+    rules = connection.execute("SELECT id,name,created_at,archived_at FROM checkin_rules WHERE user_id=? ORDER BY id", (user_id,)).fetchall()
+    completed = {}
+    # A generous SQL prefilter followed by exact aware datetime comparisons
+    # avoids Julian-day rounding at microsecond boundaries and accepts offsets.
+    rows = connection.execute("""SELECT rule_id,accepted_at FROM checkin_records WHERE user_id=?
+        AND julianday(accepted_at)>=julianday(?)-0.00001
+        AND julianday(accepted_at)<=julianday(?)+0.00001 ORDER BY id""",
+        (user_id, start.isoformat(), end.isoformat())).fetchall()
+    for row in rows:
+        at = datetime.fromisoformat(row['accepted_at']).astimezone(timezone.utc)
+        if start < at <= end:
+            completed.setdefault(row['rule_id'], []).append(at)
+    items = []
+    for rule in rules:
+        created = datetime.fromisoformat(rule['created_at']).astimezone(timezone.utc)
+        archived = datetime.fromisoformat(rule['archived_at']).astimezone(timezone.utc) if rule['archived_at'] else None
+        records = completed.get(rule['id'], [])
+        if not records and (created > end or archived is not None and archived <= start):
+            continue
+        items.append({'id':rule['id'], 'name':rule['name'], 'completed':bool(records),
+                      'count':len(records), 'last_completed_at':max(records).isoformat() if records else None})
+    done = sum(item['completed'] for item in items)
+    return {'window_start':start.isoformat(), 'window_end':end.isoformat(),
+            'completed':done, 'total':len(items), 'record_count':sum(item['count'] for item in items),
+            'completion':done / len(items) if items else None, 'items':items}
+
+
+def island_context(connection, user_id, now, sessions):
+    """Only native display inputs; no location or external reporter keys."""
+    current = catalog(connection, user_id, now)
+    return {'timezone':current['timezone'], 'date':current['date'],
+            'sessions':[{'start':s['start'].isoformat(), 'end':s['end'].isoformat()} for s in sessions],
+            'checkins':[{'id':r['id'], 'name':r['name'], 'start':r['time_start'], 'end':r['time_end'],
+                         'completed_day':current['date'] if r['completed_at'] else None}
+                        for r in current['checkin_items'] if r['time_start']]}
+
+
 def apply_frame(connection, user_id, payload, now):
     source = payload.get("source", "app")
     if not isinstance(source, str) or not SOURCE_PATTERN.fullmatch(source):

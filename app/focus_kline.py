@@ -952,7 +952,7 @@ def build_focus_klines(
             for point in samples:
                 at=datetime.fromtimestamp(point.pop('timestamp_ms')/1000,target_zone)
                 elapsed_sample=(at-sample_origins[point['session']]).total_seconds()
-                if not point.get('changed') and not point.get('opening_auction') and elapsed_sample%(max(1,int(bar_minutes))*60):
+                if not any(point.get(flag) for flag in ('changed','opening_auction','session_close')) and elapsed_sample%(max(1,int(bar_minutes))*60):
                     continue
                 point['timestamp']=at.isoformat()
                 if path and point['timestamp']==path[-1]['timestamp'] and point['price']==path[-1]['price']:

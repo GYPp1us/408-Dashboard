@@ -20,12 +20,13 @@ data class AtomicIslandLayout(
     val middleValue: String = "",
     val middleLabel: String = "",
     val dayOffset: Int = 0,
+    val displayNode: Int = 0,
 ) {
     enum class Glyph { BRAND, START, COMPLETE }
     enum class Click { PRIMARY, HOME }
     data class Button(val label: String, val action: String)
 
-    fun wire(forceShowCard: Boolean, palette: IslandPalette = IslandPalette.fallback("clay", FocusMode.IDLE)): Map<String, Any> {
+    fun wire(forceShowCard: Boolean?, palette: IslandPalette = IslandPalette.fallback("clay", FocusMode.IDLE), showSeconds: Int = 0): Map<String, Any> {
         val accent = palette.accent
         val base = linkedMapOf<String, Any>(
             "notification.superx.baseInfos.icon" to Glyph.BRAND,
@@ -82,8 +83,11 @@ data class AtomicIslandLayout(
             "island.superx.template" to template,
             "island.superx.baseInfos" to base,
             "island.superx.infos" to info,
-            "island.superx.forceShowCard" to forceShowCard,
         )
+        // Expansion is an edge-triggered request, not part of the live clock.
+        // Omitting it on UPDATE leaves the user's expand/collapse choice alone.
+        if (forceShowCard != null) island["island.superx.forceShowCard"] = forceShowCard
+        if (showSeconds > 0) island["island.superx.showTime"] = showSeconds
         return linkedMapOf(
             "notification.superx.template" to template,
             "notification.superx.baseInfos" to base,
@@ -107,7 +111,18 @@ data class AtomicIslandLayout(
     }
 
     companion object {
-        fun from(state: FocusRuntimeState, due: DueReminder?, now: Long, remindersClosed: Boolean = false): AtomicIslandLayout {
+        fun from(state: FocusRuntimeState, due: DueReminder?, now: Long, remindersClosed: Boolean = false,
+                 countdown: IslandContext.Countdown? = null): AtomicIslandLayout {
+            if (countdown != null) {
+                val afternoon = countdown.kind == IslandContext.Countdown.Kind.AFTERNOON
+                val remaining = countdown.remaining(now)
+                return AtomicIslandLayout(1, if (afternoon) "下午开盘倒计时" else "打卡剩余时间", if (afternoon) "午间休盘" else countdown.name,
+                    4, rightText = IslandTime.small(remaining), core = IslandTime.large(remaining),
+                    description = if (afternoon) "距下午开盘" else FocusPresentation.shortName(countdown.name),
+                    button = if (afternoon) Button("打开首页", "home") else Button("查看打卡", "checkin"),
+                    collapsedText = if (afternoon) "下午开盘" else "打卡剩余",
+                    displayNode = if (afternoon) 800_000 else 900_000 + (countdown.id % 99_999).toInt())
+            }
             val effective = state.elapsedNow(now)
             val elapsed = IslandTime.large(effective)
             val paused = (now - state.pausedAtEpochMs).coerceAtLeast(0) / 1000

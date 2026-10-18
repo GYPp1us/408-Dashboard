@@ -114,6 +114,17 @@
 .daily-report-challenge strong { display: block; color: var(--ink); font-size: 12px; font-weight: 600; }
 .daily-report-challenge div > span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.7; }
 .daily-report-footer { padding-top: 17px; border-top: 1px solid var(--line); }
+.daily-report-checkins { padding: 14px 0; border-top: 1px solid var(--line); }
+.daily-report-checkins > div { display:flex; align-items:baseline; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.daily-report-checkins h3 { margin:0; font-size:12px; font-weight:600; }
+.daily-report-checkins h3 b { margin-left:8px; color:var(--accent-deep); font-variant-numeric:tabular-nums; }
+.daily-report-checkins > div > span { color:var(--muted); font-size:9px; }
+.daily-report-checkins ul { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 0; padding:0; list-style:none; }
+.daily-report-checkins li { display:flex; align-items:center; gap:8px; max-width:100%; padding:4px 8px; border:1px solid var(--line); border-radius:4px; background:var(--surface-subtle); font-size:10px; }
+.daily-report-checkins li > span { overflow-wrap:anywhere; }
+.daily-report-checkins li > b { color:var(--muted); font-size:9px; font-weight:500; white-space:nowrap; }
+.daily-report-checkins li.is-complete { border-color:var(--accent-border); background:var(--accent-soft); }
+.daily-report-checkins li.is-complete > b { color:var(--accent-deep); }
 .daily-report-achievements { display: flex; flex-wrap: wrap; gap: 7px; }
 .daily-report-achievement { padding: 3px 9px; border: 1px solid var(--accent-border); border-radius: 30px; color: var(--accent-deep); font-size: 9px; line-height: 1.5; }
 .daily-report-closing { margin: 14px 0; color: var(--ink); font-size: 14px; line-height: 1.7; letter-spacing: .5px; }

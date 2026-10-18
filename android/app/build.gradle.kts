@@ -35,8 +35,8 @@ android {
         applicationId = "com.mutsumi.focus"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "0.7.3"
+        versionCode = 19
+        versionName = "0.7.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "DASHBOARD_URL", "\"$dashboardUrl\"")
         buildConfigField("String", "VIVO_ATOMIC_SCENE", "\"$vivoAtomicScene\"")

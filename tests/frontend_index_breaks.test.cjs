@@ -24,12 +24,14 @@ test('before reopening the break ends at the current time and exposes no future 
   assert.equal(env.Market.breakSegments(market, points, close - 1).length, 0);
 });
 
-test('an unchanged reopening stays horizontal and an unknown close is not invented', () => {
+test('an unchanged reopening stays horizontal and a last sample still connects when the exact close was omitted', () => {
   const env = harness();
   const market = env.Market.market('2026-09-30', sessions);
   const close = at(sessions[0].end), open = at(sessions[1].start);
   assert.deepEqual(pairs(env.Market.breakSegments(market, [{ time:close, value:10 }, { time:open, value:10 }], open)), [[[close,10], [open,10]]]);
-  assert.equal(env.Market.breakSegments(market, [{ time:close - 60, value:10 }, { time:open, value:11 }], open).length, 0);
+  assert.deepEqual(pairs(env.Market.breakSegments(market, [{ time:close - 60, value:10 }, { time:open, value:11 }], open)),
+    [[[close-60,10], [open,10], [open,11]]]);
+  assert.equal(env.Market.breakSegments(market, [{ time:open, value:11 }], open).length, 0);
 });
 
 test('shared SVG renderer draws a flat break and same-x jump without mutating either trading series', () => {

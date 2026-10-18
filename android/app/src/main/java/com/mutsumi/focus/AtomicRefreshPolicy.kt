@@ -2,11 +2,15 @@ package com.mutsumi.focus
 
 /** State changes publish immediately; only clock-only updates wait for the next second. */
 class AtomicRefreshPolicy {
-    data class ReminderPresentation(val expanded: Boolean, val first: Boolean)
+    data class ReminderPresentation(val expanded: Boolean?, val first: Boolean, val collapse: Boolean = false)
     companion object {
-        fun reminderPresentation(visible: Boolean, atomicAvailable: Boolean, token: String, alreadyPresented: Boolean): ReminderPresentation {
-            val expanded = visible && atomicAvailable && token.isNotBlank()
-            return ReminderPresentation(expanded, expanded && !alreadyPresented)
+        const val REMINDER_HOLD_MS = 15_000L
+        fun reminderPresentation(visible: Boolean, atomicAvailable: Boolean, token: String,
+                                 presentedAt: Long?, collapseSent: Boolean, now: Long): ReminderPresentation {
+            if (!visible || !atomicAvailable || token.isBlank()) return ReminderPresentation(null, false)
+            if (presentedAt == null) return ReminderPresentation(true, true)
+            if (!collapseSent && now - presentedAt >= REMINDER_HOLD_MS) return ReminderPresentation(false, false, true)
+            return ReminderPresentation(null, false)
         }
     }
     data class StateKey(
@@ -17,10 +21,13 @@ class AtomicRefreshPolicy {
         val reminderToken: String,
         val retryAction: String,
         val transitionRevision: Long,
+        val displayKey: String = "",
+        val reminderExpired: Boolean = false,
     ) {
         companion object {
             fun from(state: FocusRuntimeState, visible: Boolean, atomicAvailable: Boolean, accent: Int,
-                     reminderToken: String, retryAction: String, transitionRevision: Long): StateKey {
+                     reminderToken: String, retryAction: String, transitionRevision: Long,
+                     displayKey: String = "", reminderExpired: Boolean = false): StateKey {
                 val live = state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST)
                 // Re-anchoring a live clock after a heartbeat is not a new state.
                 // Settlement corrections, targets, anchors, themes and rounds are.
@@ -29,7 +36,7 @@ class AtomicRefreshPolicy {
                     pausedSeconds = if (live) 0 else state.pausedSeconds,
                     todayFocusSeconds = if (live) 0 else state.todayFocusSeconds,
                     todaySessionCount = if (live) 0 else state.todaySessionCount)
-                return StateKey(content, visible, atomicAvailable, accent, reminderToken, retryAction, transitionRevision)
+                return StateKey(content, visible, atomicAvailable, accent, reminderToken, retryAction, transitionRevision, displayKey, reminderExpired)
             }
         }
     }
@@ -39,6 +46,7 @@ class AtomicRefreshPolicy {
     private var lastClockSeconds = 0L
 
     fun stateChanged(state: StateKey): Boolean = state != lastState
+    fun reminderCleared(token: String): Boolean = lastState?.reminderToken?.isNotBlank() == true && token.isBlank()
 
     fun shouldPublish(state: StateKey, clockSeconds: Long, nowElapsedMs: Long, foregroundRequired: Boolean): Boolean {
         if (foregroundRequired || stateChanged(state)) return true

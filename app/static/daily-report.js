@@ -74,8 +74,19 @@
     content.innerHTML = `<div class="daily-report-status" role="${error ? "alert" : "status"}">${error ? '<span class="daily-report-status-mark" aria-hidden="true">!</span>' : '<span class="daily-report-loading-mark" aria-hidden="true"></span>'}<h2 id="daily-report-title">${escape(title)}</h2><p id="daily-report-caption">${escape(message)}</p>${error ? '<button type="button" class="ui-button ui-button--secondary" data-daily-report-retry>重试</button>' : ""}</div>`;
   }
 
+  function checkinHtml(summary, zone) {
+    if (!summary || !Array.isArray(summary.items)) return "";
+    const stamp = value => {
+      try { return new Intl.DateTimeFormat("zh-CN", { timeZone:zone || "Asia/Shanghai", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", hour12:false }).format(new Date(value)); }
+      catch (_) { return "—"; }
+    };
+    const items = summary.items.map(item => `<li class="${item.completed ? "is-complete" : ""}"><span>${escape(item.name)}</span><b>${item.completed ? "完成" : "未完成"}</b></li>`).join("");
+    return `<section class="daily-report-checkins"><div><h3>打卡 <b>${Number(summary.completed) || 0}/${Number(summary.total) || 0}</b></h3><span>结算前24小时 · ${escape(stamp(summary.window_start))} — ${escape(stamp(summary.window_end))}</span></div>${items ? `<ul>${items}</ul>` : '<p class="daily-report-empty">这段时间没有打卡事项</p>'}</section>`;
+  }
+
   function reportHtml(report) {
     const legacy = report.snapshot_kind === "legacy_summary";
+    const checkinsHtml = checkinHtml(report.checkins, report.timezone);
     const subjects = (Array.isArray(report.subject_totals) ? report.subject_totals : []).filter((item) => known(item.seconds) && Number(item.seconds) > 0);
     const completeSubjects = report.subject_breakdown_complete === true;
     const index = report.index, challenge = report.challenge;
@@ -104,7 +115,7 @@
       <section class="daily-report-hero" aria-label="本日总专注"><div class="daily-report-total"><span title="${escape(trustNote)}">今日有效专注</span><strong>${escape(seconds(total))}</strong><p id="daily-report-caption" class="sr-only">当日专注总结</p></div><div class="daily-report-goal"><div class="daily-report-goal-heading"><span>每日目标</span><strong>${escape(seconds(target))}</strong></div><div class="daily-report-goal-track" role="meter" aria-label="每日专注目标完成度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.max(0, Math.min(100, completion || 0))}" aria-valuetext="${escape(percent(completion))}"><span style="width:${Math.max(0, Math.min(100, completion || 0))}%"></span></div><div class="daily-report-goal-footer"><b>${escape(percent(completion))}</b><span>${target !== null ? total >= target ? "目标达成" : `距目标 ${escape(seconds(target - total))}` : "—"}</span></div></div></section>
       <div class="daily-report-metrics">${metric("较昨日", signedDuration(report.delta_seconds), delta > 0 ? "is-positive" : "")}${metric("历日排名", rank)}${metric("最长一段", seconds(report.longest_session_seconds))}</div>
       <div class="daily-report-columns"><section class="daily-report-subjects"><h3${!completeSubjects ? ' title="早期记录仅保存主要事项，未保存完整科目比例。"' : ""}>${completeSubjects ? "时间去向" : "已存主要事项"}</h3>${subjects.length ? `<ul>${subjectRows}</ul>` : '<p class="daily-report-empty">暂无科目记录</p>'}</section><aside class="daily-report-snapshot"><section><h3 title="${escape(indexNote)}">专注指数</h3>${indexHtml}</section><section class="daily-report-policy">${challengeHtml}</section></aside></div>
-      <footer class="daily-report-footer"><div class="daily-report-achievements">${achievements}</div><p class="daily-report-closing">${escape(report.closing_note || "今日努力，皆有回响。")}</p><div class="daily-report-proof"><span>${legacy ? "早期记录" : ""}${report.first_start && report.last_end ? `${legacy ? " · " : ""}${escape(timeLabel(report.first_start, report.timezone))} — ${escape(timeLabel(report.last_end, report.timezone))}` : ""}</span>${cancelHtml}</div></footer>`;
+      ${checkinsHtml}<footer class="daily-report-footer"><div class="daily-report-achievements">${achievements}</div><p class="daily-report-closing">${escape(report.closing_note || "今日努力，皆有回响。")}</p><div class="daily-report-proof"><span>${legacy ? "早期记录" : ""}${report.first_start && report.last_end ? `${legacy ? " · " : ""}${escape(timeLabel(report.first_start, report.timezone))} — ${escape(timeLabel(report.last_end, report.timezone))}` : ""}</span>${cancelHtml}</div></footer>`;
   }
 
   function render(report) {

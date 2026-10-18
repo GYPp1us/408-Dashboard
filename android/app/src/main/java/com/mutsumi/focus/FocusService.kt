@@ -64,7 +64,7 @@ class FocusService : Service() {
         val action = intent?.action.orEmpty()
         if (action !in setOf(ACTION_SYNC, ACTION_CHECK, "") && matches(intent)) handleAction(action)
         else applyState()
-        return if (store.read().mode == FocusMode.IDLE) START_NOT_STICKY else START_STICKY
+        return if (store.read().mode == FocusMode.IDLE && !store.islandContext().enabled(System.currentTimeMillis())) START_NOT_STICKY else START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -128,14 +128,24 @@ class FocusService : Service() {
     private fun applyState() {
         handler.removeCallbacks(tick)
         val state = store.read()
-        if (state.mode == FocusMode.IDLE ||
+        val now = System.currentTimeMillis()
+        val scheduled = store.islandContext().enabled(now)
+        if (!scheduled && (state.mode == FocusMode.IDLE ||
             state.mode == FocusMode.SETTLED && !state.summaryVisible(System.currentTimeMillis()) ||
-            state.mode == FocusMode.ENDED && store.endedAcknowledgedCount() >= 3 && !state.summaryVisible(System.currentTimeMillis())) {
+            state.mode == FocusMode.ENDED && store.endedAcknowledgedCount() >= 3 && !state.summaryVisible(System.currentTimeMillis()))) {
             stopRuntime()
             return
         }
         if (!publish(state)) return
         checkReminder()
+        if (state.mode in setOf(FocusMode.IDLE, FocusMode.SETTLED) &&
+            !state.summaryVisible(now) && store.islandContext().countdown(state, store.due(now), now) == null) {
+            // Keep the authenticated schedule fresh without a per-second
+            // wake lock while there is no clock on the island.
+            releaseWakeLock()
+            handler.postDelayed(tick, (store.islandContext().nextBoundary(now) - now).coerceIn(50L, 15_000L))
+            return
+        }
         val lock = wakeLock ?: getSystemService(PowerManager::class.java).newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK, "$packageName:focus-runtime").also {
             it.setReferenceCounted(false)
@@ -148,24 +158,26 @@ class FocusService : Service() {
     private fun publish(state: FocusRuntimeState): Boolean {
         val publishStartedAt = SystemClock.elapsedRealtime()
         val now = System.currentTimeMillis()
-        val visible = store.atomicEnabled() && (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST) ||
-            state.summaryVisible(now) || store.due(now) != null)
         val due = store.due(now)
+        val countdown = store.islandContext().countdown(state, due, now)
+        val visible = store.atomicEnabled() && (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST) ||
+            state.summaryVisible(now) || due != null || countdown != null)
         val token = due?.let { store.reminderToken(it.kind, now) }.orEmpty()
         val atomic = publisher.usesAtomicIsland()
-        // Carry the same active reminder's expansion request on clock UPDATEs.
-        // Close removes the token; persisting presentation remains once/round.
-        val presentation = AtomicRefreshPolicy.reminderPresentation(visible, atomic, token, store.wasIslandPresented(token))
-        val forceShowCard = presentation.expanded
+        val presentedAt = store.islandPresentedAt(token)
+        val presentation = AtomicRefreshPolicy.reminderPresentation(visible, atomic, token,
+            presentedAt, store.islandCollapseSent(token), now)
+        val forceShowCard = presentation.expanded ?: if (refreshPolicy.reminderCleared(token)) false else null
         val firstPresentation = presentation.first
-        val clockBucket = when (state.mode) {
+        val clockBucket = countdown?.remaining(now) ?: when (state.mode) {
             FocusMode.PAUSED -> (now - state.pausedAtEpochMs).coerceAtLeast(0) / 1000
             FocusMode.REST -> state.restElapsed(now)
             FocusMode.FOCUSING -> state.elapsedNow(now)
             else -> if (due != null) (now - state.endedAtEpochMs).coerceAtLeast(0) / 1000 else 0
         }
         val stateKey = AtomicRefreshPolicy.StateKey.from(state, visible, atomic, publisher.palette(state).accent,
-            token, retryAction, store.transitionRevision())
+            token, retryAction, store.transitionRevision(), countdown?.key.orEmpty(),
+            token.isNotBlank() && presentedAt != null && now - presentedAt >= AtomicRefreshPolicy.REMINDER_HOLD_MS)
         val elapsedNow = SystemClock.elapsedRealtime()
         if (!refreshPolicy.shouldPublish(stateKey, clockBucket, elapsedNow, !foregroundStarted)) return true
         val stateChanged = refreshPolicy.stateChanged(stateKey)
@@ -176,7 +188,8 @@ class FocusService : Service() {
         }
         return try {
             val notification = publisher.liveNotification(state, operation, retryAction = retryAction,
-                forceShowCard = forceShowCard, now = now, atomicAvailable = atomic)
+                forceShowCard = forceShowCard, now = now, atomicAvailable = atomic,
+                showSeconds = if (firstPresentation) 15 else 0, countdown = countdown)
             if (!foregroundStarted) startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             else notifications.notify(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             foregroundStarted = true
@@ -184,7 +197,8 @@ class FocusService : Service() {
             refreshPolicy.published(stateKey, clockBucket, elapsedNow)
             if (stateChanged) Log.i("FocusService", "Notification state=${state.mode} operation=${operation.name} " +
                 "publishMs=${SystemClock.elapsedRealtime() - publishStartedAt}")
-            if (firstPresentation) { store.markIslandPresented(token); store.markPresented(token) }
+            if (firstPresentation) { store.markIslandPresented(token, now); store.markPresented(token) }
+            if (presentation.collapse) store.markIslandCollapsed(token)
             true
         } catch (error: Exception) {
             Log.w("FocusService", "Foreground promotion failed", error)
@@ -195,7 +209,8 @@ class FocusService : Service() {
 
     private fun maybeSyncServer() {
         val now = System.currentTimeMillis()
-        if (busy || syncing || now - lastSyncAt < 15_000 || destroyed || store.read().mode == FocusMode.IDLE) return
+        if (busy || syncing || now - lastSyncAt < 15_000 || destroyed ||
+            store.read().mode == FocusMode.IDLE && !store.islandContext().enabled(now)) return
         lastSyncAt = now
         syncing = true
         val requested = store.read()
@@ -216,6 +231,7 @@ class FocusService : Service() {
                     return@post
                 }
                 if (response.successful && response.state != null) {
+                    response.islandContext?.let(store::writeIslandContext)
                     val updated = FocusStateReducer.reduce(store.read(), response.state, store.endedAcknowledgedCount())
                     val transition = !FocusStateReducer.canApplyResponse(store.read(), updated)
                     store.write(updated)
@@ -393,11 +409,17 @@ class FocusService : Service() {
             val previous = store.read()
             store.write(state)
             if (!FocusStateReducer.canApplyResponse(previous, state)) runningService?.let { it.message = ""; it.retryAction = "" }
-            if (state.mode == FocusMode.IDLE) stopAndCancel(context) else dispatch(context, Intent().setAction(ACTION_SYNC))
+            if (state.mode == FocusMode.IDLE && !store.islandContext().enabled(System.currentTimeMillis())) stopAndCancel(context)
+            else dispatch(context, Intent().setAction(ACTION_SYNC))
+        }
+
+        fun updateIslandContext(context: Context, schedule: IslandContext) = onMain {
+            FocusStateStore(context).writeIslandContext(schedule)
+            dispatch(context, Intent().setAction(ACTION_CHECK))
         }
 
         fun clear(context: Context) = onMain {
-            FocusStateStore(context).write(FocusRuntimeState())
+            FocusStateStore(context).also { it.write(FocusRuntimeState()); it.clearIslandContext() }
             stopAndCancel(context)
         }
 
@@ -407,7 +429,8 @@ class FocusService : Service() {
         }
 
         fun requestReminderCheck(context: Context) = onMain {
-            if (FocusStateStore(context).read().mode != FocusMode.IDLE) dispatch(context, Intent().setAction(ACTION_CHECK))
+            val store = FocusStateStore(context)
+            if (store.read().mode != FocusMode.IDLE || store.islandContext().enabled(System.currentTimeMillis())) dispatch(context, Intent().setAction(ACTION_CHECK))
         }
 
         fun action(context: Context, intent: Intent) = onMain { dispatch(context, intent) }
@@ -449,7 +472,8 @@ class FocusService : Service() {
                 if (service.matches(intent)) service.handleAction(intent.action.orEmpty()) else service.applyState()
                 return
             }
-            if (FocusStateStore(context).read().mode == FocusMode.IDLE) { stopAndCancel(context); return }
+            val store = FocusStateStore(context)
+            if (store.read().mode == FocusMode.IDLE && !store.islandContext().enabled(System.currentTimeMillis())) { stopAndCancel(context); return }
             val request = ++nextStartRequest
             pendingStarts.add(request)
             intent.setClass(context, FocusService::class.java).putExtra(EXTRA_START_REQUEST, request)

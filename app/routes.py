@@ -25,7 +25,7 @@ from .focus_kline import (
     validate_setting_payload,
 )
 from .focus_reporter import ReporterError, apply_frame, authenticate_reporter, connection_details
-from .checkins import heatmap as checkin_heatmap
+from .checkins import heatmap as checkin_heatmap, settlement_snapshot as checkin_settlement_snapshot, island_context
 from .focus_exchange import ExchangeParameters, MODEL as EXCHANGE_MODEL
 from .focus_challenge import account_now, challenge_decisions, challenge_payload, set_challenge
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
@@ -656,6 +656,8 @@ def register_routes(app):
                 heatmap_visible_hours = list(HEATMAP_HOURS)
             return jsonify({
                 "now": now.isoformat(),
+                "island_context": island_context(connection, viewer_id, now, trading_sessions_from_settings(settings))
+                    if viewer_id is not None and not is_guest() and viewer_id == current_user_id() else None,
                 "preferences": _ui_preferences(settings, viewer_id),
                 "exam": {"date": settings["exam_date"], "remaining_seconds": seconds_until_exam(now, settings["exam_date"])},
                 "today_focus": today_focus,
@@ -926,6 +928,7 @@ def register_routes(app):
                 subject_names={row["id"]: row["name"] for row in list_subjects(connection, user_id)},
                 leaderboard=leaderboard,
                 index_payload=_focus_kline_payload(connection, user_id, settings, now),
+                checkins=checkin_settlement_snapshot(connection, user_id, now),
             )
             cursor = connection.execute(
                 """INSERT INTO daily_settlements(

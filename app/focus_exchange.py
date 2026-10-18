@@ -14,7 +14,7 @@ from threading import RLock
 from typing import Callable
 
 MODEL = "focus-exchange-v1"
-ENGINE_REVISION = 2
+ENGINE_REVISION = 3
 TICK = 0.001
 INTERVAL_MS = 100
 
@@ -136,6 +136,12 @@ class PriceBook:
             second = at // 1000
             if second != self.previous_second or self.last_input is None:
                 inputs = input_at(second * 1000)
+                previous_input = self.last_input
+                if previous_input is not None and previous_input.active and (
+                        not inputs.active or inputs.session != previous_input.session):
+                    # Preserve the last execution at the exact session boundary.
+                    # No matching or random draw happens in a market break.
+                    self._sample(second * 1000, previous_input, session_close=True)
                 self.last_input = inputs
                 self.previous_second = second
                 if inputs.active:

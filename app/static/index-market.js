@@ -85,9 +85,10 @@
     for (let index = 0; index < session.windows.length - 1; index += 1) {
       const end = session.windows[index].end, start = session.windows[index + 1].start;
       if (start <= end || asOf <= end) continue;
-      const closing = points.findLast((point) => point.time === end && Number.isFinite(point.value));
+      const closing = points.filter((point) => point.time >= session.windows[index].start && point.time <= end && Number.isFinite(point.value))
+        .sort((a, b) => a.time - b.time).at(-1);
       if (!closing) continue;
-      const segment = [{ time:end, value:closing.value }, { time:Math.min(asOf, start), value:closing.value }];
+      const segment = [{ time:closing.time, value:closing.value }, { time:Math.min(asOf, start), value:closing.value }];
       if (asOf >= start) {
         const opening = points.find((point) => point.time === start && Number.isFinite(point.value));
         if (opening && opening.value !== closing.value) segment.push({ time:start, value:opening.value });
@@ -174,11 +175,12 @@
           lastPaint=now; executed=true;
         }
         if (!active) pending=[];
-        return {value,time,direction,executed,now:serverNow,active,group,stale:now-receivedAt>3000};
+        return {value,time,direction:executed ? direction : 0,executed,now:serverNow,active,group,stale:now-receivedAt>3000};
       },
     };
   }
 
+  const quotePulses = new WeakMap();
   function paintQuote(target,value,direction,previousClose) {
     if (!target) return;
     const next=finite(value).toFixed(3),before=Number(target.textContent);
@@ -187,9 +189,16 @@
     const dayChange=Number.isFinite(Number(previousClose)) ? value-Number(previousClose) : 0;
     target.classList.toggle('is-day-up',dayChange>.0005);
     target.classList.toggle('is-day-down',dayChange<-.0005);
-    if (direction) {
+    if (direction && target.textContent!==next) {
+      window.clearTimeout(quotePulses.get(target));
       target.classList.toggle('is-tick-up',direction>0);
       target.classList.toggle('is-tick-down',direction<0);
+      // Shorter than the 100 ms minimum execution interval: every actual
+      // trade gets a pulse, while repeated paints never prolong its wash.
+      quotePulses.set(target,window.setTimeout(() => {
+        target.classList.remove('is-tick-up','is-tick-down');
+        quotePulses.delete(target);
+      },80));
     }
     if (target.textContent!==next) target.textContent=next;
   }

@@ -8,7 +8,8 @@ import java.time.OffsetDateTime
 
 object FocusApi {
     data class Result(val successful: Boolean, val status: Int, val state: FocusRuntimeState? = null)
-    data class StateResult(val successful: Boolean, val status: Int, val state: FocusRuntimeState? = null)
+    data class StateResult(val successful: Boolean, val status: Int, val state: FocusRuntimeState? = null,
+                           val islandContext: IslandContext? = null)
 
     fun heartbeat(state: FocusRuntimeState): Result = post(
         state,
@@ -39,6 +40,7 @@ object FocusApi {
             if (status !in 200..299) return StateResult(false, status)
             val payload = connection.inputStream.bufferedReader().use { it.readText() }
             val data = JSONObject(payload)
+            val islandContext = IslandContext.fromJson(data.optJSONObject("island_context"))
             val active = data.optJSONObject("focus")?.optJSONObject("active")
             if (active == null) {
                 val settled = data.optJSONObject("daily_settlement")
@@ -51,7 +53,7 @@ object FocusApi {
                     restStartedAtEpochMs = 0,
                     pausedAtEpochMs = 0,
                     observedAtEpochMs = System.currentTimeMillis(),
-                ))
+                ), islandContext)
                 // Resolve uncertain writes and remote finishes using the real
                 // ended record, not the later time this poll happened to arrive.
                 if (localState.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.ENDED) && localState.sessionId > 0) {
@@ -60,17 +62,18 @@ object FocusApi {
                         for (index in 0 until rows.length()) {
                             val row = rows.optJSONObject(index) ?: continue
                             if (row.optLong("id") == localState.sessionId && epochMillis(row.optString("ended_at")) > 0)
-                                return StateResult(true, status, withAccountTime(stateFromPayload(row, localState.baseUrl, System.currentTimeMillis()), localState, data.optString("now")))
+                                return StateResult(true, status, withAccountTime(stateFromPayload(row, localState.baseUrl, System.currentTimeMillis()), localState, data.optString("now")), islandContext)
                         }
                     }
                 }
-                return StateResult(true, status, FocusRuntimeState(baseUrl = localState.baseUrl))
+                return StateResult(true, status, FocusRuntimeState(baseUrl = localState.baseUrl), islandContext)
             }
             val now = System.currentTimeMillis()
             StateResult(
                 true,
                 status,
                 withAccountTime(stateFromPayload(active, localState.baseUrl, now), localState, data.optString("now")),
+                islandContext,
             )
         } catch (_: Exception) {
             StateResult(false, 0)

@@ -81,4 +81,15 @@ class AtomicRefreshPolicyTest {
         policy.published(key(), 10, 1000)
         assertTrue(policy.shouldPublish(key(), 10, 1001, true))
     }
+
+    @Test fun `hold expiry and reminder close publish immediately without replaying expansion`() {
+        val policy = AtomicRefreshPolicy()
+        val holding = key(focus.copy(mode = FocusMode.PAUSED), token = "round1")
+        policy.published(holding, 314, 1000)
+        assertTrue(policy.shouldPublish(holding.copy(reminderExpired = true), 314, 1001, false))
+        assertTrue(policy.reminderCleared(""))
+        assertFalse(policy.reminderCleared("round1"))
+        policy.published(key(focus.copy(mode = FocusMode.PAUSED)), 314, 1001)
+        assertFalse(policy.reminderCleared(""))
+    }
 }

@@ -88,6 +88,22 @@ def test_no_execution_during_break_or_outside_limits():
     assert all(99.995<=t['price']<=100.005 for t in book.all_trades)
     assert not any(START+5*60000<=t['timestamp_ms']<START+7*60000 for t in book.all_trades)
 
+
+def test_session_close_preserves_the_last_actual_execution_and_adds_no_break_trades():
+    def market(ms):
+        minute=(ms-START)/60000
+        return BookInput(minute<5 or minute>=7,'am' if minute<5 else 'pm',False,100,100,90,110)
+    book=PriceBook(START,100,77,record_trades=True).advance(START+6*60000,market)
+    close=next(p for p in book.samples if p.get('session_close'))
+    assert close['timestamp_ms']==START+5*60000
+    assert close['session']=='am' and close['price']==book.price==book.all_trades[-1]['price']
+    prefix=list(book.all_trades)
+    book.advance(START+8*60000,market)
+    rebuilt=PriceBook(START,100,77,record_trades=True).advance(START+8*60000,market)
+    assert rebuilt.snapshot()==book.snapshot()
+    assert rebuilt.all_trades[:len(prefix)]==prefix
+    assert not any(START+5*60000<=t['timestamp_ms']<START+7*60000 for t in book.all_trades)
+
 def test_cutover_preserves_old_points_and_close_remains_a_separate_value_auction():
     start=DAY+timedelta(hours=1,minutes=15,seconds=20)
     kwargs={'daily_focus_seconds':{DAY.date():3*3600},'daily_segments':{DAY.date():[(DAY,DAY+timedelta(hours=3))]},'user_key':28}

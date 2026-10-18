@@ -9,24 +9,29 @@ class FocusStateStoreTest {
     private val paused = FocusRuntimeState(mode = FocusMode.PAUSED, sessionId = 8,
         pausedAtEpochMs = minute, elapsedSeconds = 1800, observedAtEpochMs = minute)
 
-    @Test fun `an active reminder keeps expansion through clock updates and recreation until closed`() {
+    @Test fun `one reminder expands once holds fifteen seconds and never reopens after manual collapse or recreation`() {
         val prefs = MemoryPreferences()
         val store = FocusStateStore(prefs)
         store.write(paused)
         val token = store.reminderToken(ReminderKind.PAUSED, 6 * minute)
         assertEquals(AtomicRefreshPolicy.ReminderPresentation(true, true),
-            AtomicRefreshPolicy.reminderPresentation(true, true, token, store.wasIslandPresented(token)))
-        store.markIslandPresented(token)
+            AtomicRefreshPolicy.reminderPresentation(true, true, token, store.islandPresentedAt(token), false, 6 * minute))
+        store.markIslandPresented(token, 6 * minute)
         val restored = FocusStateStore(prefs)
-        for (second in 0..12) {
+        for (second in 0..14) {
             val latest = restored.reminderToken(ReminderKind.PAUSED, 6 * minute + second * 1000)
-            assertEquals(AtomicRefreshPolicy.ReminderPresentation(true, false),
-                AtomicRefreshPolicy.reminderPresentation(true, true, latest, restored.wasIslandPresented(latest)))
+            assertEquals(AtomicRefreshPolicy.ReminderPresentation(null, false),
+                AtomicRefreshPolicy.reminderPresentation(true, true, latest, restored.islandPresentedAt(latest), false, 6 * minute + second * 1000))
         }
+        assertEquals(AtomicRefreshPolicy.ReminderPresentation(false, false, true),
+            AtomicRefreshPolicy.reminderPresentation(true, true, token, restored.islandPresentedAt(token), false, 6 * minute + 15_000))
+        restored.markIslandCollapsed(token)
+        assertEquals(AtomicRefreshPolicy.ReminderPresentation(null, false),
+            AtomicRefreshPolicy.reminderPresentation(true, true, token, restored.islandPresentedAt(token), restored.islandCollapseSent(token), 8 * minute))
         restored.closeReminders()
         assertNull(restored.due(8 * minute))
-        assertFalse(AtomicRefreshPolicy.reminderPresentation(true, true, "", false).expanded)
-        assertFalse(AtomicRefreshPolicy.reminderPresentation(true, false, token, false).expanded)
+        assertNull(AtomicRefreshPolicy.reminderPresentation(true, true, "", null, false, 8 * minute).expanded)
+        assertNull(AtomicRefreshPolicy.reminderPresentation(true, false, token, null, false, 8 * minute).expanded)
     }
 
     @Test fun `island reminder expansion is persisted per round and reset for a new pause`() {

@@ -47,7 +47,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Maintains a user-started study timer, its live status, and requested break reminders." />
+                android:value="Maintains user-configured study timers, lunch-opening and check-in countdowns, and requested reminders." />
         </service>
         <service
             android:name=".FocusAccessibilityService"

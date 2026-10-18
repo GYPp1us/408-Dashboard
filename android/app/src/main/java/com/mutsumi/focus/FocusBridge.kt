@@ -95,6 +95,14 @@ class FocusBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
+    fun syncIslandContext(raw: String) {
+        val context = runCatching { IslandContext.fromJson(org.json.JSONObject(raw)) }.getOrNull() ?: return
+        activity.runOnUiThread {
+            if (activity.hasTrustedDocument()) FocusService.updateIslandContext(activity, context)
+        }
+    }
+
+    @JavascriptInterface
     fun clearFocusState() {
         activity.runOnUiThread {
             if (activity.hasTrustedDocument()) FocusService.clear(activity)

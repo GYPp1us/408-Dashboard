@@ -55,3 +55,25 @@ test('daily change colors digits while the last trade independently colors the b
   assert(!quote.classList.contains('is-day-up')); assert(!quote.classList.contains('is-day-down'));
   assert(quote.classList.contains('is-tick-up'));
 });
+
+test('each actual execution flashes for 80ms while polling the same quote never renews its wash',()=>{
+  const {Market,window}=harness(),quote=new Element('strong'),timers=new Map();let id=0;
+  window.setTimeout=(fn,delay)=>{timers.set(++id,{fn,delay});return id;};
+  window.clearTimeout=key=>timers.delete(key);
+  quote.textContent='10.000';
+  Market.paintQuote(quote,9.999,-1,10);
+  assert(quote.classList.contains('is-tick-down'));assert(quote.classList.contains('is-day-down'));
+  const first=[...timers.values()][0];assert.equal(first.delay,80);
+  Market.paintQuote(quote,9.999,-1,10);assert.equal(timers.size,1);
+  first.fn();assert(!quote.classList.contains('is-tick-down'));assert(quote.classList.contains('is-day-down'));
+  Market.paintQuote(quote,9.999,-1,10);assert(!quote.classList.contains('is-tick-down'));
+  Market.paintQuote(quote,10,1,10);assert(quote.classList.contains('is-tick-up'));
+});
+
+test('tape emits a direction only for a newly consumed execution, never for later clock paints',()=>{
+  const {Market}=harness(),market=Market.market('2026-09-30',sessions,iso(0)),tape=Market.tradeTape();
+  tape.accept(snapshot(0,100),origin);
+  tape.accept(snapshot(1000,100.001,[trade(100,100.001,1)]),origin+1000);
+  assert.equal(tape.step(market,origin+1100).direction,1);
+  assert.equal(tape.step(market,origin+1200).direction,0);
+});

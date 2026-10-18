@@ -140,6 +140,15 @@
       return true;
     }
     if (destination === "next") { openFocusLaunch(); return true; }
+    if (destination === "checkin") {
+      const open = () => {
+        $("#entry-tab-checkin")?.click();
+        $("#focus-entry-tabs")?.scrollIntoView({ block:"start", behavior:"auto" });
+      };
+      if ($("#entry-tab-checkin")) open();
+      else document.addEventListener("dashboard:updated", open, { once:true });
+      return true;
+    }
     if (destination === "summary") {
       const settlement = state.dashboard?.daily_settlement;
       if (settlement?.report) window.DailyReport?.open?.(settlement.report);

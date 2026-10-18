@@ -54,10 +54,11 @@ class OriginOsAtomicPublisher(private val context: Context) {
     }
 
     fun liveNotification(state: FocusRuntimeState, operation: AtomicOperation, retryAction: String = "",
-                         forceShowCard: Boolean = false, now: Long = System.currentTimeMillis(),
-                         atomicAvailable: Boolean = usesAtomicIsland()): Notification {
+                         forceShowCard: Boolean? = null, now: Long = System.currentTimeMillis(),
+                         atomicAvailable: Boolean = usesAtomicIsland(), showSeconds: Int = 0,
+                         countdown: IslandContext.Countdown? = null): Notification {
         val due = store.due(now)
-        val layout = AtomicIslandLayout.from(state, due, now, store.remindersClosed(state))
+        val layout = AtomicIslandLayout.from(state, due, now, store.remindersClosed(state), countdown)
         val colors = palette(state)
         val home = openIntent("home", 1)
         val primary = when (layout.button.action) {
@@ -106,9 +107,10 @@ class OriginOsAtomicPublisher(private val context: Context) {
                 BuildConfig.VIVO_ATOMIC_SCENE, layout.title, content, layout.rightText, home,
                 BuildConfig.VIVO_HISTORICAL_ISLAND_ONLY, store.nextAtomicRecord(), "focus:${state.sessionId}")
             if (operation != AtomicOperation.END && !BuildConfig.VIVO_HISTORICAL_ISLAND_ONLY) {
-                extras.putAll(wireBundle(layout.wire(forceShowCard, colors), primary, home, colors))
+                extras.putAll(wireBundle(layout.wire(forceShowCard, colors, showSeconds), primary, home, colors))
                 // Keep the node stable between genuine mode changes / rounds.
-                extras.putInt("notification.superx.newNode", state.mode.ordinal * 100_000 + (due?.round ?: 0).coerceAtMost(99_999))
+                extras.putInt("notification.superx.newNode", layout.displayNode.takeIf { it != 0 }
+                    ?: (state.mode.ordinal * 100_000 + (due?.round ?: 0).coerceAtMost(99_999)))
             }
             builder.addExtras(extras)
         }

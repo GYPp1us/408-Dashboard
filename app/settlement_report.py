@@ -86,7 +86,7 @@ def legacy_settlement_report(settlement: dict[str, Any]) -> dict[str, Any]:
 def build_settlement_report(
     settlement: dict[str, Any], *, timezone_name: str, username: str | None,
     today_rows: list[dict], subject_names: dict[int, str], leaderboard: dict,
-    index_payload: dict,
+    index_payload: dict, checkins: dict | None = None,
 ) -> dict[str, Any]:
     subject_totals: dict[str, int] = {}
     trusted_seconds = untrusted_seconds = 0
@@ -138,6 +138,7 @@ def build_settlement_report(
         "gap_to_previous_seconds": today_rank["gap_to_previous_seconds"],
         "challenge": index_payload.get("challenge"),
         "index": index,
+        "checkins": checkins,
         "closing_note": "今天的投入已经收好，下一次专注从明天开始。" if total else "今天已经收官，明天仍是新的开始。",
         "missing_fields": [] if index else ["index"],
     }
