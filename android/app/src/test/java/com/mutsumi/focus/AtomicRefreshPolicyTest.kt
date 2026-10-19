@@ -4,6 +4,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AtomicRefreshPolicyTest {
+    @Test fun `expanded reminder freezes only notification clock for fifteen seconds and catches up once`() {
+        val policy = AtomicRefreshPolicy()
+        val reminder = key(focus.copy(mode = FocusMode.PAUSED), token = "round1")
+        policy.published(reminder, 300, 0)
+        for (second in 1..14) assertFalse(policy.shouldPublish(reminder, 300L + second, second * 1000L, false, true))
+        val resumed = key(focus)
+        assertTrue(policy.shouldPublish(resumed, 305, 5000, false, true))
+        assertTrue(policy.shouldPublish(reminder.copy(reminderExpired = true), 315, 15000, false))
+        policy.published(reminder.copy(reminderExpired = true), 315, 15000)
+        assertFalse(policy.shouldPublish(reminder.copy(reminderExpired = true), 315, 15001, false))
+        assertTrue(policy.shouldPublish(reminder.copy(reminderExpired = true), 316, 16000, false))
+    }
     private val focus = FocusRuntimeState(mode = FocusMode.FOCUSING, sessionId = 1, startedAtEpochMs = 1000)
 
     private fun key(state: FocusRuntimeState = focus, visible: Boolean = true, atomic: Boolean = true,

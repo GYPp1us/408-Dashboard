@@ -114,6 +114,12 @@ data class AtomicIslandLayout(
         fun from(state: FocusRuntimeState, due: DueReminder?, now: Long, remindersClosed: Boolean = false,
                  countdown: IslandContext.Countdown? = null): AtomicIslandLayout {
             if (countdown != null) {
+                if (countdown.kind == IslandContext.Countdown.Kind.WAITING) {
+                    val elapsed = countdown.remaining(now)
+                    return AtomicIslandLayout(1, "等待下一段专注", "开盘后已等待 ${IslandTime.large(elapsed)}", 3,
+                        rightText = IslandTime.small(elapsed), core = IslandTime.large(elapsed), description = "开盘后已等待",
+                        button = Button("开始专注", "next"), collapsedText = "等待专注", displayNode = 700_000)
+                }
                 val afternoon = countdown.kind == IslandContext.Countdown.Kind.AFTERNOON
                 val remaining = countdown.remaining(now)
                 return AtomicIslandLayout(1, if (afternoon) "下午开盘倒计时" else "打卡剩余时间", if (afternoon) "午间休盘" else countdown.name,

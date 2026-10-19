@@ -56,11 +56,6 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .chart-hover-detail[hidden] { display: none; }
 #activity-score-view { position: relative; }
 .progress { background: var(--subtle); }
-.time-grid { grid-template-columns: var(--current-time-width, 468px) minmax(0, var(--morning-window)) minmax(0, var(--library-window)); }
-.time-grid[data-layout="windows"] { grid-template-columns: minmax(0, var(--morning-window)) minmax(0, var(--library-window)); }
-.time-grid[data-layout="windows"] > .current-time-card { grid-column: 1 / -1; }
-.time-grid[data-layout="stacked"] { grid-template-columns: minmax(0, 1fr); }
-.time-grid[data-layout="stacked"] > .current-time-card { grid-column: 1; }
 .dashboard-grid { grid-template-columns: var(--control-column, minmax(300px, 1.5fr)) 10px var(--insight-column, minmax(330px, 3fr)) 10px var(--activity-column, minmax(440px, 2fr)); gap: 0; }
 .dashboard-grid .mode-panel { grid-column: 1; }
 .dashboard-grid .investment-panel { grid-column: 3; }

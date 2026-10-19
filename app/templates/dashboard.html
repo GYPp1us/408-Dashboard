@@ -3,9 +3,17 @@
 {% block content %}
 <section class="time-grid">
   <article class="panel time-card current-time-card" data-detail-kind="artwork" data-detail-key="current" data-tooltip-target="#time-context" role="button" tabindex="0" title="长按或按回车查看{% if not is_guest %}或更换{% endif %}表情包"><img id="current-time-art" class="current-time-art" src="{{ dashboard_artwork.url }}" data-custom="{{ 'true' if dashboard_artwork.is_custom else 'false' }}" alt="" draggable="false"><h2>当前时间</h2><p id="time-context" class="current-window sr-only"><span id="home-window-label">正在读取时间窗口</span> · <span id="home-window-action">距离下一阶段</span> <b id="home-window-countdown">--:--:--</b></p><strong id="current-time">--:--:--</strong><p id="current-time-motto" class="current-time-motto"{% if not dashboard_artwork.motto %} hidden{% endif %}>{{ dashboard_artwork.motto }}</p><span id="home-state-note" class="sr-only">准备开始下一段专注</span></article>
-  <article class="panel time-card"><h2>距离午休</h2><strong id="lunch-clock">--:--:--</strong><div class="progress-meta"><span id="lunch-start-label">--:--</span><b id="lunch-percent">0%</b><span id="lunch-end-label">--:--</span></div><div class="progress"><i id="lunch-progress"></i><div id="lunch-history" class="progress-history"></div></div></article>
-  <article class="panel time-card"><h2>距离闭馆</h2><strong id="library-clock">--:--:--</strong><div class="progress-meta"><span id="library-start-label">--:--</span><b id="library-percent">0%</b><span id="library-end-label">--:--</span></div><div class="progress"><i id="library-progress"></i><div id="library-history" class="progress-history"></div></div></article>
+  <div class="dashboard-divider time-divider" role="separator" tabindex="0" aria-label="调整主时间与全天进度面板宽度" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="34" aria-controls="current-time day-timeline"></div>
+  <article id="day-timeline" class="panel time-card day-timeline" aria-label="全天时间进度">
+    <div id="timeline-label" class="timeline-label"><h2 id="timeline-title">距离下一阶段</h2><strong id="timeline-clock">--:--:--</strong></div>
+    <div class="timeline-marker" aria-hidden="true"></div>
+    <div class="progress-meta timeline-meta" aria-hidden="true"><span id="timeline-start">--:--</span><div id="timeline-ticks"></div><span id="timeline-end">--:--</span></div>
+    <div class="progress timeline-track" aria-hidden="true"><i id="timeline-progress"></i><div id="timeline-lunch"></div><div id="timeline-history" class="progress-history"></div></div>
+  </article>
 </section>
+
+{# Older installed APKs still address these IDs; retain inert targets during upgrade. #}
+<div hidden aria-hidden="true">{% for prefix in ['lunch', 'library'] %}<span id="{{ prefix }}-clock"></span><span id="{{ prefix }}-percent"></span><span id="{{ prefix }}-start-label"></span><span id="{{ prefix }}-end-label"></span><i id="{{ prefix }}-progress"></i><div id="{{ prefix }}-history"></div>{% endfor %}</div>
 
 <section class="dashboard-grid" aria-label="学习工作台">
   <div class="dashboard-divider" data-dashboard-divider="0" role="separator" tabindex="0" aria-label="调整专注控制与统计列宽" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="28" aria-controls="dashboard-controls dashboard-insights"></div>

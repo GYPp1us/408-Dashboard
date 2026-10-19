@@ -58,7 +58,8 @@ class OriginOsAtomicPublisher(private val context: Context) {
                          atomicAvailable: Boolean = usesAtomicIsland(), showSeconds: Int = 0,
                          countdown: IslandContext.Countdown? = null): Notification {
         val due = store.due(now)
-        val layout = AtomicIslandLayout.from(state, due, now, store.remindersClosed(state), countdown)
+        val layout = AtomicIslandLayout.from(if (due != null) store.reminderState(now) else state,
+            due, now, store.remindersClosed(state), countdown)
         val colors = palette(state)
         val home = openIntent("home", 1)
         val primary = when (layout.button.action) {

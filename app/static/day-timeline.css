@@ -1,0 +1,36 @@
+.time-grid { grid-template-columns: var(--current-time-width, 468px) 10px minmax(0, 1fr); gap: 0; }
+.time-grid > .current-time-card { grid-column: 1; }
+.time-grid > .day-timeline { grid-column: 3; }
+.time-grid > .time-divider { grid-column: 2; }
+.time-divider::after { top: 50%; transform: translateY(-50%); }
+.time-divider::after { top: 50%; transform: translateY(-50%); }
+.time-grid[data-layout="stacked"] { grid-template-columns: minmax(0, 1fr); }
+.time-grid[data-layout="stacked"] > .current-time-card { grid-column: 1; }
+.time-grid[data-layout="stacked"] > .day-timeline { grid-column: 1; }
+.time-grid[data-layout="stacked"] { gap: 10px; }
+.day-timeline { --timeline-now: 14px; }
+.day-timeline > .timeline-label { position: absolute; top: 14px; max-width: calc(100% - 28px); z-index: 3; white-space: nowrap; }
+.timeline-label h2 { margin: 0; }
+.timeline-label strong { display: block; margin-top: 5px; font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums; }
+.day-timeline > .timeline-marker { position: absolute; z-index: 2; top: var(--timeline-stem-top, 14px); bottom: 14px; left: var(--timeline-now); width: 1px; background: var(--muted); opacity: .55; pointer-events: none; }
+.day-timeline > .timeline-meta { position: absolute; bottom: 33px; left: 14px; right: 14px; margin: 0; }
+#timeline-ticks { position: absolute; inset: 0; }
+#timeline-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+#timeline-ticks span::after { content: ""; position: absolute; left: 50%; top: 100%; width: 1px; height: 4px; background: var(--line); }
+.day-timeline > .timeline-track { position: absolute; bottom: 14px; left: 14px; right: 14px; height: 14px; margin: 0; background: color-mix(in srgb, var(--muted) 20%, var(--surface)); }
+.timeline-track > i { background: color-mix(in srgb, var(--muted) 42%, var(--surface)); transition: none; }
+#timeline-lunch { position: absolute; z-index: 2; top: 0; bottom: 0; background: color-mix(in srgb, var(--muted) 2%, var(--surface)); }
+.timeline-track .progress-history { z-index: 3; }
+.timeline-track .progress-history span { background: color-mix(in srgb, var(--window-accent) 65%, var(--surface)); }
+
+/* Loaded after bundled viewport rules so installed older APKs stay compatible. */
+html.native-app[data-viewport-mode="portrait"] .time-grid { grid-template-columns:var(--current-time-width, 100px) 10px minmax(0,1fr) !important; gap:0; }
+html.native-app[data-viewport-mode="portrait"] .time-grid > .time-divider { display:block !important; grid-column:2; grid-row:1; }
+html.native-app[data-viewport-mode="portrait"] .time-grid > .day-timeline { grid-column:3 !important; }
+html.native-app[data-viewport-mode="portrait"] .day-timeline > .timeline-label { top:10px; max-width:calc(100% - 16px); }
+html.native-app[data-viewport-mode="portrait"] .timeline-label strong { font-size:clamp(18px,5.1vw,26px); }
+html.native-app[data-viewport-mode="portrait"] .day-timeline > .timeline-marker { bottom:10px; }
+html.native-app[data-viewport-mode="portrait"] .day-timeline > .timeline-track { display:block; bottom:10px; left:8px; right:8px; }
+html.native-app[data-viewport-mode="portrait"] .time-grid[data-layout="stacked"] { grid-template-columns:minmax(0,1fr) !important; gap:8px; }
+html.native-app[data-viewport-mode="portrait"] .time-grid[data-layout="stacked"] > .day-timeline { grid-column:1 !important; }
+html.native-app[data-viewport-mode="portrait"] .time-grid > .time-divider[hidden] { display:none !important; }

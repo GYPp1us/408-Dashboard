@@ -48,8 +48,12 @@ class AtomicRefreshPolicy {
     fun stateChanged(state: StateKey): Boolean = state != lastState
     fun reminderCleared(token: String): Boolean = lastState?.reminderToken?.isNotBlank() == true && token.isBlank()
 
-    fun shouldPublish(state: StateKey, clockSeconds: Long, nowElapsedMs: Long, foregroundRequired: Boolean): Boolean {
+    fun shouldPublish(state: StateKey, clockSeconds: Long, nowElapsedMs: Long, foregroundRequired: Boolean,
+                      holdingReminder: Boolean = false): Boolean {
         if (foregroundRequired || stateChanged(state)) return true
+        // On the verified ROM even an UPDATE without forceShowCard collapses
+        // the expanded card. Keep its snapshot for 15s; real transitions win.
+        if (holdingReminder) return false
         if (clockSeconds == lastClockSeconds) return false
         return nowElapsedMs - lastPublishedAt >= 1_000L
     }

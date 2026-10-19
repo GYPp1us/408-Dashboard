@@ -17,6 +17,7 @@
     viewer_id: document.body.dataset.viewerId || "public",
   };
   let columns = [...presets.balanced];
+  let timeFraction = null;
   let grid = null;
   let drag = null;
   let layoutFrame = null;
@@ -82,19 +83,66 @@
   function layoutTimeCards() {
     const timeGrid = document.querySelector(".time-grid");
     if (!timeGrid) return;
-    const style = getComputedStyle(timeGrid);
-    const morning = Math.max(1, parseFloat(style.getPropertyValue("--morning-window")) || 14400);
-    const library = Math.max(1, parseFloat(style.getPropertyValue("--library-window")) || 30600);
-    const total = morning + library;
-    // Preserve both countdowns' type sizes and their exact duration ratio.
-    // Wrap the current-time card before squeezing a countdown below its text.
-    const minimumPair = Math.max(208 * total / morning, 208 * total / library);
     const width = timeGrid.clientWidth;
-    const compact = !window.MutsumiViewport?.wide && (root.classList.contains("native-app") ? portrait.matches : compactBrowser.matches);
-    const layout = compact ? "stacked" : width >= minimumPair + 240 ? "columns" : width >= minimumPair + 10 ? "windows" : "stacked";
-    timeGrid.dataset.layout = layout;
-    if (layout === "columns") timeGrid.style.setProperty("--current-time-width", `${Math.min(468, width - minimumPair - 20)}px`);
-    else timeGrid.style.removeProperty("--current-time-width");
+    const smallNative = root.classList.contains("native-app") && portrait.matches && !window.MutsumiViewport?.wide;
+    const minima = smallNative ? [100, 170] : [240, 248];
+    const stacked = width < minima[0] + minima[1] + 10 || (!root.classList.contains("native-app") && compactBrowser.matches && !window.MutsumiViewport?.wide);
+    timeGrid.dataset.layout = stacked ? "stacked" : "columns";
+    const divider = timeGrid.querySelector(".time-divider");
+    divider.hidden = stacked; divider.tabIndex = stacked ? -1 : 0;
+    const available = width - 10;
+    const left = Math.max(minima[0], Math.min(available - minima[1], timeFraction === null ? smallNative ? available / 3 : 468 : available * timeFraction));
+    timeGrid.style.setProperty("--current-time-width", `${left}px`);
+    divider.setAttribute("aria-valuenow", String(Math.round(left / available * 100)));
+    divider.setAttribute("aria-valuemin", String(Math.ceil(minima[0] / available * 100)));
+    divider.setAttribute("aria-valuemax", String(Math.floor((available - minima[1]) / available * 100)));
+    divider.setAttribute("aria-valuetext", `${Math.round(left)} 像素 / ${Math.round(available - left)} 像素`);
+  }
+
+  function bindTimeLayout() {
+    const timeGrid = document.querySelector(".time-grid"), divider = timeGrid?.querySelector(".time-divider");
+    if (!divider) return;
+    const key = `${storageKey()}:time`;
+    try { const saved = Number(localStorage.getItem(key)); if (saved > 0 && saved < 1) timeFraction = saved; } catch (_error) {}
+    let pointer = null;
+    const save = () => { try { if (timeFraction === null) localStorage.removeItem(key); else localStorage.setItem(key, String(timeFraction)); } catch (_error) {} };
+    const move = delta => {
+      const available = timeGrid.clientWidth - 10;
+      const start = pointer?.startWidth ?? parseFloat(timeGrid.style.getPropertyValue("--current-time-width"));
+      timeFraction = Math.max(0, Math.min(1, (start + delta) / available));
+      layoutTimeCards();
+      timeFraction = parseFloat(timeGrid.style.getPropertyValue("--current-time-width")) / available;
+    };
+    const finish = cancel => {
+      if (!pointer) return;
+      const previous = pointer; pointer = null;
+      if (cancel) timeFraction = previous.original;
+      document.body.classList.remove("is-resizing-dashboard");
+      if (divider.hasPointerCapture(previous.id)) divider.releasePointerCapture(previous.id);
+      if (!cancel) save();
+      layoutTimeCards();
+    };
+    divider.title = "拖动调整面板宽度，方向键微调，Home 恢复默认";
+    divider.addEventListener("pointerdown", event => {
+      if (event.button !== 0 || divider.hidden) return;
+      event.preventDefault();
+      pointer = { id: event.pointerId, x: event.clientX, startWidth: parseFloat(timeGrid.style.getPropertyValue("--current-time-width")), original: timeFraction };
+      divider.setPointerCapture(event.pointerId); document.body.classList.add("is-resizing-dashboard");
+    });
+    divider.addEventListener("pointermove", event => { if (pointer?.id === event.pointerId) move((event.clientX - pointer.x) / (window.MutsumiViewport?.elementScale(timeGrid) || 1)); });
+    divider.addEventListener("pointerup", () => finish(false));
+    divider.addEventListener("pointercancel", () => finish(true));
+    divider.addEventListener("lostpointercapture", () => finish(true));
+    window.addEventListener("blur", () => finish(true));
+    window.addEventListener("dashboard:viewport", () => finish(true));
+    const reset = () => { timeFraction = null; save(); layoutTimeCards(); };
+    divider.addEventListener("dblclick", reset);
+    divider.addEventListener("keydown", event => {
+      if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === "Home") reset(); else { move((event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 48 : 16)); save(); }
+    });
+    if (window.ResizeObserver) new ResizeObserver(reflow).observe(timeGrid);
   }
 
   function renderColumns() {
@@ -161,6 +209,7 @@
     grid = document.querySelector(".dashboard-grid");
     if (!grid) return;
     loadColumns();
+    bindTimeLayout();
     grid.querySelectorAll("[data-dashboard-divider]").forEach((divider) => {
       divider.title = "拖动调整列宽，方向键微调，Home 恢复默认";
       divider.addEventListener("pointerdown", (event) => {

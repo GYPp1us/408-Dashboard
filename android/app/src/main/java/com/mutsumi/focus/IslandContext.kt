@@ -16,13 +16,14 @@ data class IslandContext(
     data class Session(val start: LocalTime, val end: LocalTime)
     data class Checkin(val id: Long, val name: String, val start: LocalTime, val end: LocalTime, val completedDay: String = "")
     data class Countdown(val kind: Kind, val end: Long, val name: String = "", val id: Long = 0) {
-        enum class Kind { AFTERNOON, CHECKIN }
-        fun remaining(now: Long): Long = ((end - now).coerceAtLeast(0) + 999) / 1000
+        enum class Kind { AFTERNOON, CHECKIN, WAITING }
+        fun remaining(now: Long): Long = if (kind == Kind.WAITING) (now - end).coerceAtLeast(0) / 1000
+            else ((end - now).coerceAtLeast(0) + 999) / 1000
         val key: String get() = "$kind:$id:$end"
     }
 
     fun enabled(now: Long): Boolean = receivedAt > 0 && now - receivedAt in 0 until 36 * 3_600_000L &&
-        (sessions.size > 1 || checkins.isNotEmpty())
+        (sessions.isNotEmpty() || checkins.isNotEmpty())
 
     fun nextBoundary(now: Long): Long {
         val local = Instant.ofEpochMilli(now).atZone(ZoneId.of(timezone))
@@ -32,15 +33,14 @@ data class IslandContext(
     }
 
     fun countdown(state: FocusRuntimeState, due: DueReminder?, now: Long): Countdown? {
-        if (!enabled(now) || state.mode == FocusMode.PAUSED || due != null || state.summaryVisible(now)) return null
+        if (!enabled(now) || state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST) ||
+            due != null || state.summaryVisible(now)) return null
         val local = Instant.ofEpochMilli(now).atZone(ZoneId.of(timezone))
         val day = local.toLocalDate()
         val time = local.toLocalTime()
         sessions.zipWithNext().firstOrNull { (morning, afternoon) -> time >= morning.end && time < afternoon.start }?.let { (_, afternoon) ->
             return Countdown(Countdown.Kind.AFTERNOON, day.atTime(afternoon.start).atZone(local.zone).toInstant().toEpochMilli())
         }
-        // A check-in never displaces a running focus, rest or reminder.
-        if (state.mode in setOf(FocusMode.FOCUSING, FocusMode.REST)) return null
         return checkins.mapNotNull { rule ->
             if (rule.completedDay == day.toString()) return@mapNotNull null
             val overnight = rule.start > rule.end
@@ -48,7 +48,18 @@ data class IslandContext(
             if (!active) return@mapNotNull null
             val endDay = if (overnight && time >= rule.start) day.plusDays(1) else day
             Countdown(Countdown.Kind.CHECKIN, endDay.atTime(rule.end).atZone(local.zone).toInstant().toEpochMilli(), rule.name, rule.id)
-        }.minWithOrNull(compareBy<Countdown> { it.end }.thenBy { it.id })
+        }.minWithOrNull(compareBy<Countdown> { it.end }.thenBy { it.id }) ?: openingWait(state, now)
+    }
+
+    /** Opening is only a display/reminder anchor, never a fabricated session. */
+    fun openingWait(state: FocusRuntimeState, now: Long): Countdown? {
+        if (!enabled(now) || state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST) || state.summaryVisible(now)) return null
+        val local = Instant.ofEpochMilli(now).atZone(ZoneId.of(timezone))
+        val session = sessions.firstOrNull { local.toLocalTime() >= it.start && local.toLocalTime() < it.end } ?: return null
+        val opening = local.toLocalDate().atTime(session.start).atZone(local.zone).toInstant().toEpochMilli()
+        // A real completion after opening retains its own waiting/reminder clock.
+        if (state.mode == FocusMode.ENDED && state.endedAtEpochMs >= opening) return null
+        return Countdown(Countdown.Kind.WAITING, opening)
     }
 
     fun toJson(): String = JSONObject().apply {

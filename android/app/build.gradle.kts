@@ -35,8 +35,8 @@ android {
         applicationId = "com.mutsumi.focus"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.7.4"
+        versionCode = 20
+        versionName = "0.7.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "DASHBOARD_URL", "\"$dashboardUrl\"")
         buildConfigField("String", "VIVO_ATOMIC_SCENE", "\"$vivoAtomicScene\"")
@@ -107,4 +107,6 @@ dependencies {
     implementation("com.flyfishxu:kadb:1.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     testImplementation("junit:junit:4.13.2")
+    // Exercise persisted island schedules with actual JSON rather than Android JVM stubs.
+    testImplementation("org.json:json:20240303")
 }

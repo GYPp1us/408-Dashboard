@@ -102,7 +102,7 @@ class FocusService : Service() {
             ACTION_SNOOZE -> {
                 if (store.due() == null) return
                 if (state.mode == FocusMode.PAUSED) store.snoozePaused(System.currentTimeMillis())
-                else if (state.mode == FocusMode.ENDED) store.snoozeEnded(System.currentTimeMillis())
+                else store.snoozeEnded(System.currentTimeMillis())
                 message = "已设置 5 分钟后再提醒"
                 dismissSurfaces()
                 changed()
@@ -173,13 +173,15 @@ class FocusService : Service() {
             FocusMode.PAUSED -> (now - state.pausedAtEpochMs).coerceAtLeast(0) / 1000
             FocusMode.REST -> state.restElapsed(now)
             FocusMode.FOCUSING -> state.elapsedNow(now)
-            else -> if (due != null) (now - state.endedAtEpochMs).coerceAtLeast(0) / 1000 else 0
+            else -> if (due != null) (now - store.reminderState(now).endedAtEpochMs).coerceAtLeast(0) / 1000 else 0
         }
         val stateKey = AtomicRefreshPolicy.StateKey.from(state, visible, atomic, publisher.palette(state).accent,
             token, retryAction, store.transitionRevision(), countdown?.key.orEmpty(),
             token.isNotBlank() && presentedAt != null && now - presentedAt >= AtomicRefreshPolicy.REMINDER_HOLD_MS)
         val elapsedNow = SystemClock.elapsedRealtime()
-        if (!refreshPolicy.shouldPublish(stateKey, clockBucket, elapsedNow, !foregroundStarted)) return true
+        val holdingReminder = visible && atomic && token.isNotBlank() && presentedAt != null &&
+            now - presentedAt in 0 until AtomicRefreshPolicy.REMINDER_HOLD_MS
+        if (!refreshPolicy.shouldPublish(stateKey, clockBucket, elapsedNow, !foregroundStarted, holdingReminder)) return true
         val stateChanged = refreshPolicy.stateChanged(stateKey)
         val operation = when {
             !visible -> OriginOsAtomicPublisher.AtomicOperation.END
@@ -189,7 +191,7 @@ class FocusService : Service() {
         return try {
             val notification = publisher.liveNotification(state, operation, retryAction = retryAction,
                 forceShowCard = forceShowCard, now = now, atomicAvailable = atomic,
-                showSeconds = if (firstPresentation) 15 else 0, countdown = countdown)
+                countdown = countdown)
             if (!foregroundStarted) startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             else notifications.notify(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             foregroundStarted = true

@@ -1,6 +1,19 @@
 import pytest
 
 
+def test_continuous_day_timeline_keeps_installed_apk_targets_and_shared_assets(authenticated_client):
+    html = authenticated_client.get("/owner").get_data(as_text=True)
+    assert html.count('id="day-timeline"') == 1
+    assert 'class="dashboard-divider time-divider" role="separator"' in html
+    assert 'id="timeline-label"' in html and 'id="timeline-lunch"' in html
+    assert '/static/day-timeline.js?v=' in html and '/static/day-timeline.css?v=' in html
+    assert html.index('/static/day-timeline.css?v=') > html.index('/static/viewport-scale.css?v=')
+    # The old bundled app.js must retain its inert update targets during rollout.
+    for prefix in ("lunch", "library"):
+        for suffix in ("clock", "percent", "start-label", "end-label", "progress", "history"):
+            assert html.count(f'id="{prefix}-{suffix}"') == 1
+
+
 @pytest.fixture()
 def authenticated_client(tmp_path):
     from app import create_app

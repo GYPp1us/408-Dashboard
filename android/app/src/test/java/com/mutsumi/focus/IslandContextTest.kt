@@ -14,13 +14,15 @@ class IslandContextTest {
     private val context = IslandContext(sessions = windows, checkins = listOf(task), receivedAt = at("08:00:00"))
     private val idle = FocusRuntimeState()
 
-    @Test fun `lunch countdown follows configured windows and replaces ordinary focus and rest until opening`() {
-        for (mode in listOf(FocusMode.IDLE, FocusMode.FOCUSING, FocusMode.REST)) {
+    @Test fun `lunch countdown fills idle gaps but never displaces focus or rest`() {
+        for (mode in listOf(FocusMode.IDLE, FocusMode.SETTLED)) {
             val result = context.countdown(idle.copy(mode = mode), null, noon)!!
             assertEquals(IslandContext.Countdown.Kind.AFTERNOON, result.kind)
             assertEquals(5400L, result.remaining(noon))
             assertEquals(5399L, result.remaining(noon + 1000))
         }
+        for (mode in listOf(FocusMode.FOCUSING, FocusMode.REST))
+            assertNull(context.countdown(idle.copy(mode = mode), null, noon))
         assertNull(context.countdown(idle.copy(mode = FocusMode.FOCUSING), null, at("13:30:00")))
         assertEquals(IslandContext.Countdown.Kind.AFTERNOON, context.countdown(idle, null, at("11:40:00"))!!.kind)
         assertEquals(at("11:40:00"), context.nextBoundary(at("11:39:59")))
@@ -40,8 +42,23 @@ class IslandContextTest {
         assertEquals(2L, schedule.countdown(idle, null, at("13:35:00"))!!.id)
         assertNull(schedule.countdown(idle.copy(mode = FocusMode.REST), null, at("13:35:00")))
         val complete = schedule.copy(checkins = listOf(task.copy(completedDay = "2026-10-18"), second.copy(completedDay = "2026-10-18")))
-        assertNull(complete.countdown(idle, null, at("13:35:00")))
-        assertNull(schedule.countdown(idle, null, at("14:00:00")))
+        assertEquals(IslandContext.Countdown.Kind.WAITING, complete.countdown(idle, null, at("13:35:00"))!!.kind)
+        assertEquals(IslandContext.Countdown.Kind.WAITING, schedule.countdown(idle, null, at("14:00:00"))!!.kind)
+    }
+
+    @Test fun `each opening provides a fresh lowest priority waiting anchor without fabricating focus`() {
+        val schedule = context.copy(checkins = emptyList())
+        assertNull(schedule.countdown(idle, null, at("08:29:59")))
+        val morning = schedule.countdown(idle, null, at("08:35:00"))!!
+        assertEquals(IslandContext.Countdown.Kind.WAITING, morning.kind)
+        assertEquals(at("08:30:00"), morning.end)
+        assertEquals(300L, morning.remaining(at("08:35:00")))
+        assertEquals(at("13:30:00"), schedule.countdown(idle, null, at("13:30:00"))!!.end)
+        assertNull(schedule.countdown(idle, null, at("22:45:00")))
+        assertNull(schedule.openingWait(idle.copy(mode = FocusMode.ENDED, endedAtEpochMs = at("13:31:00")), at("13:35:00")))
+        val layout = AtomicIslandLayout.from(idle, null, at("08:35:00"), countdown = morning)
+        assertEquals("等待下一段专注", layout.title)
+        assertEquals("5:00", layout.rightText)
     }
 
     @Test fun `overnight deadline crosses midnight and prior completion expires on the account date`() {

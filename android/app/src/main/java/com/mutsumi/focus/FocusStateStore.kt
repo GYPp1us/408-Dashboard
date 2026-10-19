@@ -104,7 +104,8 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
 
     fun pausedDismissed(): Boolean = preferences.getBoolean("paused_dismissed", false)
     fun dismissPaused() { preferences.edit().putBoolean("paused_dismissed", true).apply() }
-    fun closeReminders() {
+    fun closeReminders(now: Long = System.currentTimeMillis()) {
+        openingReminderState(now)?.let { acknowledgeOpening(it.endedAtEpochMs, 3); return }
         when (read().mode) {
             FocusMode.PAUSED -> dismissPaused()
             FocusMode.ENDED -> acknowledgeEnded(3)
@@ -118,13 +119,47 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
     }
     fun endedSnoozeUntil(): Long = preferences.getLong("ended_snooze_until", 0)
     fun snoozeEnded(nowEpochMs: Long) {
+        openingReminderState(nowEpochMs)?.let {
+            preferences.edit().putLong("opening_snooze_anchor", it.endedAtEpochMs)
+                .putLong("opening_snooze_until", nowEpochMs + ReminderPolicy.PAUSED_DELAY_MS).apply()
+            return
+        }
         preferences.edit().putLong("ended_snooze_until", nowEpochMs + ReminderPolicy.PAUSED_DELAY_MS).apply()
     }
-    fun nextReminderAt(state: FocusRuntimeState = read()): Long = ReminderPolicy.nextAt(
-        state, pausedSnoozeUntil(), endedAcknowledgedCount(), pausedDismissed(), endedSnoozeUntil())
-    fun due(now: Long = System.currentTimeMillis()): DueReminder? = ReminderPolicy.due(
-        read(), now, pausedSnoozeUntil(), endedAcknowledgedCount(), pausedDismissed(), endedSnoozeUntil())
+    fun nextReminderAt(state: FocusRuntimeState = read()): Long {
+        val now = System.currentTimeMillis()
+        val opening = openingReminderState(now)
+        if (opening != null) {
+            if (islandContext().countdown(state, null, now)?.kind != IslandContext.Countdown.Kind.WAITING) return 0
+            return ReminderPolicy.nextAt(opening, 0, openingAcknowledged(opening.endedAtEpochMs), false, openingSnooze(opening.endedAtEpochMs))
+        }
+        return ReminderPolicy.nextAt(state, pausedSnoozeUntil(), endedAcknowledgedCount(), pausedDismissed(), endedSnoozeUntil())
+    }
+    private fun openingReminderState(now: Long): FocusRuntimeState? {
+        val state = read()
+        val display = islandContext().openingWait(state, now) ?: return null
+        return state.copy(mode = FocusMode.ENDED, endedAtEpochMs = display.end, elapsedSeconds = 0)
+    }
+    fun reminderState(now: Long): FocusRuntimeState = openingReminderState(now) ?: read()
+    private fun openingAcknowledged(anchor: Long): Int = if (preferences.getLong("opening_ack_anchor", 0) == anchor)
+        preferences.getInt("opening_acknowledged", 0) else 0
+    private fun openingSnooze(anchor: Long): Long = if (preferences.getLong("opening_snooze_anchor", 0) == anchor)
+        preferences.getLong("opening_snooze_until", 0) else 0
+    private fun acknowledgeOpening(anchor: Long, index: Int) {
+        preferences.edit().putLong("opening_ack_anchor", anchor)
+            .putInt("opening_acknowledged", ReminderPolicy.acknowledgedCount(openingAcknowledged(anchor), index)).apply()
+    }
+    fun due(now: Long = System.currentTimeMillis()): DueReminder? {
+        val opening = openingReminderState(now)
+        if (opening != null) {
+            if (islandContext().countdown(read(), null, now)?.kind != IslandContext.Countdown.Kind.WAITING) return null
+            return ReminderPolicy.due(opening, now, 0, openingAcknowledged(opening.endedAtEpochMs),
+                endedSnoozeUntilEpochMs = openingSnooze(opening.endedAtEpochMs))
+        }
+        return ReminderPolicy.due(read(), now, pausedSnoozeUntil(), endedAcknowledgedCount(), pausedDismissed(), endedSnoozeUntil())
+    }
     fun reminderToken(kind: ReminderKind, now: Long = System.currentTimeMillis()): String {
+        openingReminderState(now)?.let { return "opening:${it.endedAtEpochMs}:${kind.name}:${openingSnooze(it.endedAtEpochMs)}" }
         val state = read()
         val round = if (kind == ReminderKind.PAUSED) due(now)?.round ?: 0 else kind.endedIndex
         return "${state.sessionId}:${state.pausedAtEpochMs}:${state.endedAtEpochMs}:${kind.name}:${nextReminderAt(state)}:$round"
@@ -158,7 +193,8 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
 
     fun endedAcknowledgedCount(): Int = preferences.getInt("ended_acknowledged", 0)
 
-    fun acknowledgeEnded(index: Int) {
+    fun acknowledgeEnded(index: Int, now: Long = System.currentTimeMillis()) {
+        openingReminderState(now)?.let { acknowledgeOpening(it.endedAtEpochMs, index); return }
         preferences.edit().putInt("ended_acknowledged", ReminderPolicy.acknowledgedCount(endedAcknowledgedCount(), index)).apply()
     }
 

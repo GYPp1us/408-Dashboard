@@ -5,6 +5,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class FocusStateStoreTest {
+    @Test fun `opening waiting reminders use existing stages but yield to checkins and reset at afternoon opening`() {
+        fun at(time: String) = java.time.OffsetDateTime.parse("2026-10-19T$time+08:00").toInstant().toEpochMilli()
+        val preferences = MemoryPreferences()
+        val store = FocusStateStore(preferences)
+        val schedule = IslandContext(sessions = listOf(IslandContext.Session(java.time.LocalTime.parse("08:30"), java.time.LocalTime.parse("11:40")),
+            IslandContext.Session(java.time.LocalTime.parse("13:30"), java.time.LocalTime.parse("22:45"))), receivedAt = at("08:00:00"))
+        store.writeIslandContext(schedule)
+        assertNull(store.due(at("08:44:59")))
+        assertEquals(ReminderKind.ENDED_15, store.due(at("08:45:00"))!!.kind)
+        val token = store.reminderToken(ReminderKind.ENDED_15, at("08:45:00"))
+        assertEquals(token, FocusStateStore(preferences).reminderToken(ReminderKind.ENDED_15, at("08:45:14")))
+        store.writeIslandContext(schedule.copy(checkins = listOf(IslandContext.Checkin(1, "晨间打卡", java.time.LocalTime.parse("08:30"), java.time.LocalTime.parse("09:00")))))
+        assertNull(store.due(at("08:45:00")))
+        assertEquals(ReminderKind.ENDED_30, store.due(at("09:00:00"))!!.kind)
+        store.snoozeEnded(at("09:00:00"))
+        assertNull(store.due(at("09:04:59")))
+        assertEquals(ReminderKind.ENDED_30, store.due(at("09:05:00"))!!.kind)
+        store.closeReminders(at("09:05:00"))
+        assertNull(FocusStateStore(preferences).due(at("10:00:00")))
+        assertNull(store.due(at("12:00:00")))
+        assertNull(store.due(at("13:44:59")))
+        assertEquals(ReminderKind.ENDED_15, store.due(at("13:45:00"))!!.kind)
+        assertNotEquals(token, store.reminderToken(ReminderKind.ENDED_15, at("13:45:00")))
+        assertEquals(FocusMode.IDLE, store.read().mode)
+        assertEquals(0L, store.read().sessionId)
+    }
     private val minute = 60_000L
     private val paused = FocusRuntimeState(mode = FocusMode.PAUSED, sessionId = 8,
         pausedAtEpochMs = minute, elapsedSeconds = 1800, observedAtEpochMs = minute)

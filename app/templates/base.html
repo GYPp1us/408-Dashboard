@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="{{ static_asset('viewport-scale.css') }}">
   {% if page_name == 'home' %}<link rel="stylesheet" href="{{ static_asset('daily-report.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ static_asset('focus-entry.css') }}">
+  {% if page_name == 'home' %}<link rel="stylesheet" href="{{ static_asset('day-timeline.css') }}">{% endif %}
   <link rel="stylesheet" href="{{ static_asset('status-bar.css') }}">
 </head>
 <body class="page-{{ page_name|default('home') }}" data-page="{{ page_name|default('home') }}" data-role="{{ 'guest' if is_guest else 'admin' }}" data-settings-tab="{{ settings_tab|default('system') }}" data-viewer-id="{{ ui_preferences.viewer_id if ui_preferences.viewer_id is not none else 'public' }}" data-quick-focus-count="{{ ui_preferences.quick_focus_count }}">
@@ -84,6 +85,7 @@
   {% if page_name == 'home' %}<script src="{{ static_asset('dashboard-details.js') }}" defer></script><script src="{{ static_asset('dashboard-index.js') }}" defer></script><script src="{{ static_asset('dashboard-artwork.js') }}" defer></script>{% endif %}
   {% if page_name == 'home' %}<script src="{{ static_asset('daily-report.js') }}" defer></script>{% endif %}
   <script src="{{ static_asset('focus-entry.js') }}" defer></script>
+  {% if page_name == 'home' %}<script src="{{ static_asset('day-timeline.js') }}" defer></script>{% endif %}
   <script src="{{ static_asset('app.js') }}" defer></script>
   <script src="{{ static_asset('island-context.js') }}" defer></script>
   {% if page_name in ['focus-kline', 'focus_kline'] %}<script src="{{ static_asset('focus_kline.js') }}" defer></script>{% endif %}
