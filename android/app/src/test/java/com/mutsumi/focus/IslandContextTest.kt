@@ -61,6 +61,20 @@ class IslandContextTest {
         assertEquals("5:00", layout.rightText)
     }
 
+    @Test fun `settlement never becomes opening waiting after summary expiry but keeps bedtime checkin countdowns`() {
+        val schedule = context.copy(checkins = emptyList())
+        val settled = idle.copy(mode = FocusMode.SETTLED, endedAtEpochMs = at("09:00:00"))
+        for (time in listOf("09:00:29", "09:00:30", "09:15:00", "13:30:00", "14:30:00")) {
+            assertNull(time, schedule.openingWait(settled, at(time)))
+            assertNull(time, schedule.countdown(settled, null, at(time)))
+        }
+        val deadline = context.countdown(settled, null, at("13:35:00"))!!
+        assertEquals(IslandContext.Countdown.Kind.CHECKIN, deadline.kind)
+        assertEquals(task.id, deadline.id)
+        assertEquals("打卡剩余时间", AtomicIslandLayout.from(settled, null, at("13:35:00"), countdown = deadline).title)
+        assertEquals(IslandContext.Countdown.Kind.WAITING, schedule.countdown(idle, null, at("13:35:00"))!!.kind)
+    }
+
     @Test fun `overnight deadline crosses midnight and prior completion expires on the account date`() {
         val overnight = context.copy(receivedAt = at("00:00:00"), sessions = emptyList(), checkins = listOf(task.copy(start = LocalTime.parse("23:00"), end = LocalTime.parse("02:00"), completedDay = "2026-10-17")))
         val result = overnight.countdown(idle, null, at("00:30:00"))!!

@@ -53,7 +53,9 @@ data class IslandContext(
 
     /** Opening is only a display/reminder anchor, never a fabricated session. */
     fun openingWait(state: FocusRuntimeState, now: Long): Countdown? {
-        if (!enabled(now) || state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST) || state.summaryVisible(now)) return null
+        // Daily settlement is a terminal opt-out, not another idle opening.
+        // Its 30s summary may expire; that must never restart waiting/reminders.
+        if (!enabled(now) || state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST, FocusMode.SETTLED) || state.summaryVisible(now)) return null
         val local = Instant.ofEpochMilli(now).atZone(ZoneId.of(timezone))
         val session = sessions.firstOrNull { local.toLocalTime() >= it.start && local.toLocalTime() < it.end } ?: return null
         val opening = local.toLocalDate().atTime(session.start).atZone(local.zone).toInstant().toEpochMilli()

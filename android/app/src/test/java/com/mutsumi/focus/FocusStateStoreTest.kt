@@ -205,6 +205,25 @@ class FocusStateStoreTest {
         assertNull(store.due(80 * minute))
     }
 
+    @Test fun `persisted daily settlement cannot revive opening reminders after summary expiry or next opening`() {
+        fun at(time: String) = java.time.OffsetDateTime.parse("2026-10-19T$time+08:00").toInstant().toEpochMilli()
+        val preferences = MemoryPreferences()
+        val store = FocusStateStore(preferences)
+        store.writeIslandContext(IslandContext(sessions = listOf(
+            IslandContext.Session(java.time.LocalTime.parse("08:30"), java.time.LocalTime.parse("11:40")),
+            IslandContext.Session(java.time.LocalTime.parse("13:30"), java.time.LocalTime.parse("22:45"))), receivedAt = at("08:00:00")))
+        assertNotNull(store.due(at("09:00:00")))
+        store.snoozeEnded(at("09:00:00"))
+        val settled = FocusRuntimeState(mode = FocusMode.SETTLED, endedAtEpochMs = at("09:01:00"))
+        store.write(settled)
+        val restored = FocusStateStore(preferences)
+        for (time in listOf("09:01:29", "09:01:30", "09:05:00", "09:31:00", "13:45:00", "14:30:00")) {
+            assertNull(time, restored.due(at(time)))
+            assertEquals(settled, restored.reminderState(at(time)))
+        }
+        assertEquals(0, restored.nextReminderAt())
+    }
+
     @Test fun `strong reminder is opt in even after old permissions were granted`() {
         val prefs = MemoryPreferences()
         val store = FocusStateStore(prefs)
