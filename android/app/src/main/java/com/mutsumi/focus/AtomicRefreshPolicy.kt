@@ -44,23 +44,30 @@ class AtomicRefreshPolicy {
     private var lastPublishedAt = Long.MIN_VALUE
     private var lastState: StateKey? = null
     private var lastClockSeconds = 0L
+    private var lastSystemTimerKey: String? = null
 
     fun stateChanged(state: StateKey): Boolean = state != lastState
     fun reminderCleared(token: String): Boolean = lastState?.reminderToken?.isNotBlank() == true && token.isBlank()
 
     fun shouldPublish(state: StateKey, clockSeconds: Long, nowElapsedMs: Long, foregroundRequired: Boolean,
-                      holdingReminder: Boolean = false): Boolean {
+                      holdingReminder: Boolean = false, systemTimerKey: String? = null, clockDirection: Int = 1): Boolean {
         if (foregroundRequired || stateChanged(state)) return true
         // On the verified ROM even an UPDATE without forceShowCard collapses
         // the expanded card. Keep its snapshot for 15s; real transitions win.
         if (holdingReminder) return false
+        if (systemTimerKey != null) {
+            if (systemTimerKey != lastSystemTimerKey) return true
+            val projected = lastClockSeconds + clockDirection * ((nowElapsedMs - lastPublishedAt).coerceAtLeast(0) / 1000)
+            return kotlin.math.abs(clockSeconds - projected) >= 2
+        }
         if (clockSeconds == lastClockSeconds) return false
         return nowElapsedMs - lastPublishedAt >= 1_000L
     }
 
-    fun published(state: StateKey, clockSeconds: Long, nowElapsedMs: Long) {
+    fun published(state: StateKey, clockSeconds: Long, nowElapsedMs: Long, systemTimerKey: String? = null) {
         lastState = state
         lastClockSeconds = clockSeconds
         lastPublishedAt = nowElapsedMs
+        lastSystemTimerKey = systemTimerKey
     }
 }

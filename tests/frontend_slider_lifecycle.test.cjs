@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 // Run the actual app in isolation, using the same IIFE export seam as the focus
 // boundaries tests. The doubles below model DOM/input/animation, not slider logic.
-const source = fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8');
+const source = (fs.readFileSync(path.join(__dirname, '../app/static/dashboard-clock.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8'));
 const testSource = source.replace(/\}\)\(\);\s*$/, `globalThis.sliderTest = {
   state, commitSliders, bindCommitSlider, bindSliderLifecycle,
   refreshCommitSliders, resetCommitSlider, updateFocusLockControl,

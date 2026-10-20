@@ -164,6 +164,12 @@ class FocusService : Service() {
             state.summaryVisible(now) || due != null || countdown != null)
         val token = due?.let { store.reminderToken(it.kind, now) }.orEmpty()
         val atomic = publisher.usesAtomicIsland()
+        val timerState = if (due != null) store.reminderState(now) else state
+        val systemTimer = if (atomic && publisher.supportsSystemTimer())
+            AtomicSystemTimer.from(timerState, now, countdown, due != null) else null
+        val timerProgress = if (state.mode == FocusMode.FOCUSING && state.plannedSeconds > 0)
+            (state.elapsedNow(now) * 100 / state.plannedSeconds).coerceIn(0, 100).toInt() else 0
+        val systemTimerKey = systemTimer?.renderKey(timerProgress)
         val presentedAt = store.islandPresentedAt(token)
         val presentation = AtomicRefreshPolicy.reminderPresentation(visible, atomic, token,
             presentedAt, store.islandCollapseSent(token), now)
@@ -181,7 +187,8 @@ class FocusService : Service() {
         val elapsedNow = SystemClock.elapsedRealtime()
         val holdingReminder = visible && atomic && token.isNotBlank() && presentedAt != null &&
             now - presentedAt in 0 until AtomicRefreshPolicy.REMINDER_HOLD_MS
-        if (!refreshPolicy.shouldPublish(stateKey, clockBucket, elapsedNow, !foregroundStarted, holdingReminder)) return true
+        if (!refreshPolicy.shouldPublish(stateKey, clockBucket, elapsedNow, !foregroundStarted, holdingReminder,
+                systemTimerKey, systemTimer?.direction ?: 1)) return true
         val stateChanged = refreshPolicy.stateChanged(stateKey)
         val operation = when {
             !visible -> OriginOsAtomicPublisher.AtomicOperation.END
@@ -191,12 +198,12 @@ class FocusService : Service() {
         return try {
             val notification = publisher.liveNotification(state, operation, retryAction = retryAction,
                 forceShowCard = forceShowCard, now = now, atomicAvailable = atomic,
-                countdown = countdown)
+                countdown = countdown, systemTimer = systemTimer)
             if (!foregroundStarted) startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             else notifications.notify(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             foregroundStarted = true
             islandVisible = visible
-            refreshPolicy.published(stateKey, clockBucket, elapsedNow)
+            refreshPolicy.published(stateKey, clockBucket, elapsedNow, systemTimerKey)
             if (stateChanged) Log.i("FocusService", "Notification state=${state.mode} operation=${operation.name} " +
                 "publishMs=${SystemClock.elapsedRealtime() - publishStartedAt}")
             if (firstPresentation) { store.markIslandPresented(token, now); store.markPresented(token) }

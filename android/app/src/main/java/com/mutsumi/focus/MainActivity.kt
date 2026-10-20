@@ -209,6 +209,8 @@ class MainActivity : ComponentActivity() {
                 if (!isTrustedUrl(request.url.toString()) || request.method != "GET") return null
                 val asset = when (request.url.path) {
                     "/static/app.js" -> "app.js"
+                    "/static/dashboard-clock.js" -> "dashboard-clock.js"
+                    "/static/day-timeline.js" -> "day-timeline.js"
                     "/static/viewport-scale.css" -> "viewport-scale.css"
                     "/static/viewport-scale.js" -> "viewport-scale.js"
                     "/static/dashboard-details.js" -> "dashboard-details.js"
@@ -217,7 +219,8 @@ class MainActivity : ComponentActivity() {
                     else -> return null
                 }
                 return WebResourceResponse(if (asset.endsWith(".css")) "text/css" else "application/javascript",
-                    "UTF-8", 200, "OK", mapOf("Cache-Control" to "no-store"), assets.open("dashboard/$asset"))
+                    "UTF-8", 200, "OK", mapOf("Cache-Control" to "no-store"), if (asset == "app.js") java.io.SequenceInputStream(assets.open("dashboard/dashboard-clock.js"), assets.open("dashboard/$asset"))
+                    else assets.open("dashboard/$asset"))
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {

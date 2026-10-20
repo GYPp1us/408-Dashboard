@@ -7,7 +7,7 @@ const { harness, Element, sessions } = require('./frontend_market_harness.cjs');
 
 const source = fs.readFileSync(path.join(__dirname, '../app/static/focus_kline.js'), 'utf8');
 const exposed = source.replace(/\}\)\(\);\s*$/, 'globalThis.klineTest = { state, bind, refreshSummary, drawIntradayChart, normalizePayload, formatTime, chartDate, chartTimeLabel, lightweightOptions, startLiveTicks, stopLiveTicks };})();');
-const appSource = fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8');
+const appSource = (fs.readFileSync(path.join(__dirname, '../app/static/dashboard-clock.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8'));
 const appExposed = appSource.replace(/\}\)\(\);\s*$/, 'globalThis.nativeTest = { state, refreshVisiblePage, bindNativePageBridge };})();');
 const unix = value => Date.parse(value) / 1000;
 const nearly = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-10, `${actual} should equal ${expected}`);

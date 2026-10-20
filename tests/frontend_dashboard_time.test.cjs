@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const { Element } = require('./frontend_market_harness.cjs');
-const source = fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8');
+const source = (fs.readFileSync(path.join(__dirname, '../app/static/dashboard-clock.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8'));
 const exposed = source.replace(/\}\)\(\);\s*$/, 'globalThis.timeTest = { state, syncServerClock, serverNow, accountClock, accountDateKey, renderClock, renderWindows, renderHomeWindow, workWindowProgress, dateMinutes, renderWindowHistory, focusElapsedSeconds };})();');
 
 function utcDevice(reference = '2026-09-30T19:00:00+08:00') {

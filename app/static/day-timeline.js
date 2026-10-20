@@ -62,23 +62,35 @@
   if (typeof module !== "undefined") module.exports = { model };
   if (typeof window !== "undefined") {
     window.DayTimeline = { render, model };
-    let data = null, skew = 0, offset = 0, timer = null;
+    let data = null, offset = 0, unsubscribe = null, fallbackTimer = null, fallbackAnchor = null;
     const format = value => [Math.floor(value / 3600), Math.floor(value / 60) % 60, value % 60].map(part => String(part).padStart(2, "0")).join(":");
-    function tick() {
-      clearTimeout(timer); timer = null;
+    function paint(now) {
       if (!data || document.hidden) return;
-      const now = Date.now() + skew, local = now + offset;
-      const dayStart = Math.floor(local / 86400000) * 86400000 - offset;
+      const local = now + offset, dayStart = Math.floor(local / 86400000) * 86400000 - offset;
       render(data, { now, current: Math.floor((now - dayStart) / 1000), dayStart, format });
-      timer = setTimeout(tick, 1000 - (now % 1000) + 5);
+    }
+    function bindClock() {
+      if (window.DashboardClock) {
+        clearTimeout(fallbackTimer); fallbackTimer = null;
+        if (!unsubscribe) unsubscribe = window.DashboardClock.subscribe("day-timeline", frame => paint(frame.nowEpochMs));
+        window.DashboardClock.start();
+        return;
+      }
+      // Compatibility for a previously cached page/old APK without the module.
+      clearTimeout(fallbackTimer); fallbackTimer = null;
+      if (!fallbackAnchor || document.hidden) return;
+      const now = fallbackAnchor.epoch + Math.max(0, Date.now() - fallbackAnchor.receivedAt);
+      paint(now); fallbackTimer = setTimeout(bindClock, 1000 - (now % 1000) + 1);
     }
     document.addEventListener("dashboard:updated", event => {
       if (!event.detail?.windows || !document.querySelector("#day-timeline")) return;
-      data = event.detail; skew = Date.parse(data.now) - Date.now();
+      data = event.detail;
+      fallbackAnchor = { epoch:Date.parse(data.now), receivedAt:Date.now() };
       const zone = String(data.now).match(/([+-])(\d{2}):?(\d{2})$/);
       offset = zone ? (zone[1] === "-" ? -1 : 1) * (Number(zone[2]) * 60 + Number(zone[3])) * 60000 : 0;
-      tick();
+      if (!unsubscribe) bindClock();
     });
-    document.addEventListener("visibilitychange", tick);
+    document.addEventListener("DOMContentLoaded", bindClock);
+    document.addEventListener("visibilitychange", () => { if (!window.DashboardClock) bindClock(); });
   }
 })();

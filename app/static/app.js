@@ -1,4 +1,7 @@
 (() => {
+  const clock = window.DashboardClock;
+  const responseTimes = new WeakMap();
+  let requestSequence = 0, focusViewRevision = 0;
   const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, heatWindowStart: null, heatHistoryLength: 0, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "index", insightView: "comparison", summaryReturnView: "comparison", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
   const DAILY_TARGET_SECONDS = 7 * 3600;
   const chartColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -42,17 +45,12 @@
     && /^[1-9]\d*$/.test(document.body.dataset.viewerId || "");
   const restStorageKey = () => `mutsumiRestStartedAt:${document.body.dataset.viewerId}`;
 
-  function syncServerClock(reference, receivedAt = Date.now()) {
-    const epoch = Date.parse(reference);
-    if (Number.isFinite(epoch)) state.serverClock = { epoch, receivedAt, reference:String(reference) };
+  function syncServerClock(reference, _receivedAt, sample) {
+    if (clock.calibrate(reference, sample)) state.serverClock = { reference:String(reference) };
   }
 
-  function serverNow(now = Date.now()) {
-    const clock = state.serverClock;
-    if (clock) return clock.epoch + Math.max(0, now - clock.receivedAt);
-    const epoch = Date.parse(state.dashboard?.now);
-    return Number.isFinite(epoch) ? epoch + Math.max(0, now - (state.dashboardFetchedAt ?? now)) : now;
-  }
+  // Ticker arguments are already server epochs; never apply an offset twice.
+  function serverNow(now) { return now ?? clock.now(); }
 
   function accountOffset(reference = state.serverClock?.reference || state.dashboard?.now) {
     if (/Z$/i.test(String(reference || ""))) return 0;
@@ -124,14 +122,16 @@
     } catch (_error) {}
   }
 
-  function focusElapsedSeconds(session, now = Date.now()) {
+  function focusElapsedSeconds(session, now = serverNow()) {
     if (!session?.started_at) return 0;
     const end = session.ended_at ? Date.parse(session.ended_at) : session.paused_at ? Date.parse(session.paused_at) : now;
     return Math.max(0, Math.floor((end - Date.parse(session.started_at)) / 1000) - Number(session.paused_seconds || 0));
   }
 
   function activeExtraSeconds(active, fetchedAt, now) {
-    return active && !active.paused_at ? Math.max(0, Math.floor((now - fetchedAt) / 1000)) : 0;
+    if (!active || active.paused_at) return 0;
+    return active.started_at ? Math.max(0, focusElapsedSeconds(active, now) - focusElapsedSeconds(active, fetchedAt))
+      : Math.max(0, Math.floor((now - fetchedAt) / 1000));
   }
 
   function createClientToken() {
@@ -147,27 +147,19 @@
     return `focus-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
   }
 
-  function runSecondTasks(now = Date.now()) {
-    state.secondTasks.forEach((task) => task(now));
-  }
+  function runSecondTasks() { clock.refresh(); }
 
   function setSecondTask(name, task) {
     state.secondTasks.set(name, task);
-    task(Date.now());
+    clock.subscribe(`app:${name}`, frame => task(frame.nowEpochMs, frame));
   }
 
   function removeSecondTask(name) {
     state.secondTasks.delete(name);
+    clock.unsubscribe(`app:${name}`);
   }
 
-  function startAlignedSecondClock() {
-    const tick = () => {
-      runSecondTasks(Date.now());
-      state.secondTimer = window.setTimeout(tick, Math.max(20, 1000 - (Date.now() % 1000)));
-    };
-    window.clearTimeout(state.secondTimer);
-    state.secondTimer = window.setTimeout(tick, Math.max(20, 1000 - (Date.now() % 1000)));
-  }
+  function startAlignedSecondClock() { clock.start(); }
 
   function scheduleWakeLockRetry() {
     window.clearTimeout(state.wakeRetry);
@@ -189,6 +181,12 @@
   }
 
   async function api(url, options = {}) {
+    const focusWrite = ["POST", "DELETE"].includes(String(options.method || "GET").toUpperCase())
+      && /^\/api\/(?:focus\/(?:start|end|pause|lock)|daily-settlement)$/.test(url);
+    // Discard reads started before or during a confirmed focus operation.
+    if (focusWrite) { focusViewRevision++; clock.cancel("dashboard"); }
+    const viewRevision = focusViewRevision;
+    const sequence = ++requestSequence;
     const controller = new AbortController();
     let timedOut = false, timer;
     const abort = () => controller.abort();
@@ -213,12 +211,12 @@
         const payload = await response.json();
         if (controller.signal.aborted) throw new Error("request_aborted");
         if (!response.ok) throw new Error(payload.error || "请求失败");
+        if (focusWrite) { focusViewRevision++; clock.cancel("dashboard"); }
+        if (payload && typeof payload === "object") responseTimes.set(payload, { sequence, focusRevision:viewRevision, receivedMono:clock.monotonicNow() });
         return payload;
       })();
       return await Promise.race([request, deadline]);
     } catch (error) {
-      const focusWrite = ["POST", "DELETE"].includes(String(options.method || "GET").toUpperCase())
-        && /^\/api\/(?:focus\/(?:start|end|pause|lock)|daily-settlement)$/.test(url);
       if (!options.signal?.aborted && focusWrite && (timedOut || error instanceof TypeError)) {
         showToast("操作结果暂未确认，将刷新页面核对；请勿重复提交。");
         window.setTimeout(() => window.location.reload(), 1800);
@@ -304,7 +302,7 @@
     $("#focus-state-overlay-timer-label").hidden = !panelPaused;
     const startedAt = resting ? state.restStartedAt : Date.parse(active.paused_at);
     setSecondTask("stateOverlay", (now) => {
-      $("#focus-state-overlay-timer").textContent = formatSeconds(Math.max(0, Math.floor((now - startedAt) / 1000)));
+      $("#focus-state-overlay-timer").textContent = formatSeconds(resting ? clock.elapsedLocal(startedAt) : Math.max(0, Math.floor((now - startedAt) / 1000)));
     });
     initDragSettlement();
     // Refreshes update the clock without taking focus from the other columns.
@@ -422,15 +420,18 @@
 
   function renderStatus(data) {
     const remaining = Number(data.exam?.remaining_seconds || 0);
-    state.examEndsAt = Date.now() + remaining * 1000;
+    const date = String(data.exam?.date || "");
+    state.examEndsAt = /^\d{4}-\d{2}-\d{2}$/.test(date)
+      ? Date.parse(`${date}T00:00:00Z`) - accountOffset(data.now) * 60000
+      : (Date.parse(data.now) || serverNow()) + remaining * 1000;
     const today = data.today_focus || { seconds: 0, count: 0 };
     const active = data.focus?.active;
-    const todayFetchedAt = Date.now();
+    const todayFetchedAt = state.dashboardFetchedAt ?? serverNow();
     const tick = (now) => {
       const value = Math.max(0, Math.floor((state.examEndsAt - now) / 1000));
       $("#exam-days").textContent = `${Math.floor(value / 86400)} 天`;
       $("#exam-clock").textContent = formatSeconds(value % 86400);
-      const todaySeconds = Number(today.seconds || 0) + activeExtraSeconds(active, todayFetchedAt, now);
+      const todaySeconds = Number((state.dashboard?.today_focus || today).seconds || 0) + activeExtraSeconds(active, state.dashboardFetchedAt ?? todayFetchedAt, now);
       $("#today-study")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 07:00`));
       $("#today-progress")?.replaceChildren(document.createTextNode(`完成度 ${Math.min(100, Math.round((todaySeconds / DAILY_TARGET_SECONDS) * 100))}%`));
       $("#focus-today")?.replaceChildren(document.createTextNode(`${formatSeconds(todaySeconds)} / 07:00`));
@@ -807,8 +808,6 @@
 
   function renderFocusInvestment(investment, active) {
     if (!$("#focus-investment-view")) return;
-    const baseline = investment || {};
-    const fetchedAt = Date.now();
     const renderTargetStack = (selector, seconds) => {
       const target = $(selector);
       if (!target) return;
@@ -839,6 +838,8 @@
       legend.innerHTML = topSubjects.map((item, index) => `<span><i style="background:${palette[index]}"></i>${escapeHtml(item.subject)}<b>${Math.round((item.seconds / totalSeconds) * 1000) / 10}% · ${formatSeconds(item.seconds)}</b></span>`).join("");
     };
     const tick = (now) => {
+      const baseline = state.dashboard?.focus_investment || investment || {};
+      const fetchedAt = state.dashboardFetchedAt ?? now;
       const extraSeconds = activeExtraSeconds(active, fetchedAt, now);
       const currentSeconds = Number(baseline.current_seconds || 0) + extraSeconds;
       const recordedDayCount = Number(baseline.recorded_day_count || 0);
@@ -866,7 +867,7 @@
     };
     removeSecondTask("investment");
     if (active) setSecondTask("investment", tick);
-    else tick(fetchedAt);
+    else tick(serverNow());
   }
 
   function renderFocusComparison(active) {
@@ -892,7 +893,7 @@
       renderFocusLeaderboard(state.dashboard?.focus_leaderboard, extraSeconds);
     };
     if (active) setSecondTask("focusComparison", tick);
-    else { removeSecondTask("focusComparison"); tick(Date.now()); }
+    else { removeSecondTask("focusComparison"); tick(serverNow()); }
   }
 
   function visibleLeaderboardEntries(entries, today) {
@@ -1069,7 +1070,7 @@
       data: { datasets: [{ data: [Math.min(duration, 3600), Math.max(0, gap)], backgroundColor: [palette[0], chartColor("--subtle")], borderWidth: 0 }] },
       options: { responsive: true, maintainAspectRatio: false, cutout: "72%", plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 350 } },
     }));
-    const restStartedAt = Date.now();
+    const restStartedAt = serverNow();
     const tick = (now) => {
       const elapsed = Math.floor((now - restStartedAt) / 1000);
       $("#rest-timer").textContent = formatSeconds(elapsed);
@@ -1634,7 +1635,7 @@
       state.recentlyEnded = null;
       const today = state.dashboard?.focus?.today || [];
       state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session, today: [...today.filter((item) => item.id !== session.session.id), session.session] } };
-      state.dashboardFetchedAt = Date.now();
+      state.dashboardFetchedAt = serverNow();
       applyFocusState(session.session, true);
       showToast("专注已启动");
       return true;
@@ -1717,6 +1718,11 @@
   }
 
   function applyFocusState(active, animate = false) {
+    clock.cancel("dashboard");
+    return clock.commit(() => applyFocusStateNow(active, animate));
+  }
+
+  function applyFocusStateNow(active, animate = false) {
     if (!canManageOwnFocus()) {
       // Public profiles may show their focus theme, but never take ownership of
       // that account's timer, recovery state, native service or pause overlay.
@@ -1740,7 +1746,7 @@
       state.recentlyEnded = {
         id: previousActive.id,
         subject: previousActive.subject,
-        endedAt: Date.now(),
+        endedAt: serverNow(),
         elapsedSeconds: focusElapsedSeconds(previousActive),
       };
     }
@@ -1820,6 +1826,30 @@
   }
 
   function applyDashboard(data) {
+    if (!dashboardResponseCurrent(data)) return;
+    const sample = responseTimes.get(data);
+    clock.cancel("dashboard");
+    syncServerClock(data.now, null, sample);
+    return clock.commit(() => {
+      if (sample) state.appliedDashboardSequence = sample.sequence;
+      applyDashboardNow(data);
+    });
+  }
+
+  function dashboardResponseCurrent(data) {
+    const sample = responseTimes.get(data);
+    if (sample && (sample.focusRevision !== focusViewRevision || sample.sequence < (state.appliedDashboardSequence ?? -1))) return false;
+    return true;
+  }
+
+  function dashboardTransition(data) {
+    const active = data?.focus?.active;
+    return JSON.stringify([active?.id, active?.started_at, active?.paused_at, active?.paused_seconds,
+      active?.status, active?.planned_minutes, active?.focus_locked, data?.daily_settlement?.id,
+      data?.daily_settlement?.report_hash, String(data?.now || "").slice(0, 10), accountOffset(data?.now)]);
+  }
+
+  function applyDashboardNow(data) {
     if (focusIdentityRevoked) return;
     if (canManageOwnFocus() && String(data.preferences?.viewer_id ?? data.viewer?.id) !== document.body.dataset.viewerId) {
       revokeFocusIdentity();
@@ -1827,8 +1857,8 @@
     }
     state.dashboard = data;
     window.DashboardUI?.applyPreferences(data.preferences);
-    state.dashboardFetchedAt = Date.now();
-    syncServerClock(data.now, state.dashboardFetchedAt);
+    state.dashboardFetchedAt = Date.parse(data.now) || serverNow();
+    syncServerClock(data.now, null, responseTimes.get(data));
     state.dashboardSignature = dashboardSignature(data);
     const settledInactive = canManageOwnFocus() && data.daily_settlement && !data.focus?.active;
     if (settledInactive) {
@@ -1865,15 +1895,15 @@
     // Service broadcasts must not repopulate settings forms or account lists:
     // refresh only the owner's focus state and retain the current route/inputs.
     const data = await api("/api/dashboard");
-    if (!canManageOwnFocus() || version !== state.focusRefreshVersion) return;
+    if (!canManageOwnFocus() || version !== state.focusRefreshVersion || !dashboardResponseCurrent(data)) return;
     if (String(data.preferences?.viewer_id ?? data.viewer?.id) !== document.body.dataset.viewerId) {
       revokeFocusIdentity();
       return;
     }
     const focus = data.focus;
     state.dashboard = { ...(state.dashboard || {}), now:data.now, focus };
-    state.dashboardFetchedAt = Date.now();
-    syncServerClock(data.now, state.dashboardFetchedAt);
+    state.dashboardFetchedAt = Date.parse(data.now) || serverNow();
+    syncServerClock(data.now, null, responseTimes.get(data));
     applyFocusState(focus.active);
     if (canManageOwnFocus()) document.dispatchEvent(new CustomEvent("dashboard:focus-refreshed", { detail:focus }));
   }
@@ -1895,16 +1925,23 @@
     state.syncing = true;
     try {
       const data = await api("/api/dashboard");
-      if (focusIdentityRevoked) return;
-      if (dashboardSignature(data) !== state.dashboardSignature) applyDashboard(data);
-      else {
-        state.dashboard.now = data.now;
-        state.dashboard.focus_investment = data.focus_investment;
-        state.dashboard.focus_leaderboard = data.focus_leaderboard;
-        state.dashboardFetchedAt = Date.now();
-        syncServerClock(data.now, state.dashboardFetchedAt);
-        document.dispatchEvent(new CustomEvent("dashboard:updated", { detail: data }));
-      }
+      if (focusIdentityRevoked || !dashboardResponseCurrent(data)) return;
+      syncServerClock(data.now, null, responseTimes.get(data));
+      if (!state.dashboard || dashboardTransition(data) !== dashboardTransition(state.dashboard)) applyDashboard(data);
+      else clock.stage("dashboard", () => {
+        if (focusIdentityRevoked || !dashboardResponseCurrent(data)) return;
+        const sample = responseTimes.get(data);
+        if (dashboardSignature(data) !== state.dashboardSignature) applyDashboard(data);
+        else {
+          if (sample) state.appliedDashboardSequence = sample.sequence;
+          state.dashboard.now = data.now;
+          state.dashboard.today_focus = data.today_focus;
+          state.dashboard.focus_investment = data.focus_investment;
+          state.dashboard.focus_leaderboard = data.focus_leaderboard;
+          state.dashboardFetchedAt = Date.parse(data.now) || serverNow();
+          document.dispatchEvent(new CustomEvent("dashboard:updated", { detail:data }));
+        }
+      });
     } catch (error) {
       console.warn("dashboard_sync_failed", error);
     } finally {
@@ -2048,7 +2085,7 @@
         closeFocusSummary();
         state.restStartedAt = null;
         try { window.localStorage.removeItem(restStorageKey()); } catch (_error) {}
-        state.recentlyEnded = ended ? { id:ended.id, subject:ended.subject, endedAt:Date.parse(ended.ended_at) || Date.now(), elapsedSeconds:Number(ended.effective_seconds ?? ended.duration_seconds ?? focusElapsedSeconds(ended)) } : null;
+        state.recentlyEnded = ended ? { id:ended.id, subject:ended.subject, endedAt:Date.parse(ended.ended_at) || serverNow(), elapsedSeconds:Number(ended.effective_seconds ?? ended.duration_seconds ?? focusElapsedSeconds(ended)) } : null;
         state.dashboard = { ...state.dashboard, focus:{ ...(state.dashboard?.focus || {}), active:null } };
         applyFocusState(null);
         clearNativeFocus();
@@ -2835,7 +2872,6 @@
       }
       ensureWakeLock();
       sendForegroundHeartbeat();
-      runSecondTasks(Date.now());
       refreshVisiblePage();
     });
     window.addEventListener("pageshow", (event) => {

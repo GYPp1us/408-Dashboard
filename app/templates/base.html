@@ -78,6 +78,7 @@
   <script src="{{ static_asset('vendor/Flip.min.js') }}"></script>
   {% if page_name not in ['focus-kline', 'focus_kline'] %}<script src="{{ static_asset('vendor/chart.umd.js') }}"></script>{% endif %}
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('vendor/lightweight-charts.standalone.production.js') }}"></script>{% endif %}
+  <script src="{{ static_asset('dashboard-clock.js') }}" defer></script>
   <script src="{{ static_asset('dashboard-ui.js') }}" defer></script>
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('index-market.js') }}" defer></script>{% endif %}
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('index-challenge.js') }}" defer></script>{% endif %}

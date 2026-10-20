@@ -17,9 +17,11 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.TypefaceSpan
+import android.text.style.ForegroundColorSpan
 import com.mutsumi.focus.atomic.VivoAtomicPayload
 
 class OriginOsAtomicPublisher(private val context: Context) {
+    fun supportsSystemTimer(): Boolean = AtomicSystemTimer.supported(Build.MODEL, Build.DISPLAY)
     private val manager = context.getSystemService(NotificationManager::class.java)
     private val store = FocusStateStore(context)
     private val glyphs = mutableMapOf<Pair<AtomicIslandLayout.Glyph, Int>, Icon>()
@@ -56,7 +58,7 @@ class OriginOsAtomicPublisher(private val context: Context) {
     fun liveNotification(state: FocusRuntimeState, operation: AtomicOperation, retryAction: String = "",
                          forceShowCard: Boolean? = null, now: Long = System.currentTimeMillis(),
                          atomicAvailable: Boolean = usesAtomicIsland(), showSeconds: Int = 0,
-                         countdown: IslandContext.Countdown? = null): Notification {
+                         countdown: IslandContext.Countdown? = null, systemTimer: AtomicSystemTimer? = null): Notification {
         val due = store.due(now)
         val layout = AtomicIslandLayout.from(if (due != null) store.reminderState(now) else state,
             due, now, store.remindersClosed(state), countdown)
@@ -108,7 +110,9 @@ class OriginOsAtomicPublisher(private val context: Context) {
                 BuildConfig.VIVO_ATOMIC_SCENE, layout.title, content, layout.rightText, home,
                 BuildConfig.VIVO_HISTORICAL_ISLAND_ONLY, store.nextAtomicRecord(), "focus:${state.sessionId}")
             if (operation != AtomicOperation.END && !BuildConfig.VIVO_HISTORICAL_ISLAND_ONLY) {
-                extras.putAll(wireBundle(layout.wire(forceShowCard, colors, showSeconds), primary, home, colors))
+                val wire = layout.wire(forceShowCard, colors, showSeconds)
+                extras.putAll(wireBundle(systemTimer?.wire(wire, android.os.SystemClock.elapsedRealtime()) ?: wire, primary, home, colors))
+                if (atomicAvailable && supportsSystemTimer()) extras.putInt("notification.superx.displays", 0x111)
                 // Keep the node stable between genuine mode changes / rounds.
                 extras.putInt("notification.superx.newNode", layout.displayNode.takeIf { it != 0 }
                     ?: (state.mode.ordinal * 100_000 + (due?.round ?: 0).coerceAtMost(99_999)))
@@ -141,6 +145,11 @@ class OriginOsAtomicPublisher(private val context: Context) {
     @Suppress("UNCHECKED_CAST")
     private fun wireBundle(values: Map<String, Any>, primary: PendingIntent, home: PendingIntent, colors: IslandPalette): Bundle = Bundle().apply {
         values.forEach { (key, value) -> when (value) {
+            is AtomicSystemTimer.Text -> if (key.startsWith("island.superx.leftInfo") || key.startsWith("island.superx.rightInfo") || key.startsWith("notification.superx.baseInfos")) {
+                putCharSequence(key, SpannableString(value.json).apply {
+                    setSpan(ForegroundColorSpan(colors.accent), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                })
+            } else putString(key, value.json)
             is String -> if (key == "island.superx.leftInfo.content" || key == "island.superx.rightInfo.content") {
                 // Keep the whole time at the front, with stable narrow numerals.
                 // Only state text yields size; no ScaleX or ellipsis on time.

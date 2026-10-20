@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8');
+const source = (fs.readFileSync(path.join(__dirname, '../app/static/dashboard-clock.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8'));
 const testSource = source.replace(/\}\)\(\);\s*$/, 'globalThis.focusTest = { state, canManageOwnFocus, initializeFocusIdentity, sendForegroundHeartbeat, startForegroundHeartbeat, notifyNativeFocusState, applyFocusState, refreshCurrentPage, revokeFocusIdentity, startRest, commitDailySettlement, api };})();');
 const active = { id: 9, user_id: 2, subject: '数学 · 二轮', started_at: new Date(Date.now() - 60000).toISOString(), ended_at: null, paused_at: null, paused_seconds: 0 };
 
