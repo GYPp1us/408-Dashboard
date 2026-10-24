@@ -29,6 +29,18 @@ class IslandContextTest {
         assertEquals(at("13:30:00"), context.nextBoundary(noon))
     }
 
+    @Test fun `next focus eligibility uses account timezone and excludes all closed boundaries`() {
+        for (time in listOf("00:00:00", "08:29:59", "11:40:00", "13:29:59", "22:45:00", "23:59:59"))
+            assertFalse(time, context.allowsNextFocusReminder(at(time)))
+        for (time in listOf("08:30:00", "11:39:59", "13:30:00", "22:44:59"))
+            assertTrue(time, context.allowsNextFocusReminder(at(time)))
+        val shifted = context.copy(timezone = "UTC")
+        assertFalse(shifted.allowsNextFocusReminder(at("08:30:00")))
+        assertTrue(shifted.allowsNextFocusReminder(at("16:30:00")))
+        assertTrue(IslandContext().allowsNextFocusReminder(noon)) // Legacy cache not received yet.
+        assertFalse(context.copy(sessions = emptyList()).allowsNextFocusReminder(noon))
+    }
+
     @Test fun `pause active reminders and fresh summaries outrank schedule countdowns`() {
         assertNull(context.countdown(idle.copy(mode = FocusMode.PAUSED), null, noon))
         assertNull(context.countdown(idle, DueReminder(ReminderKind.ENDED_15, 0), noon))

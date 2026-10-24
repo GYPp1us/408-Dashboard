@@ -104,4 +104,54 @@ class AtomicRefreshPolicyTest {
         policy.published(key(focus.copy(mode = FocusMode.PAUSED)), 314, 1001)
         assertFalse(policy.reminderCleared(""))
     }
+
+    @Test fun `long timers renew every thirty eight minutes independently of format updates`() {
+        val policy = AtomicRefreshPolicy()
+        val state = key()
+        policy.published(state, 0, 0, "0:0")
+        for (second in 1L..4560L) {
+            val format = "${second / 600}:0"
+            val formatBoundary = second % 600 == 0L
+            val renewalBoundary = second % 2280 == 0L
+            assertEquals("second=$second", formatBoundary || renewalBoundary,
+                policy.shouldPublish(state, second, second * 1000, false, systemTimerKey = format))
+            if (formatBoundary || renewalBoundary) policy.published(state, second, second * 1000, format)
+        }
+    }
+
+    @Test fun `quiet renewal waits for an expanded reminder and only succeeds after publication`() {
+        val policy = AtomicRefreshPolicy()
+        val state = key()
+        policy.published(state, 0, 0, "steady")
+        val at = AtomicRefreshPolicy.SYSTEM_TIMER_RENEWAL_MS
+        assertFalse(policy.shouldPublish(state, at / 1000, at, false, true, "steady"))
+        assertTrue(policy.shouldPublish(state, at / 1000 + 15, at + 15000, false, false, "steady"))
+        assertTrue(policy.shouldPublish(state, at / 1000 + 16, at + 16000, false, false, "steady"))
+        policy.published(state, at / 1000 + 16, at + 16000, "steady")
+        assertFalse(policy.shouldPublish(state, at / 1000 + 17, at + 17000, false, systemTimerKey = "steady"))
+    }
+
+    @Test fun `new timer state starts its own renewal cadence and genuine changes still win`() {
+        val policy = AtomicRefreshPolicy()
+        policy.published(key(), 0, 0, "steady")
+        val at = AtomicRefreshPolicy.SYSTEM_TIMER_RENEWAL_MS
+        val paused = key(focus.copy(mode = FocusMode.PAUSED))
+        assertTrue(policy.shouldPublish(paused, 0, at - 1000, false, true, "steady"))
+        policy.published(paused, 0, at - 1000, "steady")
+        assertFalse(policy.shouldPublish(paused, 1, at, false, systemTimerKey = "steady"))
+        assertTrue(policy.shouldPublish(paused.copy(accent = 2), 1, at, false, true, "steady"))
+        assertTrue(policy.shouldPublish(paused, at / 1000, at * 2 - 1000, false, systemTimerKey = "steady"))
+    }
+
+    @Test fun `renewal does not resurrect a hidden island or static summary`() {
+        for (state in listOf(key(visible = false), key(atomic = false))) {
+            val policy = AtomicRefreshPolicy()
+            policy.published(state, 0, 0, "steady")
+            assertFalse(policy.shouldPublish(state, 2280, 2280000, false, systemTimerKey = "steady"))
+        }
+        val policy = AtomicRefreshPolicy()
+        val summary = key(focus.copy(mode = FocusMode.SETTLED))
+        policy.published(summary, 0, 0)
+        assertFalse(policy.shouldPublish(summary, 0, AtomicRefreshPolicy.SYSTEM_TIMER_RENEWAL_MS, false))
+    }
 }

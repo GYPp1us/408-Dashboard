@@ -48,7 +48,11 @@ class FocusService : Service() {
         notifications = getSystemService(NotificationManager::class.java)
         overlay = ApplicationOverlay(this)
         publisher.ensureChannels()
-        val previousNotifications = notifications.activeNotifications.filter { it.id == OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID }
+        val existingNotifications = notifications.activeNotifications
+        val previousNotifications = existingNotifications.filter { it.id == OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID }
+        // A fallback reminder can survive process death; let checkReminder clear
+        // it when restored during a closed period, without per-tick cancel calls.
+        if (existingNotifications.any { it.id == OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID }) reminderToken = "restored"
         store.seedAtomicRecord(previousNotifications.maxOfOrNull { it.notification.extras.getInt("notification.superx.changedRecord", 0) } ?: 0)
         islandVisible = previousNotifications.any {
             it.id == OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID &&
@@ -462,11 +466,11 @@ class FocusService : Service() {
                 put("todayFocusSeconds", state.todayFocusSeconds); put("todaySessionCount", state.todaySessionCount)
                 put("endedAtEpochMs", state.endedAtEpochMs)
                 put("restStartedAtEpochMs", state.restStartedAtEpochMs); put("restTargetSeconds", state.restTargetSeconds)
-                put("plannedSeconds", state.plannedSeconds); put("nextReminderAt", store.nextReminderAt(state))
+                put("plannedSeconds", state.plannedSeconds); put("nextReminderAt", store.nextReminderAt(state, now))
                 put("remindersClosed", store.remindersClosed(state))
                 put("reminder", due?.kind?.name.orEmpty()); put("reminderToken", due?.let { store.reminderToken(it.kind, now) }.orEmpty())
                 put("reminderRound", due?.round ?: 0)
-                put("title", FocusPresentation.title(state, due, now)); put("detail", FocusPresentation.detail(state, store.nextReminderAt(state), due, now))
+                put("title", FocusPresentation.title(state, due, now)); put("detail", FocusPresentation.detail(state, store.nextReminderAt(state, now), due, now))
                 put("timer", FocusPresentation.timer(state, now)); put("busy", runningService?.busy == true)
                 put("message", runningService?.displayMessage(now).orEmpty()); put("retryAction", runningService?.retryAction.orEmpty())
                 put("revision", store.transitionRevision())

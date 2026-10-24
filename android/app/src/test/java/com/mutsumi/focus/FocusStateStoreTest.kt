@@ -224,6 +224,75 @@ class FocusStateStoreTest {
         assertEquals(0, restored.nextReminderAt())
     }
 
+    private fun marketAt(time: String) = java.time.OffsetDateTime.parse("2026-10-24T$time+08:00").toInstant().toEpochMilli()
+    private fun marketStore(): FocusStateStore = FocusStateStore(MemoryPreferences()).also {
+        it.writeIslandContext(IslandContext(sessions = listOf(
+            IslandContext.Session(java.time.LocalTime.parse("08:30"), java.time.LocalTime.parse("11:40")),
+            IslandContext.Session(java.time.LocalTime.parse("13:30"), java.time.LocalTime.parse("22:45"))), receivedAt = marketAt("08:00:00")))
+    }
+
+    @Test fun `actual session departure reminders stop exactly at lunch and resume from afternoon opening`() {
+        val store = marketStore()
+        val ended = FocusRuntimeState(mode = FocusMode.ENDED, sessionId = 20, endedAtEpochMs = marketAt("11:20:00"))
+        store.write(ended)
+        assertEquals(ReminderKind.ENDED_15, store.due(marketAt("11:39:59"))?.kind)
+        for (time in listOf("11:40:00", "12:00:00", "13:29:59")) {
+            assertNull(time, store.due(marketAt(time)))
+            assertEquals(time, 0L, store.nextReminderAt(now = marketAt(time)))
+        }
+        assertEquals(IslandContext.Countdown.Kind.AFTERNOON,
+            store.islandContext().countdown(ended, store.due(marketAt("12:00:00")), marketAt("12:00:00"))!!.kind)
+        assertNull(store.due(marketAt("13:30:00")))
+        assertNull(store.due(marketAt("13:44:59")))
+        assertEquals(ReminderKind.ENDED_15, store.due(marketAt("13:45:00"))?.kind)
+        assertTrue(store.reminderToken(ReminderKind.ENDED_15, marketAt("13:45:00")).startsWith("opening:"))
+        assertEquals(ended, store.read())
+    }
+
+    @Test fun `night and preopening suppress ended reminders and the next morning never replays night stages`() {
+        val prefs = MemoryPreferences()
+        val store = FocusStateStore(prefs)
+        store.writeIslandContext(marketStore().islandContext())
+        store.write(FocusRuntimeState(mode = FocusMode.ENDED, sessionId = 21, endedAtEpochMs = marketAt("22:20:00")))
+        assertNotNull(store.due(marketAt("22:44:59")))
+        val restored = FocusStateStore(prefs)
+        for (time in listOf("22:45:00", "23:00:00", "23:59:59")) {
+            assertNull(time, restored.due(marketAt(time)))
+            assertEquals(time, 0L, restored.nextReminderAt(now = marketAt(time)))
+        }
+        fun nextDay(time: String) = java.time.OffsetDateTime.parse("2026-10-25T$time+08:00").toInstant().toEpochMilli()
+        assertNull(restored.due(nextDay("08:29:59")))
+        assertNull(restored.due(nextDay("08:30:00")))
+        assertNull(restored.due(nextDay("08:44:59")))
+        assertEquals(ReminderKind.ENDED_15, restored.due(nextDay("08:45:00"))?.kind)
+    }
+
+    @Test fun `future departure and snooze deadlines beyond closing are not advertised`() {
+        val store = marketStore()
+        store.write(FocusRuntimeState(mode = FocusMode.ENDED, sessionId = 22, endedAtEpochMs = marketAt("22:35:00")))
+        assertEquals(0L, store.nextReminderAt(now = marketAt("22:40:00")))
+        assertNull(store.due(marketAt("22:50:00")))
+        store.write(FocusRuntimeState(mode = FocusMode.ENDED, sessionId = 23, endedAtEpochMs = marketAt("22:20:00")))
+        store.snoozeEnded(marketAt("22:42:00"))
+        assertEquals(0L, store.nextReminderAt(now = marketAt("22:42:00")))
+        assertNull(store.due(marketAt("22:47:00")))
+    }
+
+    @Test fun `cached account hours still suppress night reminders when schedule data is stale`() {
+        val store = marketStore()
+        store.writeIslandContext(store.islandContext().copy(receivedAt = marketAt("08:00:00") - 48 * 3600000L))
+        store.write(FocusRuntimeState(mode = FocusMode.ENDED, sessionId = 24, endedAtEpochMs = marketAt("22:20:00")))
+        assertNull(store.due(marketAt("23:00:00")))
+        assertEquals(0L, store.nextReminderAt(now = marketAt("23:00:00")))
+    }
+
+    @Test fun `pause reminders are preserved outside trading hours`() {
+        val store = marketStore()
+        store.write(FocusRuntimeState(mode = FocusMode.PAUSED, sessionId = 25, pausedAtEpochMs = marketAt("23:00:00")))
+        assertEquals(ReminderKind.PAUSED, store.due(marketAt("23:05:00"))?.kind)
+        assertEquals(marketAt("23:05:00"), store.nextReminderAt(now = marketAt("23:01:00")))
+    }
+
     @Test fun `strong reminder is opt in even after old permissions were granted`() {
         val prefs = MemoryPreferences()
         val store = FocusStateStore(prefs)

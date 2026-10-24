@@ -6,7 +6,7 @@ import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
 
-/** Display-only schedule. It never changes a focus session or its reminders. */
+/** Account schedule for island displays and next-focus reminder eligibility; never changes a focus session. */
 data class IslandContext(
     val timezone: String = "Asia/Shanghai",
     val sessions: List<Session> = emptyList(),
@@ -24,6 +24,14 @@ data class IslandContext(
 
     fun enabled(now: Long): Boolean = receivedAt > 0 && now - receivedAt in 0 until 36 * 3_600_000L &&
         (sessions.isNotEmpty() || checkins.isNotEmpty())
+
+    fun allowsNextFocusReminder(now: Long): Boolean {
+        // Retain compatibility before an older client has received a schedule.
+        // Cached hours still suppress closed-period reminders if a refresh is late.
+        if (sessions.isEmpty()) return receivedAt <= 0
+        val time = Instant.ofEpochMilli(now).atZone(ZoneId.of(timezone)).toLocalTime()
+        return sessions.any { time >= it.start && time < it.end }
+    }
 
     fun nextBoundary(now: Long): Long {
         val local = Instant.ofEpochMilli(now).atZone(ZoneId.of(timezone))

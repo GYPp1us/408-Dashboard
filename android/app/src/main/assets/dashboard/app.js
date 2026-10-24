@@ -1404,6 +1404,8 @@
     const empty = $("#score-chart-empty");
     const detail = $("#score-chart-detail");
     if (!canvas || !empty || !detail || !window.Chart) return;
+    canvas.setAttribute?.("aria-label", "近期模考走势：点表示当日均值，上下端帽表示最高最低值，按目标分折算");
+    $("#activity-score-view .section-heading h2")?.setAttribute("data-tooltip", "近 10 个提交日期，按各次目标分折算；点为当日均值，上下 T 线为当日最高最低值");
     state.scoreChart?.destroy();
     state.scoreChart = null;
     detail.hidden = true;
@@ -1414,7 +1416,20 @@
       if (!date || !item.subject || !Number.isFinite(Number(item.score))
           || !Number.isFinite(Number(item.target)) || Number(item.target) <= 0) return;
       if (!grouped.has(date)) grouped.set(date, new Map());
-      grouped.get(date).set(item.subject, item);
+      const day = grouped.get(date);
+      if (!day.has(item.subject)) day.set(item.subject, {
+        subject:item.subject, count:0, total:0, scoreTotal:0, low:Infinity, high:-Infinity,
+        minScore:Infinity, maxScore:-Infinity, target:Number(item.target), mixedTargets:false,
+      });
+      const summary = day.get(item.subject), score = Number(item.score), value = score / Number(item.target) * 100;
+      summary.count++;
+      summary.total += value;
+      summary.scoreTotal += score;
+      summary.low = Math.min(summary.low, value);
+      summary.high = Math.max(summary.high, value);
+      summary.minScore = Math.min(summary.minScore, score);
+      summary.maxScore = Math.max(summary.maxScore, score);
+      summary.mixedTargets ||= summary.target !== Number(item.target);
     });
     const dates = [...grouped.keys()].sort().slice(-10);
     if (!dates.length) {
@@ -1437,8 +1452,9 @@
         scoreStyleIndex: index,
         data: dates.map((date) => {
           const item = grouped.get(date).get(subject);
-          return item ? Math.round((Number(item.score) / Number(item.target)) * 1000) / 10 : null;
+          return item ? item.total / item.count : null;
         }),
+        scoreRanges: dates.map(date => grouped.get(date).get(subject) || null),
         borderColor: style.color,
         backgroundColor: style.color,
         pointBackgroundColor: style.color,
@@ -1454,7 +1470,38 @@
         spanGaps: true,
       };
     });
-    const maxValue = Math.max(100, ...datasets.flatMap((dataset) => dataset.data.filter((value) => value !== null)));
+    const maxValue = Math.max(100, ...datasets.flatMap(dataset => dataset.scoreRanges.filter(Boolean).map(item => item.high)));
+    const rangePlugin = {
+      id: "scoreDailyRange",
+      beforeDatasetsDraw(chart) {
+        const context = chart.ctx, area = chart.chartArea;
+        context.save();
+        context.beginPath();
+        context.rect(area.left, area.top, area.right - area.left, area.bottom - area.top);
+        context.clip();
+        context.setLineDash([]);
+        context.lineWidth = 1.25;
+        context.globalAlpha = 0.75;
+        chart.data.datasets.forEach((dataset, datasetIndex) => {
+          if (!chart.isDatasetVisible(datasetIndex)) return;
+          const meta = chart.getDatasetMeta(datasetIndex);
+          context.strokeStyle = dataset.borderColor;
+          context.beginPath();
+          dataset.scoreRanges.forEach((range, index) => {
+            const point = meta.data[index];
+            // One score (or identical scores) has no range beyond its mean point.
+            if (!range || range.high === range.low || !point || point.skip) return;
+            const x = point.x, top = meta.yScale.getPixelForValue(range.high), bottom = meta.yScale.getPixelForValue(range.low);
+            if (![x, top, bottom].every(Number.isFinite)) return;
+            context.moveTo(x, top); context.lineTo(x, bottom);
+            context.moveTo(x - 4, top); context.lineTo(x + 4, top);
+            context.moveTo(x - 4, bottom); context.lineTo(x + 4, bottom);
+          });
+          context.stroke();
+        });
+        context.restore();
+      },
+    };
     const crosshairPlugin = {
       id: "scoreCrosshair",
       beforeEvent(chart, args) {
@@ -1484,15 +1531,15 @@
     state.scoreChart = new Chart(canvas, {
       type: "line",
       data: { labels: dates.map(formatScoreDate), datasets },
-      plugins: [crosshairPlugin],
+      plugins: [crosshairPlugin, rangePlugin],
       options: {
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
         interaction: { mode: "index", axis: "x", intersect: false },
         scales: {
-          x: { grid: { display: false }, ticks: { color: chartColor("--muted"), font: { size: 11 } } },
-          y: { beginAtZero: true, suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: chartColor("--line") }, ticks: { color: chartColor("--muted"), font: { size: 11 }, callback: (value) => `${value}%` } },
+          x: { offset:true, grid: { display: false }, ticks: { color: chartColor("--muted"), font: { size: 11 } } },
+          y: { beginAtZero: true, grace:"5%", suggestedMax: Math.ceil(maxValue / 10) * 10, grid: { color: chartColor("--line") }, ticks: { color: chartColor("--muted"), font: { size: 11 }, callback: (value) => `${value}%` } },
         },
         plugins: {
           legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 7, color: chartColor("--muted"), font: { size: 11 } } },
@@ -1505,7 +1552,12 @@
               }
               const date = dates[tooltip.dataPoints[0].dataIndex];
               const items = tooltip.dataPoints.map((point) => grouped.get(date).get(point.dataset.label)).filter(Boolean);
-              detail.innerHTML = `<strong>${formatScoreDate(date)}</strong>${items.map((item) => `<span>${escapeHtml(item.subject)} ${Math.round((Number(item.score) / Number(item.target)) * 1000) / 10}% · ${item.score} / ${item.target}</span>`).join("")}`;
+              const number = value => String(Math.round(value * 10) / 10);
+              detail.innerHTML = `<strong>${formatScoreDate(date)}</strong>${items.map(item => {
+                const mean = number(item.total / item.count), score = number(item.scoreTotal / item.count);
+                const range = item.mixedTargets ? `${number(item.low)}–${number(item.high)}%` : `${number(item.minScore)}–${number(item.maxScore)} 分`;
+                return `<span>${escapeHtml(item.subject)} · 均值 ${mean}% · 均分 ${score}${item.mixedTargets ? " 分" : ` / ${number(item.target)}`} · 范围 ${range} · ${item.count} 次</span>`;
+              }).join("")}`;
               detail.hidden = false;
             },
           },

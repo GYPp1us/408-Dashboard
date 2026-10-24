@@ -56,7 +56,7 @@ class AtomicSystemTimerTest {
         assertEquals("等待首次提醒", info["notification.superx.infos.coreInfo"])
     }
 
-    @Test fun `system timer stays quiet for a free focusing hour except format boundaries`() {
+    @Test fun `system timer stays quiet for a free focusing hour except format boundaries and renewal`() {
         val state = FocusRuntimeState(mode = FocusMode.FOCUSING, sessionId = 1)
         val key = AtomicRefreshPolicy.StateKey.from(state, true, true, 1, "", "", 1)
         val policy = AtomicRefreshPolicy()
@@ -68,7 +68,7 @@ class AtomicSystemTimerTest {
                 publications++
             }
         }
-        assertEquals(6, publications)
+        assertEquals(7, publications) // Initial + five format boundaries + one 38-minute renewal.
         assertTrue(policy.shouldPublish(key, 3605, 3600_000, false, systemTimerKey = "6:0"))
     }
 

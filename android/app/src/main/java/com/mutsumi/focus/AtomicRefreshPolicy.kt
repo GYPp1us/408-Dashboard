@@ -1,10 +1,11 @@
 package com.mutsumi.focus
 
-/** State changes publish immediately; only clock-only updates wait for the next second. */
+/** State changes publish immediately; system clocks need only format/progress updates and a quiet renewal. */
 class AtomicRefreshPolicy {
     data class ReminderPresentation(val expanded: Boolean?, val first: Boolean, val collapse: Boolean = false)
     companion object {
         const val REMINDER_HOLD_MS = 15_000L
+        const val SYSTEM_TIMER_RENEWAL_MS = 38 * 60_000L
         fun reminderPresentation(visible: Boolean, atomicAvailable: Boolean, token: String,
                                  presentedAt: Long?, collapseSent: Boolean, now: Long): ReminderPresentation {
             if (!visible || !atomicAvailable || token.isBlank()) return ReminderPresentation(null, false)
@@ -45,6 +46,7 @@ class AtomicRefreshPolicy {
     private var lastState: StateKey? = null
     private var lastClockSeconds = 0L
     private var lastSystemTimerKey: String? = null
+    private var lastSystemTimerRenewalAt = 0L
 
     fun stateChanged(state: StateKey): Boolean = state != lastState
     fun reminderCleared(token: String): Boolean = lastState?.reminderToken?.isNotBlank() == true && token.isBlank()
@@ -56,6 +58,7 @@ class AtomicRefreshPolicy {
         // the expanded card. Keep its snapshot for 15s; real transitions win.
         if (holdingReminder) return false
         if (systemTimerKey != null) {
+            if (state.visible && state.atomicAvailable && nowElapsedMs - lastSystemTimerRenewalAt >= SYSTEM_TIMER_RENEWAL_MS) return true
             if (systemTimerKey != lastSystemTimerKey) return true
             val projected = lastClockSeconds + clockDirection * ((nowElapsedMs - lastPublishedAt).coerceAtLeast(0) / 1000)
             return kotlin.math.abs(clockSeconds - projected) >= 2
@@ -65,6 +68,14 @@ class AtomicRefreshPolicy {
     }
 
     fun published(state: StateKey, clockSeconds: Long, nowElapsedMs: Long, systemTimerKey: String? = null) {
+        // Keep the 38-minute cadence separate from ten-minute format / progress
+        // updates. It deliberately avoids the usual 5 / 15 / 30 / 60-minute reminders.
+        if (systemTimerKey != null && (lastSystemTimerKey == null ||
+            lastState?.content?.mode != state.content.mode || lastState?.content?.sessionId != state.content.sessionId ||
+            lastState?.displayKey != state.displayKey || lastState?.visible != state.visible ||
+            lastState?.atomicAvailable != state.atomicAvailable || nowElapsedMs - lastSystemTimerRenewalAt >= SYSTEM_TIMER_RENEWAL_MS)) {
+            lastSystemTimerRenewalAt = nowElapsedMs
+        }
         lastState = state
         lastClockSeconds = clockSeconds
         lastPublishedAt = nowElapsedMs

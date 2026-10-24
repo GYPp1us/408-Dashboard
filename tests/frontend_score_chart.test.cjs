@@ -50,6 +50,68 @@ for (const file of ['app/static/app.js','android/app/src/main/assets/dashboard/a
     assert.equal(chart.data.datasets.find(d => d.label === '英语').data.filter(v => v !== null).length,1);
   });
 
+  test(`${file}: same-day scores become one arithmetic mean with min-max caps`, () => {
+    const {api,detail} = harness(file);
+    api.renderScoreChart([
+      {subject:'数学',exam_date:'2026-10-03',score:120,target:150},
+      {subject:'英语',exam_date:'2026-10-03',score:75,target:100},
+      {subject:'数学',exam_date:'2026-10-03',score:90,target:150},
+      {subject:'数学',exam_date:'2026-10-05',score:150,target:150},
+    ]);
+    const chart=api.state.scoreChart,math=chart.data.datasets.find(d=>d.label==='数学');
+    assert.deepEqual(Array.from(math.data),[70,100]);
+    assert.equal(math.scoreRanges[0].count,2);
+    assert.equal(math.scoreRanges[0].low,60); assert.equal(math.scoreRanges[0].high,80);
+    chart.options.plugins.tooltip.external({tooltip:{opacity:1,dataPoints:[{dataIndex:0,dataset:math}]}});
+    assert.match(detail.innerHTML,/均值 70%/); assert.match(detail.innerHTML,/均分 105 \/ 150/);
+    assert.match(detail.innerHTML,/范围 90–120 分/); assert.match(detail.innerHTML,/2 次/);
+  });
+
+  test(`${file}: the daily range includes highs above the daily mean and respects saved targets`, () => {
+    const {api,detail}=harness(file);
+    api.renderScoreChart([
+      {subject:'数学',exam_date:'2026-10-03',score:120,target:150},
+      {subject:'数学',exam_date:'2026-10-03',score:110,target:110},
+      {subject:'英语',exam_date:'2026-10-03',score:190,target:100},
+      {subject:'英语',exam_date:'2026-10-03',score:10,target:100},
+    ]);
+    const chart=api.state.scoreChart,math=chart.data.datasets[0],english=chart.data.datasets[1];
+    assert.equal(math.data[0],90); assert.equal(english.data[0],100);
+    assert.ok(chart.options.scales.y.suggestedMax>=190,'caps must fit even when the mean is only 100');
+    chart.options.plugins.tooltip.external({tooltip:{opacity:1,dataPoints:[{dataIndex:0,dataset:math}]}});
+    assert.match(detail.innerHTML,/均分 115 分/); assert.match(detail.innerHTML,/范围 80–100%/);
+  });
+
+  test(`${file}: range stems and caps align to actual chart points and hidden subjects stay hidden`, () => {
+    const {api}=harness(file);
+    api.renderScoreChart([
+      {subject:'数学',exam_date:'2026-10-03',score:90,target:150},
+      {subject:'数学',exam_date:'2026-10-03',score:120,target:150},
+      {subject:'数学',exam_date:'2026-10-04',score:100,target:150},
+      {subject:'英语',exam_date:'2026-10-03',score:20,target:100},
+      {subject:'英语',exam_date:'2026-10-03',score:80,target:100},
+    ]);
+    const chart=api.state.scoreChart,path=[];
+    chart.ctx={save(){},restore(){},beginPath(){},rect(){},clip(){},setLineDash(){},stroke(){},
+      moveTo:(x,y)=>path.push(['M',x,y]),lineTo:(x,y)=>path.push(['L',x,y])};
+    chart.chartArea={left:20,top:10,right:590,bottom:220};
+    chart.isDatasetVisible=index=>index===0;
+    chart.getDatasetMeta=()=>({data:[{x:100},{x:300}],yScale:{getPixelForValue:value=>220-value*2}});
+    chart.plugins.find(p=>p.id==='scoreDailyRange').beforeDatasetsDraw(chart);
+    assert.deepEqual(path,[['M',100,60],['L',100,100],['M',96,60],['L',104,60],['M',96,100],['L',104,100]]);
+    assert.equal(chart.ctx.strokeStyle,chart.data.datasets[0].borderColor);
+    assert.equal(chart.options.scales.x.offset,true,'end caps need space at the date axis edges');
+  });
+
+  test(`${file}: reordering submissions never replaces the daily mean with the latest score`, () => {
+    const {api}=harness(file);
+    const scores=[60,120,90].map(score=>({subject:'数学',exam_date:'2026-10-03',score,target:150}));
+    api.renderScoreChart(scores);const first=api.state.scoreChart.data.datasets[0].data[0];
+    api.renderScoreChart(scores.reverse());
+    assert.equal(first,60); assert.equal(api.state.scoreChart.data.datasets[0].data[0],60);
+    assert.equal(api.state.scoreChart.data.datasets[0].scoreRanges[0].count,3);
+  });
+
   test(`${file}: viewport mouse and touch coordinates map through CSS zoom`, () => {
     const {api,canvas} = harness(file);
     api.renderScoreChart(history);
