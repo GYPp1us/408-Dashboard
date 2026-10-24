@@ -12,9 +12,26 @@ data class IslandContext(
     val sessions: List<Session> = emptyList(),
     val checkins: List<Checkin> = emptyList(),
     val receivedAt: Long = 0,
+    val taskSync: TaskSync? = null,
 ) {
     data class Session(val start: LocalTime, val end: LocalTime)
     data class Checkin(val id: Long, val name: String, val start: LocalTime, val end: LocalTime, val completedDay: String = "")
+    data class TaskSync(val eventId: String, val date: String, val status: String,
+                        val completed: Int, val total: Int, val updatedAt: Long) {
+        val key: String get() = "task-sync:$eventId:$status:$completed:$total:$updatedAt"
+        val lifetime: Long get() = when (status) { "pending" -> 10 * 60_000L; "sent" -> 15_000L; else -> 30_000L }
+        fun json() = JSONObject().put("event_id", eventId).put("date", date).put("status", status)
+            .put("completed", completed).put("total", total).put("updated_at", Instant.ofEpochMilli(updatedAt).toString())
+        companion object {
+            fun fromJson(value: JSONObject?): TaskSync? = runCatching {
+                if (value == null || value.optString("status") !in setOf("pending", "sent", "failed", "unconfigured")) return null
+                val total = value.getInt("total").coerceIn(0, 100_000)
+                TaskSync(value.getString("event_id").take(160), java.time.LocalDate.parse(value.getString("date")).toString(),
+                    value.getString("status"), value.getInt("completed").coerceIn(0, total), total,
+                    Instant.parse(value.getString("updated_at")).toEpochMilli())
+            }.getOrNull()
+        }
+    }
     data class Countdown(val kind: Kind, val end: Long, val name: String = "", val id: Long = 0) {
         enum class Kind { AFTERNOON, CHECKIN, WAITING }
         fun remaining(now: Long): Long = if (kind == Kind.WAITING) (now - end).coerceAtLeast(0) / 1000
@@ -23,7 +40,14 @@ data class IslandContext(
     }
 
     fun enabled(now: Long): Boolean = receivedAt > 0 && now - receivedAt in 0 until 36 * 3_600_000L &&
-        (sessions.isNotEmpty() || checkins.isNotEmpty())
+        (sessions.isNotEmpty() || checkins.isNotEmpty() || taskSync?.let { now - it.updatedAt in 0 until it.lifetime } == true)
+
+    fun visibleTaskSync(state: FocusRuntimeState, due: DueReminder?, now: Long): TaskSync? {
+        val sync = taskSync ?: return null
+        if (!enabled(now) || state.mode != FocusMode.SETTLED || due != null) return null
+        if (Instant.ofEpochMilli(now).atZone(ZoneId.of(timezone)).toLocalDate().toString() != sync.date) return null
+        return sync.takeIf { now - it.updatedAt in 0 until it.lifetime }
+    }
 
     fun allowsNextFocusReminder(now: Long): Boolean {
         // Retain compatibility before an older client has received a schedule.
@@ -74,6 +98,7 @@ data class IslandContext(
 
     fun toJson(): String = JSONObject().apply {
         put("timezone", timezone); put("received_at", receivedAt)
+        taskSync?.let { put("task_sync", it.json()) }
         put("sessions", JSONArray().apply { sessions.forEach { put(JSONObject().put("start", it.start.toString()).put("end", it.end.toString())) } })
         put("checkins", JSONArray().apply { checkins.forEach { put(JSONObject().put("id", it.id).put("name", it.name)
             .put("start", it.start.toString()).put("end", it.end.toString()).put("completed_day", it.completedDay)) } })
@@ -92,7 +117,7 @@ data class IslandContext(
                 (0 until rules.length().coerceAtMost(50)).map { rules.getJSONObject(it).let { row ->
                     Checkin(row.getLong("id"), row.getString("name").take(40), LocalTime.parse(row.getString("start")),
                         LocalTime.parse(row.getString("end")), row.optString("completed_day").takeUnless { it == "null" }.orEmpty())
-                } }.filter { it.id > 0 && it.start != it.end }, receivedAt)
+                } }.filter { it.id > 0 && it.start != it.end }, receivedAt, TaskSync.fromJson(data.optJSONObject("task_sync")))
             }.getOrNull()
         }
     }

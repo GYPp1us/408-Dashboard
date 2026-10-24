@@ -112,7 +112,22 @@ data class AtomicIslandLayout(
 
     companion object {
         fun from(state: FocusRuntimeState, due: DueReminder?, now: Long, remindersClosed: Boolean = false,
-                 countdown: IslandContext.Countdown? = null): AtomicIslandLayout {
+                 countdown: IslandContext.Countdown? = null, taskSync: IslandContext.TaskSync? = null): AtomicIslandLayout {
+            if (taskSync != null && state.mode == FocusMode.SETTLED && due == null) {
+                val label = when (taskSync.status) {
+                    "pending" -> "正在同步"
+                    "sent" -> "同步成功"
+                    "failed" -> "推送待重试"
+                    else -> "待配置接收端"
+                }
+                return AtomicIslandLayout(1, "每日任务同步", "$label · ${taskSync.completed}/${taskSync.total} 项已完成",
+                    if (taskSync.status == "pending") 3 else 4,
+                    rightText = "${taskSync.completed}/${taskSync.total}", core = label,
+                    description = "${taskSync.completed}/${taskSync.total} 项已完成",
+                    collapsedText = when (taskSync.status) { "pending" -> "同步中"; "sent" -> "同步成功"; "failed" -> "待重试"; else -> "待配置" },
+                    button = if (taskSync.status == "unconfigured") Button("接入设置", "planIntegration") else Button("查看结算", "summary"),
+                    displayNode = 1_000_000)
+            }
             if (countdown != null) {
                 if (countdown.kind == IslandContext.Countdown.Kind.WAITING) {
                     val elapsed = countdown.remaining(now)

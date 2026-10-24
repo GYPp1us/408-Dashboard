@@ -31,6 +31,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
@@ -44,6 +45,8 @@ class MainActivity : ComponentActivity() {
     @Volatile private var fileChooserInFlight = false
     @Volatile private var fileChooserReturnedAt = 0L
     @Volatile private var systemOrientation = Configuration.ORIENTATION_UNDEFINED
+    private var chromeColor = Color.rgb(247, 248, 247)
+    private var chromeDark = false
     @Volatile private var pendingFocusDestination: String? = null
     private var geolocationCallback: GeolocationPermissions.Callback? = null
     private var geolocationOrigin: String? = null
@@ -127,9 +130,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun buildContent(): View {
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.rgb(34, 28, 26)) }
+        val mode = getSharedPreferences("focus_runtime", Context.MODE_PRIVATE).getString("theme_mode", "system")
+        chromeDark = mode == "dark" || mode == "system" && resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        chromeColor = if (chromeDark) Color.rgb(25, 31, 39) else Color.rgb(247, 248, 247)
+        val root = FrameLayout(this).apply { setBackgroundColor(chromeColor) }
         contentRoot = root
-        webView = WebView(this)
+        webView = WebView(this).apply { setBackgroundColor(chromeColor) }
         root.addView(webView, FrameLayout.LayoutParams(-1, -1))
         return root
     }
@@ -210,6 +216,11 @@ class MainActivity : ComponentActivity() {
                 val asset = when (request.url.path) {
                     "/static/app.js" -> "app.js"
                     "/static/dashboard-clock.js" -> "dashboard-clock.js"
+                    "/static/status-icons.js" -> "status-icons.js"
+                    "/static/paper-tape.js" -> "paper-tape.js"
+                    "/static/app-pages.js" -> "app-pages.js"
+                    "/static/app-pages.css" -> "app-pages.css"
+                    "/static/daily-report.js" -> "daily-report.js"
                     "/static/day-timeline.js" -> "day-timeline.js"
                     "/static/viewport-scale.css" -> "viewport-scale.css"
                     "/static/viewport-scale.js" -> "viewport-scale.js"
@@ -219,7 +230,7 @@ class MainActivity : ComponentActivity() {
                     else -> return null
                 }
                 return WebResourceResponse(if (asset.endsWith(".css")) "text/css" else "application/javascript",
-                    "UTF-8", 200, "OK", mapOf("Cache-Control" to "no-store"), if (asset == "app.js") java.io.SequenceInputStream(assets.open("dashboard/dashboard-clock.js"), assets.open("dashboard/$asset"))
+                    "UTF-8", 200, "OK", mapOf("Cache-Control" to "no-store"), if (asset == "app.js") java.io.SequenceInputStream(java.util.Collections.enumeration(listOf("dashboard-clock.js", "status-icons.js", "paper-tape.js", "app-pages.js", "app.js").map { assets.open("dashboard/$it") }))
                     else assets.open("dashboard/$asset"))
             }
 
@@ -318,9 +329,30 @@ class MainActivity : ComponentActivity() {
     private fun updateWindowLayout() {
         systemOrientation = resources.configuration.orientation
         AppWindowLayout.apply(this, contentRoot)
+        applyChromeAppearance()
         ViewCompat.requestApplyInsets(contentRoot)
         if (hasTrustedDocument()) webView.post {
             if (hasTrustedDocument()) webView.evaluateJavascript("window.MutsumiViewport?.update?.()", null)
+        }
+    }
+
+    internal fun updateChromeAppearance(background: String, dark: Boolean) {
+        val color = runCatching { Color.parseColor(background) or 0xFF000000.toInt() }.getOrNull() ?: return
+        if (chromeColor == color && chromeDark == dark) return
+        chromeColor = color
+        chromeDark = dark
+        applyChromeAppearance()
+    }
+
+    private fun applyChromeAppearance() {
+        // The padded root is actually behind edge-to-edge system bar insets.
+        // Setting only the deprecated Window.statusBarColor cannot cover it.
+        contentRoot.setBackgroundColor(chromeColor)
+        if (systemOrientation != Configuration.ORIENTATION_LANDSCAPE) {
+            WindowCompat.getInsetsController(window, contentRoot).apply {
+                isAppearanceLightStatusBars = !chromeDark
+                isAppearanceLightNavigationBars = !chromeDark
+            }
         }
     }
 

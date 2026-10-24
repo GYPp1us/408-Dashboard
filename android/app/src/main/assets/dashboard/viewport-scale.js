@@ -27,8 +27,10 @@
     // Root clientWidth can include Chrome's gutter, whereas its border box does not.
     viewportWidth = root.getBoundingClientRect().width || layoutWidth;
     const portraitHome = native && !wide && document.body?.dataset.page === "home";
-    scale = CSS.supports("zoom", "1") ? (wide ? viewportWidth / designWidth : portraitHome ? 0.6 : 1) : 1;
+    scale = CSS.supports("zoom", "1") ? (wide ? viewportWidth / designWidth : portraitHome ? 0.69 : 1) : 1;
     root.style.setProperty("--ui-scale", String(scale));
+    root.style.setProperty("--app-page-width", `${viewportWidth}px`);
+    root.style.setProperty("--app-page-height", `${viewportHeight}px`);
     root.style.setProperty("--ui-viewport-width", `${viewportWidth / scale}px`);
     root.style.setProperty("--ui-viewport-height", `${viewportHeight / scale}px`);
     window.dispatchEvent(new CustomEvent("dashboard:viewport"));

@@ -55,7 +55,7 @@
     track.dataset.feedback=status.state;track.setAttribute('aria-busy',String(busy));track.setAttribute('aria-disabled',String(busy||done));
     track.title=`${rule.name} · ${text}`;track.setAttribute('aria-label',track.title);
     track.querySelector('.drag-label').innerHTML=`<b>${esc(rule.name)}${done?' · 已打卡':status.state==='failure'?' · 未完成':''}</b><small>${esc(text)}</small>`;
-    thumb.textContent=done?'✓':busy?'…':status.state==='failure'?'!':'→';thumb.tabIndex=done?-1:0;
+    thumb.innerHTML=done?window.StatusIcons.completion():busy?'…':status.state==='failure'?'!':'→';thumb.tabIndex=done?-1:0;
     thumb.setAttribute('aria-label',done?`${rule.name}已完成`:`滑动打卡 ${rule.name}`);
   }
   async function submitRule(id){

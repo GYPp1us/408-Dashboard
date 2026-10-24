@@ -58,10 +58,11 @@ class OriginOsAtomicPublisher(private val context: Context) {
     fun liveNotification(state: FocusRuntimeState, operation: AtomicOperation, retryAction: String = "",
                          forceShowCard: Boolean? = null, now: Long = System.currentTimeMillis(),
                          atomicAvailable: Boolean = usesAtomicIsland(), showSeconds: Int = 0,
-                         countdown: IslandContext.Countdown? = null, systemTimer: AtomicSystemTimer? = null): Notification {
+                         countdown: IslandContext.Countdown? = null, systemTimer: AtomicSystemTimer? = null,
+                         taskSync: IslandContext.TaskSync? = null): Notification {
         val due = store.due(now)
         val layout = AtomicIslandLayout.from(if (due != null) store.reminderState(now) else state,
-            due, now, store.remindersClosed(state), countdown)
+            due, now, store.remindersClosed(state), countdown, taskSync)
         val colors = palette(state)
         val home = openIntent("home", 1)
         val primary = when (layout.button.action) {

@@ -422,7 +422,7 @@ def test_report_owner_isolation_and_guest_read_only(settlement_app):
     guest = application.test_client()
     with guest.session_transaction() as session:
         session.update(authenticated=True, role="guest", profile_user_id=owner)
-    assert guest.get(f"/api/daily-settlement/report?date=2026-10-02&user_id={other}").get_json()["report"] == report
+    assert guest.get(f"/api/daily-settlement/report?date=2026-10-02&user_id={other}").get_json()["report"] == {key: value for key, value in report.items() if key != "daily_tasks"}
     assert guest.post("/api/daily-settlement", json={}).get_json() == {"error": "guest_read_only"}
     assert guest.get("/api/dashboard").get_json()["can_settle_today"] is False
     assert other_client.get("/api/focus").get_json()["active"]["id"] == other_active

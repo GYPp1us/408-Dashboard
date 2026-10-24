@@ -78,6 +78,7 @@
   <script src="{{ static_asset('vendor/Flip.min.js') }}"></script>
   {% if page_name not in ['focus-kline', 'focus_kline'] %}<script src="{{ static_asset('vendor/chart.umd.js') }}"></script>{% endif %}
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('vendor/lightweight-charts.standalone.production.js') }}"></script>{% endif %}
+  <script src="{{ static_asset('status-icons.js') }}" defer></script>
   <script src="{{ static_asset('dashboard-clock.js') }}" defer></script>
   <script src="{{ static_asset('dashboard-ui.js') }}" defer></script>
   {% if page_name in ['home', 'focus-kline', 'focus_kline'] %}<script src="{{ static_asset('index-market.js') }}" defer></script>{% endif %}
@@ -87,6 +88,7 @@
   {% if page_name == 'home' %}<script src="{{ static_asset('daily-report.js') }}" defer></script>{% endif %}
   <script src="{{ static_asset('focus-entry.js') }}" defer></script>
   {% if page_name == 'home' %}<script src="{{ static_asset('day-timeline.js') }}" defer></script>{% endif %}
+  <script src="{{ static_asset('paper-tape.js') }}" defer></script>
   <script src="{{ static_asset('app.js') }}" defer></script>
   <script src="{{ static_asset('island-context.js') }}" defer></script>
   {% if page_name in ['focus-kline', 'focus_kline'] %}<script src="{{ static_asset('focus_kline.js') }}" defer></script>{% endif %}

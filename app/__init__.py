@@ -13,6 +13,8 @@ from .focus_reporter import materialize_legacy_reporter_keys
 from .routes import register_routes
 from .dashboard_artwork import register_dashboard_artwork
 from .checkins import register_checkins
+from .daily_tasks import register_daily_tasks
+from .daily_task_push import start_push_worker
 
 
 def register_static_assets(app: Flask) -> None:
@@ -68,6 +70,8 @@ def create_app(overrides: dict | None = None) -> Flask:
     register_routes(app)
     register_dashboard_artwork(app)
     register_checkins(app)
+    register_daily_tasks(app)
+    start_push_worker(app)
     start_focus_monitor(app)
 
     return app

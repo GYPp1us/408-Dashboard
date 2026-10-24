@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, '../app/static/daily-report.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../app/static/status-icons.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '../app/static/daily-report.js'), 'utf8');
 const exposed = source.replace(/\}\)\(\);\s*$/, 'globalThis.reportTest = { validReport, reportHtml, seconds };})();');
 const snapshot = {
   version: 1, snapshot_kind: 'settled', date: '2026-10-02', timezone: 'Asia/Shanghai', username: 'reader',
@@ -28,7 +28,7 @@ function context() {
     focus() { calls.focused++; }
   }
   const trigger = new HTMLElement();
-  const dialog = { open: false, classList, addEventListener() {}, showModal() { this.open = true; calls.shown++; }, close() { this.open = false; } };
+  const dialog = { open: false, dataset: {}, classList, addEventListener() {}, showModal() { this.open = true; calls.shown++; }, close() { this.open = false; } };
   const content = { innerHTML: '', classList, setAttribute() {}, scrollTop: 0 };
   const closeButton = new HTMLElement();
   closeButton.addEventListener = () => {};

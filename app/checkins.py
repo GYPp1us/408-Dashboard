@@ -114,7 +114,8 @@ def settlement_snapshot(connection, user_id, settled_at):
 def island_context(connection, user_id, now, sessions):
     """Only native display inputs; no location or external reporter keys."""
     current = catalog(connection, user_id, now)
-    return {'timezone':current['timezone'], 'date':current['date'],
+    from .daily_task_push import status as task_push_status
+    return {'task_sync':task_push_status(connection, user_id, now), 'timezone':current['timezone'], 'date':current['date'],
             'sessions':[{'start':s['start'].isoformat(), 'end':s['end'].isoformat()} for s in sessions],
             'checkins':[{'id':r['id'], 'name':r['name'], 'start':r['time_start'], 'end':r['time_end'],
                          'completed_day':current['date'] if r['completed_at'] else None}

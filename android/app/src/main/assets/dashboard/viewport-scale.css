@@ -181,3 +181,12 @@ html.native-app .is-resting #native-runtime-actions { justify-content:center; }
 html.native-app[data-viewport-mode="portrait"] .native-goal-choice select { min-height:34px; font-size:12px; border-radius:7px; }
 html.native-app[data-viewport-mode="portrait"] .native-settings-entry h2 { font-size:15px; }
 html.native-app[data-viewport-mode="portrait"] .is-resting #dashboard-controls { height:340px !important; overflow:hidden; }
+
+/* 0.9 portrait: retain the 1440 landscape canvas and move duplicate time to the header. */
+#native-status-clock { display:none; }
+html.native-app[data-viewport-mode="portrait"] .app-main { padding-inline:22px; }
+html.native-app[data-viewport-mode="portrait"] .current-time-card { display:none; }
+html.native-app[data-viewport-mode="portrait"] .time-grid { grid-template-columns:minmax(0,1fr) !important; }
+html.native-app[data-viewport-mode="portrait"] #day-timeline { grid-column:1/-1; }
+html.native-app[data-viewport-mode="portrait"] .status-bar { grid-template-areas:"title clock actions"; grid-template-columns:minmax(0,1fr) auto auto; gap:12px; }
+html.native-app[data-viewport-mode="portrait"] #native-status-clock { display:block; grid-area:clock; color:var(--ink); font:600 22px/1 var(--font-number); font-variant-numeric:tabular-nums; white-space:nowrap; }

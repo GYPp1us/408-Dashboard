@@ -175,6 +175,69 @@ CREATE TABLE IF NOT EXISTS daily_settlements (
     report_json TEXT,
     UNIQUE(user_id, settlement_date)
 );
+CREATE TABLE IF NOT EXISTS daily_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    plan_date TEXT NOT NULL,
+    source TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    subject_id INTEGER REFERENCES user_subjects(id) ON DELETE SET NULL,
+    focus_item_id INTEGER REFERENCES user_focus_items(id) ON DELETE SET NULL,
+    target_minutes INTEGER,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),
+    completed_at TEXT,
+    archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1)),
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, plan_date, source, external_id)
+);
+CREATE INDEX IF NOT EXISTS daily_tasks_user_day ON daily_tasks(user_id, plan_date, sort_order, id);
+CREATE TABLE IF NOT EXISTS daily_task_focus_links (
+    session_id INTEGER PRIMARY KEY REFERENCES focus_sessions(id) ON DELETE CASCADE,
+    task_id INTEGER NOT NULL REFERENCES daily_tasks(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS daily_task_links_task ON daily_task_focus_links(user_id, task_id);
+CREATE TABLE IF NOT EXISTS daily_task_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    task_id INTEGER NOT NULL REFERENCES daily_tasks(id) ON DELETE CASCADE,
+    completed INTEGER NOT NULL CHECK(completed IN (0,1)),
+    source TEXT NOT NULL,
+    accepted_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS daily_task_reporter_keys (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS daily_task_push_settings (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    url TEXT NOT NULL DEFAULT '',
+    token TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS daily_task_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    settlement_id INTEGER REFERENCES daily_settlements(id) ON DELETE SET NULL,
+    event_id TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT,
+    lease_until TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS daily_task_outbox_due ON daily_task_outbox(status, next_attempt_at);
 CREATE TABLE IF NOT EXISTS migration_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code_hash TEXT NOT NULL UNIQUE,
@@ -1531,6 +1594,9 @@ def export_migration_data(connection: sqlite3.Connection, now: datetime) -> dict
             "focus_sessions": _rows(connection, "SELECT * FROM focus_sessions ORDER BY id"),
             "focus_pauses": _rows(connection, "SELECT * FROM focus_pauses ORDER BY id"),
             "daily_settlements": _rows(connection, "SELECT * FROM daily_settlements ORDER BY id"),
+            "daily_tasks": _rows(connection, "SELECT * FROM daily_tasks ORDER BY id"),
+            "daily_task_focus_links": _rows(connection, "SELECT * FROM daily_task_focus_links ORDER BY session_id"),
+            "daily_task_events": _rows(connection, "SELECT * FROM daily_task_events ORDER BY id"),
             "checkin_rules": _rows(connection, "SELECT * FROM checkin_rules ORDER BY id"),
             "checkin_records": _rows(connection, "SELECT * FROM checkin_records ORDER BY id"),
             "focus_kline_challenge_events": _rows(connection, "SELECT * FROM focus_kline_challenge_events ORDER BY id") if _table_exists(connection, "focus_kline_challenge_events") else [],
@@ -1581,6 +1647,8 @@ def list_plans(connection: sqlite3.Connection, user_id: int | None = None) -> li
 
 def clear_user_data(connection: sqlite3.Connection) -> None:
     connection.execute("BEGIN IMMEDIATE")
+    connection.execute("DELETE FROM daily_task_outbox")
+    connection.execute("DELETE FROM daily_tasks")
     connection.execute("DELETE FROM focus_sessions")
     connection.execute("DELETE FROM daily_settlements")
     connection.execute("DELETE FROM scores")

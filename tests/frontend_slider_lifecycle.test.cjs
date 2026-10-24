@@ -93,7 +93,7 @@ function harness({ response, nodes = new Map(), launchers = [] } = {}) {
     documentElement: { dataset: { themePalette: 'clay' }, classList: classList(), style: {} },
     visibilityState: 'visible', hidden: false,
     querySelector: selector => nodes.get(selector) ?? null,
-    querySelectorAll: selector => selector === '.drag-launch' ? launchers : [],
+    querySelectorAll: selector => selector === '.drag-launch[data-focus-item-id]' ? launchers : [],
     createTextNode: text => text,
   });
   const gsap = {

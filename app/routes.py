@@ -28,6 +28,8 @@ from .focus_reporter import ReporterError, apply_frame, authenticate_reporter, c
 from .checkins import heatmap as checkin_heatmap, settlement_snapshot as checkin_settlement_snapshot, island_context
 from .focus_exchange import ExchangeParameters, MODEL as EXCHANGE_MODEL
 from .focus_challenge import account_now, challenge_decisions, challenge_payload, set_challenge
+from .daily_tasks import catalog as daily_task_catalog, summary as daily_task_summary
+from .daily_task_push import enqueue as enqueue_daily_task_push, cancel_settlement as cancel_daily_task_push
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 from .settlement_report import build_settlement_report
 
@@ -119,6 +121,15 @@ def _row(connection, session_id: int, now: datetime | None = None):
         return None
     current = now or _now("UTC")
     return _session_payload(dict(row), _pause_map(connection).get(session_id, []), current)
+
+
+def _settlement_for_viewer(settlement):
+    # Guest dashboards keep the existing public focus summary. Agent plans,
+    # task notes and completion history remain account-private.
+    if settlement and is_guest():
+        report = {key: value for key, value in settlement['report'].items() if key != 'daily_tasks'}
+        return {**settlement, 'report': report}
+    return settlement
 
 
 def _focus_rows(connection, now: datetime, limit: int = 20, pauses: dict[int, list[dict]] | None = None, user_id: int | None = None) -> list[dict]:
@@ -635,7 +646,7 @@ def register_routes(app):
             pauses = _pause_map(connection)
             active_row = connection.execute("SELECT * FROM focus_sessions WHERE status = 'active' AND user_id = ? ORDER BY id DESC LIMIT 1", (viewer_id,)).fetchone()
             settlement_date = now.date().isoformat()
-            daily_settlement = get_daily_settlement(connection, viewer_id, settlement_date)
+            daily_settlement = _settlement_for_viewer(get_daily_settlement(connection, viewer_id, settlement_date))
             focus_sessions = _focus_sessions(connection, now, pauses, viewer_id)
             sessions = [(start, end) for _, start, end in focus_sessions]
             focus_heat = aggregate_focus_heatmap(sessions, now)
@@ -683,6 +694,7 @@ def register_routes(app):
                 "heatmap_visible_hours": heatmap_visible_hours,
                 "scores": scores,
                 "score_history": score_history,
+                "daily_plan": daily_task_summary(connection, viewer_id, now) if viewer_id == current_user_id() and not is_guest() else None,
                 "plans": plans,
                 "friends": _friend_diff_payload(connection, now, viewer_id),
                 "viewer": get_user(connection, viewer_id),
@@ -929,6 +941,7 @@ def register_routes(app):
                 leaderboard=leaderboard,
                 index_payload=_focus_kline_payload(connection, user_id, settings, now),
                 checkins=checkin_settlement_snapshot(connection, user_id, now),
+                daily_tasks=daily_task_catalog(connection, user_id, now, settlement_date),
             )
             cursor = connection.execute(
                 """INSERT INTO daily_settlements(
@@ -943,6 +956,7 @@ def register_routes(app):
                 )), json.dumps(report, ensure_ascii=False, separators=(",", ":"))),
             )
             ended_session = _row(connection, ended_session_id, now) if ended_session_id is not None else None
+            enqueue_daily_task_push(connection, user_id, {**payload, "id":cursor.lastrowid}, report["daily_tasks"], now)
             connection.commit()
             payload["id"] = cursor.lastrowid
             payload["report"] = report
@@ -990,6 +1004,7 @@ def register_routes(app):
             if existing:
                 # Reopen the day without changing any completed focus records.
                 # The id guard prevents a delayed retry deleting a newer report.
+                cancel_daily_task_push(connection, user_id, existing, _now("UTC"))
                 connection.execute(
                     "DELETE FROM daily_settlements WHERE id = ? AND user_id = ?",
                     (settlement_id, user_id),
@@ -1016,7 +1031,7 @@ def register_routes(app):
                 datetime.strptime(settlement_date, "%Y-%m-%d")
             except ValueError:
                 return jsonify(error="invalid_settlement_date"), 400
-            settlement = get_daily_settlement(connection, viewer_id, settlement_date)
+            settlement = _settlement_for_viewer(get_daily_settlement(connection, viewer_id, settlement_date))
             if not settlement:
                 return jsonify(error="daily_settlement_not_found"), 404
             response = jsonify(settlement=settlement, report=settlement["report"])

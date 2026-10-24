@@ -23,10 +23,14 @@
   };
   const metric = (label, value, extra = "") => `<div class="daily-report-metric ${extra}"><span>${escape(label)}</span><strong>${escape(value)}</strong></div>`;
   const historyKey = "mutsumiDailyReport";
-  let settlement = null, currentDate = null, returnFocus = null, request = 0, controller = null, historyToken = null, closing = false;
+  let currentReport = null, lastPortrait = null, settlement = null, currentDate = null, returnFocus = null, request = 0, controller = null, historyToken = null, closing = false;
 
   function updateGeometry() {
     const viewport = window.MutsumiViewport;
+    const portrait = window.AppPages?.isPortrait?.() === true;
+    dialog.classList.toggle("app-native-page", portrait);
+    if (dialog.open && currentReport && lastPortrait !== null && portrait !== lastPortrait) content.innerHTML = reportHtml(currentReport);
+    lastPortrait = portrait;
     dialog.classList.toggle("is-compact", Boolean(viewport?.wide) && (viewport.logicalHeight || 720) < 720);
   }
 
@@ -69,6 +73,8 @@
   }
 
   function status(title, message, error = false) {
+    currentReport = null;
+    dialog.dataset.nativeReady = "false";
     content.setAttribute("aria-busy", String(!error));
     content.classList.remove("is-ready");
     content.innerHTML = `<div class="daily-report-status" role="${error ? "alert" : "status"}">${error ? '<span class="daily-report-status-mark" aria-hidden="true">!</span>' : '<span class="daily-report-loading-mark" aria-hidden="true"></span>'}<h2 id="daily-report-title">${escape(title)}</h2><p id="daily-report-caption">${escape(message)}</p>${error ? '<button type="button" class="ui-button ui-button--secondary" data-daily-report-retry>重试</button>' : ""}</div>`;
@@ -80,11 +86,13 @@
       try { return new Intl.DateTimeFormat("zh-CN", { timeZone:zone || "Asia/Shanghai", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", hour12:false }).format(new Date(value)); }
       catch (_) { return "—"; }
     };
-    const items = summary.items.map(item => `<li class="${item.completed ? "is-complete" : ""}"><span>${escape(item.name)}</span><b>${item.completed ? "完成" : "未完成"}</b></li>`).join("");
+    const items = summary.items.map(item => `<li class="${item.completed ? "is-complete" : ""}"><span>${escape(item.name)}</span><b style="display:inline-flex;align-items:center" aria-label="${item.completed ? "已完成" : "未完成"}">${window.StatusIcons.completion(item.completed)}</b></li>`).join("");
     return `<section class="daily-report-checkins"><div><h3>打卡 <b>${Number(summary.completed) || 0}/${Number(summary.total) || 0}</b></h3><span>结算前24小时 · ${escape(stamp(summary.window_start))} — ${escape(stamp(summary.window_end))}</span></div>${items ? `<ul>${items}</ul>` : '<p class="daily-report-empty">这段时间没有打卡事项</p>'}</section>`;
   }
 
   function reportHtml(report) {
+    const native = window.AppPages?.dailyReportHtml?.(report);
+    if (native) return native;
     const legacy = report.snapshot_kind === "legacy_summary";
     const checkinsHtml = checkinHtml(report.checkins, report.timezone);
     const subjects = (Array.isArray(report.subject_totals) ? report.subject_totals : []).filter((item) => known(item.seconds) && Number(item.seconds) > 0);
@@ -121,6 +129,8 @@
   function render(report) {
     if (!validReport(report)) throw new Error("服务端报告尚未确认，请重新读取。");
     currentDate = report.date;
+    currentReport = report;
+    dialog.dataset.nativeReady = "true";
     content.setAttribute("aria-busy", "false");
     content.innerHTML = reportHtml(report);
     content.classList.add("is-ready");
@@ -137,6 +147,7 @@
     request += 1;
     controller?.abort();
     currentDate = date;
+    currentReport = null;
     status("正在结算", "请稍候…");
     show(trigger);
   }

@@ -89,6 +89,12 @@
 
   function syncNativeAppearance() {
     const appearance = document.documentElement.dataset;
+    const chrome = getComputedStyle(document.body).getPropertyValue("--paper").trim();
+    const chromeSignature = `${chrome}:${appearance.theme}`;
+    if (state.nativeChromeSignature !== chromeSignature) {
+      window.MutsumiAndroid?.setChromeAppearance?.(chrome, appearance.theme === "dark");
+      state.nativeChromeSignature = chromeSignature;
+    }
     window.MutsumiAndroid?.setAppearance?.(appearance.themeMode || "system", appearance.themePalette || "clay",
       getComputedStyle(document.body).getPropertyValue("--accent").trim());
   }
@@ -152,6 +158,7 @@
 
   function navigateFocus(destination) {
     if (!canManageOwnFocus()) return false;
+    if (destination === "planIntegration") { window.AppPages?.openIntegration(); return true; }
     if (destination === "details") {
       $("#native-runtime-details")?.showModal(); renderNativeRuntime(); return true;
     }
@@ -175,7 +182,7 @@
       if (settlement?.report) window.DailyReport?.open?.(settlement.report);
       else {
         const runtime = nativeRuntime();
-        const session = state.dashboard?.focus?.recent?.find((item) => item.id === runtime.sessionId) || { effective_seconds:runtime.elapsedSeconds || 0 };
+        const session = state.dashboard?.focus?.recent?.find((item) => item.id === runtime.sessionId) || { id:runtime.sessionId, effective_seconds:runtime.elapsedSeconds || 0 };
         showFocusSummary(session);
       }
       $("#dashboard-insights")?.scrollIntoView({ block:"start", behavior:"auto" });
@@ -186,6 +193,11 @@
 
   function initializeNativeExperience() {
     document.documentElement.classList.add("native-app");
+    if (!$("#native-status-clock")) {
+      const clock = document.createElement("strong"); clock.id = "native-status-clock";
+      clock.setAttribute("aria-label", "当前时间"); clock.textContent = "--:--:--";
+      $(".status-bar")?.append(clock);
+    }
     const brand = $(".status-title strong");
     if (brand) { brand.innerHTML = '<svg class="brand-clock" viewBox="0 0 48 48" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M24,3A21,21 0,1 0,24 45A21,21 0,1 0,24 3 M19,14h6v12h9v6H19z"/></svg>Focus Console'; brand.setAttribute("aria-label", "Mutsumi Focus Console"); }
     if (!canManageOwnFocus()) return;
@@ -763,6 +775,7 @@
     setSecondTask("clock", (now) => {
       const current = serverNow(now);
       $("#current-time")?.replaceChildren(document.createTextNode(accountClock(current)));
+      $("#native-status-clock")?.replaceChildren(document.createTextNode(accountClock(current)));
       $("#today-date")?.replaceChildren(document.createTextNode(accountDate(current).toLocaleDateString("zh-CN", { timeZone:"UTC", weekday:"long", year:"numeric", month:"2-digit", day:"2-digit" })));
     });
   }
@@ -1341,6 +1354,7 @@
   }
 
   function showFocusSummary(session) {
+    if (window.AppPages && canManageOwnFocus() && !state.settling) { window.AppPages.openSession(session); return; }
     const overview = $("#focus-investment-view");
     const comparison = $("#focus-comparison-view");
     const summary = $("#focus-summary");
@@ -1665,11 +1679,7 @@
     return focusLaunchItems().find((item) => Number(item.id) === Number(state.focusLaunch.itemId)) || null;
   }
 
-  function centerFocusStripOption(strip, value, behavior = "auto") {
-    const option = [...strip.querySelectorAll("[data-focus-option]")].find((item) => item.dataset.value === String(value));
-    if (!option) return;
-    strip.scrollTo({ left: Math.max(0, option.offsetLeft + option.offsetWidth / 2 - strip.clientWidth / 2), behavior });
-  }
+  function centerFocusStripOption(strip, value, behavior = "auto") { window.PaperTape?.center(strip, value, behavior); }
 
   function updateFocusLaunchPreview() {
     const subjects = state.dashboard?.subjects || [];
@@ -1691,7 +1701,7 @@
     }
   }
 
-  function selectFocusStripValue(type, value, behavior = "smooth") {
+  function selectFocusStripValue(type, value, behavior = "smooth", shouldCenter = true) {
     const numeric = Number(value);
     if (type === "subject") {
       if (numeric === Number(state.focusLaunch.subjectId)) return;
@@ -1708,7 +1718,7 @@
       option.classList.toggle("is-selected", selected);
       option.setAttribute("aria-selected", String(selected));
     });
-    if (strip) centerFocusStripOption(strip, numeric, behavior);
+    if (strip && shouldCenter) centerFocusStripOption(strip, numeric, behavior);
     updateFocusLaunchPreview();
   }
 
@@ -1722,47 +1732,13 @@
       const distance = Math.abs(bounds.left + bounds.width / 2 - center);
       return !best || distance < best.distance ? { option, distance } : best;
     }, null)?.option;
-    if (closest) selectFocusStripValue(strip.dataset.focusStrip, closest.dataset.value, snap ? "smooth" : "auto");
+    if (closest) selectFocusStripValue(strip.dataset.focusStrip, closest.dataset.value, snap ? "smooth" : "auto", snap);
   }
 
   function bindFocusStrip(strip) {
-    if (!strip || strip.dataset.bound) return;
-    strip.dataset.bound = "1";
-    let dragging = null;
-    let frame = null;
-    strip.addEventListener("scroll", () => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => { frame = null; syncFocusStripSelection(strip); });
-    }, { passive: true });
-    strip.addEventListener("pointerdown", (event) => {
-      dragging = { pointerId: event.pointerId, startX: event.clientX, scrollLeft: strip.scrollLeft };
-      strip.setPointerCapture?.(event.pointerId);
-      strip.classList.add("is-dragging");
-    });
-    strip.addEventListener("pointermove", (event) => {
-      if (!dragging || dragging.pointerId !== event.pointerId) return;
-      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX) / elementScale(strip);
-    });
-    const finish = (event) => {
-      if (!dragging || dragging.pointerId !== event.pointerId) return;
-      strip.releasePointerCapture?.(event.pointerId);
-      dragging = null;
-      strip.classList.remove("is-dragging");
-      syncFocusStripSelection(strip, true);
-    };
-    strip.addEventListener("pointerup", finish);
-    strip.addEventListener("pointercancel", finish);
-    strip.addEventListener("keydown", (event) => {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-      const options = [...strip.querySelectorAll("[data-focus-option]")];
-      const currentValue = strip.dataset.focusStrip === "subject" ? state.focusLaunch.subjectId : state.focusLaunch.itemId;
-      const current = options.findIndex((item) => item.dataset.value === String(currentValue));
-      const next = Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowRight" ? 1 : -1)));
-      if (options[next]) {
-        event.preventDefault();
-        selectFocusStripValue(strip.dataset.focusStrip, options[next].dataset.value);
-      }
-    });
+    window.PaperTape?.bind(strip, { selector:"[data-focus-option]",
+      selected:() => strip.dataset.focusStrip === "subject" ? state.focusLaunch.subjectId : state.focusLaunch.itemId,
+      onSelect:option => selectFocusStripValue(strip.dataset.focusStrip, option.dataset.value, "auto", false) });
   }
 
   function renderFocusStrip(type, options) {
@@ -1770,9 +1746,8 @@
     if (!strip) return;
     const selected = type === "subject" ? state.focusLaunch.subjectId : state.focusLaunch.itemId;
     strip.innerHTML = options.map((option) => `<button class="score-strip-option${String(option.value) === String(selected) ? " is-selected" : ""}" type="button" data-focus-option data-value="${Number(option.value)}" role="option" aria-selected="${String(option.value) === String(selected)}">${escapeHtml(option.label)}</button>`).join("");
-    strip.querySelectorAll("[data-focus-option]").forEach((option) => option.addEventListener("click", () => selectFocusStripValue(type, option.dataset.value)));
     bindFocusStrip(strip);
-    requestAnimationFrame(() => centerFocusStripOption(strip, selected));
+    window.PaperTape?.rendered(strip, selected);
   }
 
   function renderFocusLaunch() {
@@ -2156,6 +2131,7 @@
       exam: data.exam?.date,
       day: String(data.now || "").slice(0, 10),
       timezoneOffset: accountOffset(data.now),
+      dailyPlan: data.daily_plan?.revision,
       heatmap: data.heatmap,
       checkins: data.checkin_heatmap,
       heatmapVisibleHours: data.heatmap_visible_hours,
@@ -2827,11 +2803,7 @@
     if (submit) submit.disabled = !subject;
   }
 
-  function centerScoreStripOption(strip, value, behavior = "auto") {
-    const option = [...strip.querySelectorAll("[data-score-option]")].find((item) => item.dataset.value === String(value));
-    if (!option) return;
-    strip.scrollTo({ left: Math.max(0, option.offsetLeft + option.offsetWidth / 2 - strip.clientWidth / 2), behavior });
-  }
+  function centerScoreStripOption(strip, value, behavior = "auto") { window.PaperTape?.center(strip, value, behavior); }
 
   function setScoreStripSelection(strip, option) {
     if (!strip || !option) return;
@@ -2866,42 +2838,9 @@
   }
 
   function bindScoreStrip(strip) {
-    if (!strip || strip.dataset.bound) return;
-    strip.dataset.bound = "1";
-    let dragging = null;
-    let frame = null;
-    strip.addEventListener("scroll", () => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => { frame = null; syncScoreStripSelection(strip); });
-    }, { passive: true });
-    strip.addEventListener("pointerdown", (event) => {
-      dragging = { pointerId: event.pointerId, startX: event.clientX, scrollLeft: strip.scrollLeft };
-      strip.setPointerCapture?.(event.pointerId);
-      strip.classList.add("is-dragging");
-    });
-    strip.addEventListener("pointermove", (event) => {
-      if (!dragging || dragging.pointerId !== event.pointerId) return;
-      strip.scrollLeft = dragging.scrollLeft - (event.clientX - dragging.startX) / elementScale(strip);
-    });
-    const finishDrag = (event) => {
-      if (!dragging || dragging.pointerId !== event.pointerId) return;
-      strip.releasePointerCapture?.(event.pointerId);
-      dragging = null;
-      strip.classList.remove("is-dragging");
-      syncScoreStripSelection(strip, true);
-    };
-    strip.addEventListener("pointerup", finishDrag);
-    strip.addEventListener("pointercancel", finishDrag);
-    strip.addEventListener("keydown", (event) => {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-      const options = [...strip.querySelectorAll("[data-score-option]")];
-      const current = options.findIndex((item) => item.dataset.value === String(state.scoreEntry.selection[strip.dataset.scoreStrip]));
-      const next = Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowRight" ? 1 : -1)));
-      if (options[next]) {
-        event.preventDefault();
-        selectScoreStripOption(strip, options[next]);
-      }
-    });
+    window.PaperTape?.bind(strip, { selector:"[data-score-option]",
+      selected:() => state.scoreEntry.selection[strip.dataset.scoreStrip],
+      onSelect:option => setScoreStripSelection(strip, option) });
   }
 
   function renderScoreStrip(key, options) {
@@ -2909,9 +2848,8 @@
     if (!strip) return;
     const selectedValue = state.scoreEntry.selection[key];
     strip.innerHTML = options.map((option) => `<button class="score-strip-option${String(option.value) === String(selectedValue) ? " is-selected" : ""}" type="button" data-score-option data-value="${escapeHtml(option.value)}" role="option" aria-selected="${String(option.value) === String(selectedValue)}">${escapeHtml(option.label)}</button>`).join("");
-    strip.querySelectorAll("[data-score-option]").forEach((option) => option.addEventListener("click", () => selectScoreStripOption(strip, option)));
     bindScoreStrip(strip);
-    requestAnimationFrame(() => centerScoreStripOption(strip, selectedValue));
+    window.PaperTape?.rendered(strip, selectedValue);
   }
 
   function renderScoreEntry() {
@@ -3231,6 +3169,7 @@
     document.querySelectorAll("[data-insight-view]").forEach((button) => button.addEventListener("click", () => selectInsightView(button.dataset.insightView)));
     window.DashboardController = {
       getData: () => state.dashboard,
+      confirm: requestConfirmation,
       isSettlementBusy: () => state.settling,
       canCancelSettlement,
       cancelDailySettlement,

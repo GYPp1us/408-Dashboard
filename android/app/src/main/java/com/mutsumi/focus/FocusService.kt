@@ -143,7 +143,8 @@ class FocusService : Service() {
         if (!publish(state)) return
         checkReminder()
         if (state.mode in setOf(FocusMode.IDLE, FocusMode.SETTLED) &&
-            !state.summaryVisible(now) && store.islandContext().countdown(state, store.due(now), now) == null) {
+            !state.summaryVisible(now) && store.islandContext().countdown(state, store.due(now), now) == null &&
+            store.islandContext().visibleTaskSync(state, store.due(now), now) == null) {
             // Keep the authenticated schedule fresh without a per-second
             // wake lock while there is no clock on the island.
             releaseWakeLock()
@@ -163,9 +164,10 @@ class FocusService : Service() {
         val publishStartedAt = SystemClock.elapsedRealtime()
         val now = System.currentTimeMillis()
         val due = store.due(now)
-        val countdown = store.islandContext().countdown(state, due, now)
+        val taskSync = store.islandContext().visibleTaskSync(state, due, now)
+        val countdown = if (taskSync == null) store.islandContext().countdown(state, due, now) else null
         val visible = store.atomicEnabled() && (state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED, FocusMode.REST) ||
-            state.summaryVisible(now) || due != null || countdown != null)
+            state.summaryVisible(now) || due != null || countdown != null || taskSync != null)
         val token = due?.let { store.reminderToken(it.kind, now) }.orEmpty()
         val atomic = publisher.usesAtomicIsland()
         val timerState = if (due != null) store.reminderState(now) else state
@@ -186,7 +188,7 @@ class FocusService : Service() {
             else -> if (due != null) (now - store.reminderState(now).endedAtEpochMs).coerceAtLeast(0) / 1000 else 0
         }
         val stateKey = AtomicRefreshPolicy.StateKey.from(state, visible, atomic, publisher.palette(state).accent,
-            token, retryAction, store.transitionRevision(), countdown?.key.orEmpty(),
+            token, retryAction, store.transitionRevision(), taskSync?.key ?: countdown?.key.orEmpty(),
             token.isNotBlank() && presentedAt != null && now - presentedAt >= AtomicRefreshPolicy.REMINDER_HOLD_MS)
         val elapsedNow = SystemClock.elapsedRealtime()
         val holdingReminder = visible && atomic && token.isNotBlank() && presentedAt != null &&
@@ -202,7 +204,7 @@ class FocusService : Service() {
         return try {
             val notification = publisher.liveNotification(state, operation, retryAction = retryAction,
                 forceShowCard = forceShowCard, now = now, atomicAvailable = atomic,
-                countdown = countdown, systemTimer = systemTimer)
+                countdown = countdown, systemTimer = systemTimer, taskSync = taskSync)
             if (!foregroundStarted) startForeground(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             else notifications.notify(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             foregroundStarted = true
@@ -222,7 +224,8 @@ class FocusService : Service() {
 
     private fun maybeSyncServer() {
         val now = System.currentTimeMillis()
-        if (busy || syncing || now - lastSyncAt < 15_000 || destroyed ||
+        val transientSync = store.islandContext().visibleTaskSync(store.read(), null, now)?.status == "pending"
+        if (busy || syncing || now - lastSyncAt < (if (transientSync) 2_000L else 15_000L) || destroyed ||
             store.read().mode == FocusMode.IDLE && !store.islandContext().enabled(now)) return
         lastSyncAt = now
         syncing = true

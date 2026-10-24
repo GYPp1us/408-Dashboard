@@ -74,6 +74,11 @@ class FocusBridge(private val activity: MainActivity) {
     fun getDisplayOrientation(): String = activity.getDisplayOrientation()
 
     @JavascriptInterface
+    fun setChromeAppearance(background: String, dark: Boolean) = activity.runOnUiThread {
+        if (activity.hasTrustedDocument()) activity.updateChromeAppearance(background, dark)
+    }
+
+    @JavascriptInterface
     fun imagePickerOwnsBack(): Boolean = activity.imagePickerOwnsBack()
 
     @JavascriptInterface
