@@ -4,6 +4,10 @@ import android.webkit.JavascriptInterface
 
 class FocusBridge(private val activity: MainActivity) {
     @JavascriptInterface
+    fun isFocusForeground(): Boolean = FocusService.isAppVisible() &&
+        activity.getSystemService(android.os.PowerManager::class.java).isInteractive
+
+    @JavascriptInterface
     fun getFocusRuntime(): String = FocusService.snapshot(activity)
 
     @JavascriptInterface

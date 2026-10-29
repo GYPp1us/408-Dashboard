@@ -5,10 +5,11 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const source = (fs.readFileSync(path.join(__dirname, '../app/static/dashboard-clock.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'utf8'));
-const testSource = source.replace(/\}\)\(\);\s*$/, 'globalThis.focusTest = { state, canManageOwnFocus, initializeFocusIdentity, sendForegroundHeartbeat, startForegroundHeartbeat, notifyNativeFocusState, applyFocusState, refreshCurrentPage, revokeFocusIdentity, startRest, commitDailySettlement, api };})();');
+const expose = text => text.replace(/\}\)\(\);\s*$/, 'globalThis.focusTest = { state, canManageOwnFocus, initializeFocusIdentity, sendForegroundHeartbeat, startForegroundHeartbeat, notifyNativeFocusState, applyFocusState, refreshCurrentPage, revokeFocusIdentity, startRest, commitDailySettlement, api };})();');
+const testSource = expose(source);
 const active = { id: 9, user_id: 2, subject: '数学 · 二轮', started_at: new Date(Date.now() - 60000).toISOString(), ended_at: null, paused_at: null, paused_seconds: 0 };
 
-function context({ page = 'home', role = 'admin', viewerId = '2', response, storage = new Map(), nodes = new Map() } = {}) {
+function context({ page = 'home', role = 'admin', viewerId = '2', response, storage = new Map(), nodes = new Map(), apk = false } = {}) {
   const calls = { fetch: [], native: [], clear: 0, intervals: [], timeouts: [], warnings: [] };
   const listeners = new Map();
   const classList = { toggle() {}, add() {}, remove() {}, contains() { return false; } };
@@ -43,9 +44,25 @@ function context({ page = 'home', role = 'admin', viewerId = '2', response, stor
         : { ok: true } };
     },
   });
-  vm.runInContext(testSource, sandbox, { filename: 'app.js' });
+  const program = apk ? expose(fs.readFileSync(path.join(__dirname, '../app/static/dashboard-clock.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '../android/app/src/main/assets/dashboard/app.js'), 'utf8')) : testSource;
+  vm.runInContext(program, sandbox, { filename: 'app.js' });
   return { api: sandbox.focusTest, calls, window, document, storage, listeners };
 }
+
+test('APK activity background or screen off blocks heartbeats even if WebView still says visible', async () => {
+  const app = context({ apk: true });
+  app.api.state.dashboard = { focus: { active } };
+  app.window.MutsumiAndroid.isFocusForeground = () => false;
+  await app.api.sendForegroundHeartbeat();
+  assert.equal(app.calls.fetch.length, 0);
+  await app.api.sendForegroundHeartbeat(true);
+  assert.equal(JSON.parse(app.calls.fetch[0].options.body).foreground, false);
+  assert.equal(JSON.parse(app.calls.fetch[0].options.body).allow_recovery, false);
+  app.window.MutsumiAndroid.isFocusForeground = () => true;
+  await app.api.sendForegroundHeartbeat();
+  assert.equal(JSON.parse(app.calls.fetch[1].options.body).foreground, true);
+  assert.equal(JSON.parse(app.calls.fetch[1].options.body).allow_recovery, false);
+});
 
 test('hidden keepalive explicitly withdraws foreground proof and cannot recover', async () => {
   const app = context();

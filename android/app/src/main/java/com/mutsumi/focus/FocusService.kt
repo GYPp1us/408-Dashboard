@@ -514,6 +514,8 @@ class FocusService : Service() {
 
         fun isBusy(): Boolean = runningService?.busy == true
 
+        fun isAppVisible(): Boolean = appVisible
+
         private fun dispatch(context: Context, intent: Intent) {
             val service = runningService
             if (service != null) {

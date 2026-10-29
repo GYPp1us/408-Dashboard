@@ -2302,16 +2302,23 @@
     }, 10000);
   }
 
+  function isFocusForeground() {
+    return document.visibilityState === "visible" &&
+      (typeof window.MutsumiAndroid?.isFocusForeground !== "function" || window.MutsumiAndroid.isFocusForeground());
+  }
+
   function markHeartbeatSuccess() {
     state.heartbeatFailureSince = null;
     window.clearTimeout(state.heartbeatFailureTimer);
     setSyncLost(false);
-    state.foregroundContinuous = document.visibilityState === "visible";
+    state.foregroundContinuous = isFocusForeground();
   }
 
   async function sendForegroundHeartbeat(allowHidden = false) {
     if (!canManageOwnFocus()) return;
-    if ((!allowHidden && document.visibilityState !== "visible") || state.heartbeatInFlight) return;
+    const foreground = isFocusForeground();
+    if (!foreground) state.foregroundContinuous = false;
+    if ((!allowHidden && !foreground) || state.heartbeatInFlight) return;
     state.heartbeatInFlight = true;
     const sessionId = state.focusRecoverySessionId ?? state.dashboard?.focus?.active?.id ?? null;
     const controller = new AbortController();
@@ -2322,8 +2329,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
-          foreground: document.visibilityState === "visible",
-          allow_recovery: Boolean(sessionId) && document.visibilityState === "visible" && state.foregroundContinuous,
+          foreground,
+          allow_recovery: Boolean(sessionId) && foreground && state.foregroundContinuous,
         }),
         keepalive: true,
         signal: controller.signal,
