@@ -11,10 +11,10 @@ object FocusApi {
     data class StateResult(val successful: Boolean, val status: Int, val state: FocusRuntimeState? = null,
                            val islandContext: IslandContext? = null)
 
-    fun heartbeat(state: FocusRuntimeState): Result = post(
+    fun heartbeat(state: FocusRuntimeState, foreground: Boolean): Result? = if (!foreground) null else post(
         state,
         "/api/focus/heartbeat",
-        "{\"session_id\":${state.sessionId},\"allow_recovery\":true}",
+        "{\"session_id\":${state.sessionId},\"foreground\":true,\"allow_recovery\":false}",
     )
 
     fun setPaused(state: FocusRuntimeState, paused: Boolean): Result = post(

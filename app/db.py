@@ -1500,6 +1500,7 @@ def record_foreground_heartbeat(
     user_id: int | None,
     session_id: int | None = None,
     allow_recovery: bool = False,
+    foreground: bool = True,
 ) -> dict[str, Any]:
     now_value = now.isoformat()
     if user_id is None:
@@ -1516,20 +1517,20 @@ def record_foreground_heartbeat(
         (user_id,),
     ).fetchone()
     recovered = False
-    if active:
+    if active and foreground and (session_id is None or session_id == active["id"]):
         connection.execute(
             "UPDATE focus_sessions SET last_foreground_at = ? WHERE id = ?",
             (now_value, active["id"]),
         )
         session_id = int(active["id"])
-    elif session_id is not None and allow_recovery:
+    elif not active and session_id is not None and allow_recovery and foreground:
         from .focus_challenge import account_now
         settings = get_settings(connection, user_id)
         local_day = account_now(now, settings.get("timezone", "Asia/Shanghai")).date().isoformat()
         already_settled = get_daily_settlement(connection, user_id, local_day) is not None
         row = connection.execute(
-            "SELECT id FROM focus_sessions WHERE id = ? AND user_id = ? AND reporter_source IS NULL AND status = 'completed' AND ended_reason = 'foreground_timeout'",
-            (session_id, user_id),
+            "SELECT id FROM focus_sessions WHERE id = ? AND user_id = ? AND reporter_source IS NULL AND status = 'completed' AND ended_reason = 'foreground_timeout' AND ended_at >= ?",
+            (session_id, user_id, (now - timedelta(minutes=2)).isoformat()),
         ).fetchone()
         if row and not already_settled:
             connection.execute(

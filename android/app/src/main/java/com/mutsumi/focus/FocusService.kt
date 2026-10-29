@@ -27,6 +27,10 @@ class FocusService : Service() {
     private var foregroundStarted = false
     private var islandVisible = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeLockAcquiredAt = 0L
+    private var lastTickAt: Long? = null
+    private var runtimeRecovery = false
+    private var publishRetryAt = 0L
     private var destroyed = false
     @Volatile private var busy = false
     @Volatile private var messageSince = 0L
@@ -133,6 +137,9 @@ class FocusService : Service() {
         handler.removeCallbacks(tick)
         val state = store.read()
         val now = System.currentTimeMillis()
+        val elapsed = SystemClock.elapsedRealtime()
+        if (FocusRuntimeLease.stalled(lastTickAt, elapsed)) runtimeRecovery = true
+        lastTickAt = elapsed
         val scheduled = store.islandContext().enabled(now)
         if (!scheduled && (state.mode == FocusMode.IDLE ||
             state.mode == FocusMode.SETTLED && !state.summaryVisible(System.currentTimeMillis()) ||
@@ -156,12 +163,16 @@ class FocusService : Service() {
             it.setReferenceCounted(false)
             wakeLock = it
         }
-        if (!lock.isHeld) lock.acquire(10 * 60_000L)
+        if (FocusRuntimeLease.needsRenewal(lock.isHeld, wakeLockAcquiredAt, elapsed)) {
+            lock.acquire(FocusRuntimeLease.TIMEOUT_MS)
+            wakeLockAcquiredAt = elapsed
+        }
         handler.postDelayed(tick, 1_000L)
     }
 
     private fun publish(state: FocusRuntimeState): Boolean {
         val publishStartedAt = SystemClock.elapsedRealtime()
+        if (foregroundStarted && publishStartedAt < publishRetryAt) return true
         val now = System.currentTimeMillis()
         val due = store.due(now)
         val taskSync = store.islandContext().visibleTaskSync(state, due, now)
@@ -179,7 +190,7 @@ class FocusService : Service() {
         val presentedAt = store.islandPresentedAt(token)
         val presentation = AtomicRefreshPolicy.reminderPresentation(visible, atomic, token,
             presentedAt, store.islandCollapseSent(token), now)
-        val forceShowCard = presentation.expanded ?: if (refreshPolicy.reminderCleared(token)) false else null
+        val forceShowCard = presentation.expanded ?: if (runtimeRecovery || refreshPolicy.reminderCleared(token)) false else null
         val firstPresentation = presentation.first
         val clockBucket = countdown?.remaining(now) ?: when (state.mode) {
             FocusMode.PAUSED -> (now - state.pausedAtEpochMs).coerceAtLeast(0) / 1000
@@ -193,12 +204,12 @@ class FocusService : Service() {
         val elapsedNow = SystemClock.elapsedRealtime()
         val holdingReminder = visible && atomic && token.isNotBlank() && presentedAt != null &&
             now - presentedAt in 0 until AtomicRefreshPolicy.REMINDER_HOLD_MS
-        if (!refreshPolicy.shouldPublish(stateKey, clockBucket, elapsedNow, !foregroundStarted, holdingReminder,
+        if (!refreshPolicy.shouldPublish(stateKey, clockBucket, elapsedNow, !foregroundStarted || runtimeRecovery, holdingReminder,
                 systemTimerKey, systemTimer?.direction ?: 1)) return true
         val stateChanged = refreshPolicy.stateChanged(stateKey)
         val operation = when {
             !visible -> OriginOsAtomicPublisher.AtomicOperation.END
-            !islandVisible -> OriginOsAtomicPublisher.AtomicOperation.CREATE
+            !islandVisible || runtimeRecovery -> OriginOsAtomicPublisher.AtomicOperation.CREATE
             else -> OriginOsAtomicPublisher.AtomicOperation.UPDATE
         }
         return try {
@@ -209,6 +220,8 @@ class FocusService : Service() {
             else notifications.notify(OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID, notification)
             foregroundStarted = true
             islandVisible = visible
+            runtimeRecovery = false
+            publishRetryAt = 0
             refreshPolicy.published(stateKey, clockBucket, elapsedNow, systemTimerKey)
             if (stateChanged) Log.i("FocusService", "Notification state=${state.mode} operation=${operation.name} " +
                 "publishMs=${SystemClock.elapsedRealtime() - publishStartedAt}")
@@ -217,6 +230,13 @@ class FocusService : Service() {
             true
         } catch (error: Exception) {
             Log.w("FocusService", "Foreground promotion failed", error)
+            if (foregroundStarted) {
+                // A transient OEM notification failure must not permanently
+                // stop the timer, its network reconciliation or future rounds.
+                runtimeRecovery = true
+                publishRetryAt = SystemClock.elapsedRealtime() + 5_000L
+                return true
+            }
             stopRuntime()
             false
         }
@@ -234,7 +254,7 @@ class FocusService : Service() {
         val requestedAt = SystemClock.elapsedRealtime()
         network.synchronize { generation ->
             val heartbeat = if (requested.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED) && requested.sessionId > 0)
-                FocusApi.heartbeat(requested) else null
+                FocusApi.heartbeat(requested, appVisible) else null
             val response = FocusApi.fetchState(requested)
             val responseAt = SystemClock.elapsedRealtime()
             handler.post {
@@ -418,7 +438,7 @@ class FocusService : Service() {
         @Volatile private var runningService: FocusService? = null
         private var nextStartRequest = 0L
         private val pendingStarts = mutableSetOf<Long>()
-        private var appVisible = false
+        @Volatile private var appVisible = false
 
         fun sync(context: Context, state: FocusRuntimeState) = onMain {
             val store = FocusStateStore(context)
@@ -441,7 +461,19 @@ class FocusService : Service() {
 
         fun setAppVisible(context: Context, visible: Boolean) = onMain {
             appVisible = visible
-            runningService?.applyState()
+            runningService?.let { service ->
+                if (visible) {
+                    // Restore the surface after suspend without replaying an
+                    // already presented reminder or altering its pause anchor.
+                    if (FocusRuntimeLease.stalled(service.lastTickAt, SystemClock.elapsedRealtime()) ||
+                        service.notifications.activeNotifications.none { it.id == OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID }) {
+                        service.runtimeRecovery = true
+                    }
+                    service.lastSyncAt = 0
+                }
+                service.applyState()
+                service.maybeSyncServer()
+            }
         }
 
         fun requestReminderCheck(context: Context) = onMain {

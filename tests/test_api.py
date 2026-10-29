@@ -371,7 +371,7 @@ def test_migration_code_exports_all_business_data_once(authenticated_client):
     assert "migration_instance_id" not in package["settings"]
 
 
-def test_visible_dashboard_poll_refreshes_foreground_heartbeat(authenticated_client, app):
+def test_dashboard_poll_does_not_attest_foreground_presence(authenticated_client, app):
     from app.db import connect
 
     session_id = authenticated_client.post("/api/focus/start", json={"subject": "数学二轮", "mode": "专注"}).get_json()["session"]["id"]
@@ -385,7 +385,7 @@ def test_visible_dashboard_poll_refreshes_foreground_heartbeat(authenticated_cli
     connection = connect(app.config["DATABASE"])
     refreshed = connection.execute("SELECT last_foreground_at FROM focus_sessions WHERE id = ?", (session_id,)).fetchone()[0]
     connection.close()
-    assert refreshed > "2026-01-01T00:00:00+00:00"
+    assert refreshed == "2026-01-01T00:00:00+00:00"
 
 
 def test_negative_focus_duration_is_rejected(authenticated_client):

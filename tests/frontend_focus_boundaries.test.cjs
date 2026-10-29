@@ -47,6 +47,19 @@ function context({ page = 'home', role = 'admin', viewerId = '2', response, stor
   return { api: sandbox.focusTest, calls, window, document, storage, listeners };
 }
 
+test('hidden keepalive explicitly withdraws foreground proof and cannot recover', async () => {
+  const app = context();
+  app.api.state.dashboard = { focus: { active } };
+  app.document.visibilityState = 'hidden';
+  await app.api.sendForegroundHeartbeat(true);
+  const body = JSON.parse(app.calls.fetch[0].options.body);
+  assert.equal(body.foreground, false);
+  assert.equal(body.allow_recovery, false);
+  app.document.visibilityState = 'visible';
+  await app.api.sendForegroundHeartbeat();
+  assert.equal(JSON.parse(app.calls.fetch[1].options.body).foreground, true);
+});
+
 test('guest cannot heartbeat, take ownership of viewed focus or trigger native reminders', async () => {
   const app = context({ role: 'guest', viewerId: '99' });
   const viewed = { ...active, user_id: 99, paused_at: new Date(Date.now() - 360000).toISOString() };

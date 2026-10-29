@@ -293,6 +293,37 @@ class FocusStateStoreTest {
         assertEquals(marketAt("23:05:00"), store.nextReminderAt(now = marketAt("23:01:00")))
     }
 
+    @Test fun `five hour pause crosses lunch and reopening with live timer and immediate resume`() {
+        val store = marketStore()
+        val start = marketAt("11:10:00")
+        val state = FocusRuntimeState(mode = FocusMode.PAUSED, sessionId = 26,
+            startedAtEpochMs = start - 1800000, pausedAtEpochMs = start, elapsedSeconds = 1800)
+        store.write(state)
+        store.dismissPaused()
+        val policy = AtomicRefreshPolicy()
+        var published = 0
+        for (seconds in 0L..5 * 3600) {
+            val now = start + seconds * 1000
+            val due = store.due(now)
+            assertNull(due)
+            assertNull(store.islandContext().countdown(state, due, now))
+            val timer = AtomicSystemTimer.from(state, now)!!
+            assertEquals(seconds, timer.seconds)
+            val key = AtomicRefreshPolicy.StateKey.from(state, true, true, 1, "", "", store.transitionRevision())
+            if (policy.shouldPublish(key, timer.seconds, seconds * 1000, false, systemTimerKey = timer.renderKey())) {
+                policy.published(key, timer.seconds, seconds * 1000, timer.renderKey())
+                published++
+            }
+        }
+        assertTrue(published > 30)
+        val resumed = state.copy(mode = FocusMode.FOCUSING, pausedAtEpochMs = 0,
+            pausedSeconds = 18000, observedAtEpochMs = start + 18000_000)
+        store.write(resumed)
+        val key = AtomicRefreshPolicy.StateKey.from(resumed, true, true, 1, "", "", store.transitionRevision())
+        assertTrue(policy.shouldPublish(key, 1800, 18000_001, false, systemTimerKey = "3:0"))
+        assertEquals(1800, resumed.elapsedNow(start + 18000_000))
+    }
+
     @Test fun `strong reminder is opt in even after old permissions were granted`() {
         val prefs = MemoryPreferences()
         val store = FocusStateStore(prefs)

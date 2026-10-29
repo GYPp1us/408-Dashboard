@@ -633,9 +633,8 @@ def register_routes(app):
     def dashboard_api():
         connection = connect(app.config["DATABASE"])
         viewer_id = _viewer_user_id(connection)
-        if not is_guest():
-            connection.execute("UPDATE focus_sessions SET last_foreground_at = ? WHERE status = 'active' AND reporter_source IS NULL AND user_id = ?", (_now("UTC").isoformat(), current_user_id()))
-            connection.commit()
+        # Native island polling is also a dashboard reader. Only the explicit
+        # visible-page heartbeat may attest that focus is still in foreground.
         settings = get_settings(connection, viewer_id)
         now = _now(settings.get("timezone", "Asia/Shanghai"))
         try:
@@ -1126,6 +1125,10 @@ def register_routes(app):
                 user_id=None if is_guest() else current_user_id(),
                 session_id=session_id,
                 allow_recovery=payload.get("allow_recovery") is True,
+                foreground=payload.get("foreground") is not False and (
+                    not request.user_agent.string.startswith("MutsumiFocus/")
+                    or payload.get("foreground") is True
+                ),
             )
             if result["recovered"]:
                 _refresh_focus_kline(connection, current_user_id())

@@ -371,6 +371,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onPause() {
+        FocusService.setAppVisible(this, false)
+        super.onPause()
+    }
+
     override fun onStop() {
         FocusService.setAppVisible(this, false)
         if (receiverRegistered) {

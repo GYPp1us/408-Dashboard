@@ -2011,6 +2011,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
+          foreground: document.visibilityState === "visible",
           allow_recovery: Boolean(sessionId) && document.visibilityState === "visible" && state.foregroundContinuous,
         }),
         keepalive: true,
