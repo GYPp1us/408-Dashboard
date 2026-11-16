@@ -168,6 +168,7 @@
       return true;
     }
     if (destination === "next") { openFocusLaunch(); return true; }
+    if (destination === "resumeFocus") { $("#dashboard-controls")?.scrollIntoView({ block:"start" }); return true; }
     if (destination === "checkin") {
       const open = () => {
         $("#entry-tab-checkin")?.click();

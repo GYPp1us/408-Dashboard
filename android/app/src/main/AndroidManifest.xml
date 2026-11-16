@@ -26,6 +26,14 @@
             android:exported="false"
             android:theme="@style/Theme.MutsumiFocus.Setup" />
         <activity
+            android:name=".ReminderActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.reminder"
+            android:theme="@style/Theme.MutsumiFocus.Reminder" />
+        <activity
             android:name=".PermissionSetupActivity"
             android:exported="false"
             android:theme="@style/Theme.MutsumiFocus.Setup" />

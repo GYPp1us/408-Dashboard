@@ -196,6 +196,12 @@ CREATE TABLE IF NOT EXISTS daily_tasks (
     UNIQUE(user_id, plan_date, source, external_id)
 );
 CREATE INDEX IF NOT EXISTS daily_tasks_user_day ON daily_tasks(user_id, plan_date, sort_order, id);
+CREATE TABLE IF NOT EXISTS reminder_question_banks (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL DEFAULT 0,
+    questions_json TEXT NOT NULL DEFAULT '[]',
+    maintenance_key TEXT UNIQUE
+);
 CREATE TABLE IF NOT EXISTS daily_task_focus_links (
     session_id INTEGER PRIMARY KEY REFERENCES focus_sessions(id) ON DELETE CASCADE,
     task_id INTEGER NOT NULL REFERENCES daily_tasks(id) ON DELETE CASCADE,

@@ -8,6 +8,12 @@
         <item name="android:colorAccent">@color/mutsumi_accent</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
+    <style name="Theme.MutsumiFocus.Reminder" parent="Theme.MutsumiFocus">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
     <style name="Theme.MutsumiFocus.Setup" parent="Theme.MutsumiFocus">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>

@@ -69,8 +69,7 @@ class OriginOsAtomicPublisher(private val context: Context) {
             "resume" -> serviceIntent(FocusService.ACTION_RESUME, 2, state)
             "pause" -> serviceIntent(FocusService.ACTION_PAUSE, 2, state)
             "endRest" -> serviceIntent(FocusService.ACTION_END_REST, 2, state)
-            "closeReminders" -> serviceIntent(FocusService.ACTION_CLOSE_REMINDERS, 2, state,
-                due?.let { store.reminderToken(it.kind, now) })
+            "closeReminders" -> muteIntent(2)
             else -> openIntent(layout.button.action, 2)
         }
         val content = if (retryAction.isNotBlank()) {
@@ -183,7 +182,7 @@ class OriginOsAtomicPublisher(private val context: Context) {
             .setDeleteIntent(serviceIntent(FocusService.ACTION_DISMISS, 11, state, token))
             .addAction(Notification.Action.Builder(null, label, primary).build())
             .addAction(Notification.Action.Builder(null, "关闭提醒",
-                serviceIntent(FocusService.ACTION_CLOSE_REMINDERS, 13, state, token)).build())
+                muteIntent(13)).build())
             .apply { if (silent) setGroup("focus_reminder_silent").setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY) }
             .build()
     }
@@ -195,6 +194,9 @@ class OriginOsAtomicPublisher(private val context: Context) {
             putExtra(FocusService.EXTRA_REVISION, store.transitionRevision())
             if (token != null) putExtra(FocusService.EXTRA_REMINDER_TOKEN, token)
         }, FLAGS)
+
+    private fun muteIntent(code: Int) = PendingIntent.getActivity(context, code,
+        ReminderActivity.intent(context, challenge = true), FLAGS)
 
     private fun openIntent(destination: String, code: Int): PendingIntent = PendingIntent.getActivity(context, code,
         Intent(context, MainActivity::class.java).apply {

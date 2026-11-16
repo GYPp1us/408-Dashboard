@@ -29,6 +29,28 @@ object FocusApi {
         "{\"session_id\":${state.sessionId}}",
     )
 
+    internal fun reminderBankRequest(connectionDetails: Boolean = false, rotate: Boolean = false): JSONObject? = runCatching {
+        val state = FocusRuntimeState()
+        val route = if (connectionDetails) "/connection" + (if (rotate) "/rotate" else "") else "/bank"
+        val connection = URL(state.baseUrl + "/api/reminder-questions" + route).openConnection() as HttpURLConnection
+        try {
+            configure(connection, state)
+            connection.requestMethod = if (connectionDetails) "POST" else "GET"
+            if (connection.responseCode !in 200..299) return@runCatching null
+            connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                val result = StringBuilder()
+                val buffer = CharArray(4096)
+                while (true) {
+                    val used = reader.read(buffer)
+                    if (used < 0) break
+                    if (result.length + used > 98_304) return@runCatching null
+                    result.append(buffer, 0, used)
+                }
+                JSONObject(result.toString())
+            }
+        } finally { connection.disconnect() }
+    }.getOrNull()
+
     fun fetchState(localState: FocusRuntimeState): StateResult {
         // The existing dashboard includes today's settlement, so a finish on
         // another device also cancels departure reminders without a new API.

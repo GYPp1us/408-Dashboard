@@ -17,7 +17,7 @@ class FocusService : Service() {
     private lateinit var store: FocusStateStore
     private lateinit var publisher: OriginOsAtomicPublisher
     private lateinit var notifications: NotificationManager
-    private lateinit var overlay: ApplicationOverlay
+    private lateinit var popup: PopupReminderController
     private val handler = Handler(Looper.getMainLooper())
     private val network = FocusNetworkTasks()
     private var reminderToken = ""
@@ -50,7 +50,7 @@ class FocusService : Service() {
         store = FocusStateStore(this)
         publisher = OriginOsAtomicPublisher(this)
         notifications = getSystemService(NotificationManager::class.java)
-        overlay = ApplicationOverlay(this)
+        popup = PopupReminderController(this)
         publisher.ensureChannels()
         val existingNotifications = notifications.activeNotifications
         val previousNotifications = existingNotifications.filter { it.id == OriginOsAtomicPublisher.LIVE_NOTIFICATION_ID }
@@ -82,6 +82,7 @@ class FocusService : Service() {
         if (runningService === this) runningService = null
         handler.removeCallbacksAndMessages(null)
         dismissSurfaces()
+        popup.clearSurfaces()
         releaseWakeLock()
         network.close()
         super.onDestroy()
@@ -107,28 +108,8 @@ class FocusService : Service() {
                 message = "休息已结束"
                 changed()
             }
-            ACTION_SNOOZE -> {
-                if (store.due() == null) return
-                if (state.mode == FocusMode.PAUSED) store.snoozePaused(System.currentTimeMillis())
-                else store.snoozeEnded(System.currentTimeMillis())
-                message = "已设置 5 分钟后再提醒"
-                dismissSurfaces()
-                changed()
-            }
-            ACTION_CLOSE_REMINDERS -> {
-                if (store.due() == null) return
-                store.closeReminders()
-                message = "本次提醒已关闭"
-                dismissSurfaces()
-                changed()
-            }
-            ACTION_DISMISS, ACTION_OPEN_FROM_REMINDER -> {
-                store.due()?.kind?.let { kind ->
-                    if (kind == ReminderKind.PAUSED) store.dismissPaused() else store.acknowledgeEnded(kind.endedIndex)
-                }
-                dismissSurfaces()
-                changed()
-            }
+            ACTION_SNOOZE, ACTION_CLOSE_REMINDERS -> popup.open(challenge = true)
+            ACTION_DISMISS, ACTION_OPEN_FROM_REMINDER -> Unit
         }
         applyState()
     }
@@ -141,6 +122,7 @@ class FocusService : Service() {
         if (FocusRuntimeLease.stalled(lastTickAt, elapsed)) runtimeRecovery = true
         lastTickAt = elapsed
         val scheduled = store.islandContext().enabled(now)
+        popup.update(state, store.islandContext(), now, publisher.palette(state).accent, appVisible)
         if (!scheduled && (state.mode == FocusMode.IDLE ||
             state.mode == FocusMode.SETTLED && !state.summaryVisible(System.currentTimeMillis()) ||
             state.mode == FocusMode.ENDED && store.endedAcknowledgedCount() >= 3 && !state.summaryVisible(System.currentTimeMillis()))) {
@@ -355,43 +337,22 @@ class FocusService : Service() {
         if (publisher.usesAtomicIsland()) {
             // doc895: the same reminder is one atomic activity, not a second
             // ordinary notification. publish() requests expansion once/round.
-            overlay.dismiss()
-            FocusAccessibilityService.dismiss()
             notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
             if (reminderToken != token) { reminderToken = token; changed() }
             return
         }
-        if (appVisible) {
-            overlay.dismiss()
-            FocusAccessibilityService.dismiss()
+        if (appVisible || ReminderActivity.visible()) {
             notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
             if (reminderToken != token) { reminderToken = token; changed() }
             return
         }
-        if (!store.strongReminders()) { overlay.dismiss(); FocusAccessibilityService.dismiss() }
-        if (reminderToken == token && notifications.activeNotifications.any {
-                it.id == OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID }) return
         val alreadyPresented = store.wasPresented(token)
+        if (reminderToken == token && alreadyPresented) return
         dismissSurfaces()
         reminderToken = token
         store.markPresented(token)
         notifications.notify(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID,
             publisher.reminderNotification(due.kind, store.read(), token, alreadyPresented))
-        if (store.strongReminders() && !alreadyPresented) {
-            val snooze = { handleAction(ACTION_SNOOZE) }
-            val open = { handleAction(ACTION_OPEN_FROM_REMINDER); openTimer() }
-            val resume = { handleAction(ACTION_RESUME) }
-            val close = {
-                if (store.due()?.let { store.reminderToken(it.kind) } == token) handleAction(ACTION_CLOSE_REMINDERS)
-            }
-            overlay.show(due.kind, snooze, open, resume, close) ||
-                FocusAccessibilityService.show(due.kind, snooze, open, resume, close)
-        }
-    }
-
-    private fun openTimer() {
-        runCatching { startActivity(Intent(this, MainActivity::class.java).addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
     }
 
     private fun displayMessage(now: Long): String = if (retryAction.isNotBlank() || now - messageSince < 5_000) message else ""
@@ -399,8 +360,6 @@ class FocusService : Service() {
     private fun changed() { sendBroadcast(Intent(ACTION_REFRESH_WEB).setPackage(packageName)) }
 
     private fun dismissSurfaces() {
-        overlay.dismiss()
-        FocusAccessibilityService.dismiss()
         notifications.cancel(OriginOsAtomicPublisher.REMINDER_NOTIFICATION_ID)
         reminderToken = ""
     }
@@ -410,6 +369,7 @@ class FocusService : Service() {
     private fun stopRuntime() {
         handler.removeCallbacks(tick)
         dismissSurfaces()
+        popup.clearSurfaces()
         releaseWakeLock()
         if (pendingStarts.isNotEmpty()) return
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -456,7 +416,14 @@ class FocusService : Service() {
 
         fun clear(context: Context) = onMain {
             FocusStateStore(context).also { it.write(FocusRuntimeState()); it.clearIslandContext() }
+            PopupReminderStore(context).clearAccount()
+            ReminderActivity.dismiss()
+            PopupReminderController.cancel(context)
             stopAndCancel(context)
+        }
+
+        fun reminderSettingsChanged(context: Context) = onMain {
+            runningService?.let { it.changed(); it.applyState() } ?: requestReminderCheck(context)
         }
 
         fun setAppVisible(context: Context, visible: Boolean) = onMain {

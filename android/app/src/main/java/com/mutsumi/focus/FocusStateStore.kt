@@ -4,7 +4,10 @@ import android.content.Context
 import android.content.SharedPreferences
 
 class FocusStateStore internal constructor(private val preferences: SharedPreferences) {
-    constructor(context: Context) : this(context.getSharedPreferences("focus_runtime", Context.MODE_PRIVATE))
+    private var popup: PopupReminderStore? = null
+    constructor(context: Context) : this(context.getSharedPreferences("focus_runtime", Context.MODE_PRIVATE)) {
+        popup = PopupReminderStore(context)
+    }
     private var contextRaw: String? = null
     private var cachedContext = IslandContext()
 
@@ -127,6 +130,7 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
         preferences.edit().putLong("ended_snooze_until", nowEpochMs + ReminderPolicy.PAUSED_DELAY_MS).apply()
     }
     fun nextReminderAt(state: FocusRuntimeState = read(), now: Long = System.currentTimeMillis()): Long {
+        if (popup?.muted(now) == true) return 0
         val schedule = islandContext()
         if (state.mode == FocusMode.ENDED && !schedule.allowsNextFocusReminder(now)) return 0
         val opening = openingReminderState(now)
@@ -153,6 +157,7 @@ class FocusStateStore internal constructor(private val preferences: SharedPrefer
             .putInt("opening_acknowledged", ReminderPolicy.acknowledgedCount(openingAcknowledged(anchor), index)).apply()
     }
     fun due(now: Long = System.currentTimeMillis()): DueReminder? {
+        if (popup?.muted(now) == true) return null
         val state = read()
         if (state.mode == FocusMode.ENDED && !islandContext().allowsNextFocusReminder(now)) return null
         val opening = openingReminderState(now)

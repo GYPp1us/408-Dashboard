@@ -14,17 +14,20 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.FrameLayout
+import android.widget.EditText
 
 class PermissionSetupActivity : Activity() {
     private lateinit var style: SetupStyle
     private lateinit var list: LinearLayout
     private lateinit var root: ScrollView
     private lateinit var store: FocusStateStore
+    private lateinit var popup: PopupReminderStore
     private var unbindBlur: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = FocusStateStore(this)
+        popup = PopupReminderStore(this)
         store.setOnboardingSeen()
     }
 
@@ -72,21 +75,55 @@ class PermissionSetupActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 36) permission(atomic, "Android 实时通知", PermissionStatus.promotedNotifications(this), "系统允许时显示实时计时；普通通知仍保留。") {
             openSafely(Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
         }
-        val reminders = card("提醒方式")
-        label(reminders, "温和提醒（默认）\n前台在专注卡片内提示，后台通过原子岛和通知提示。查看提醒不会恢复计时。")
-        toggle(reminders, "强提醒 · 全屏毛玻璃覆盖层", store.strongReminders()) {
-            store.setStrongReminders(it)
-            FocusService.requestReminderCheck(this)
+        val reminders = card("弹出式提醒")
+        label(reminders, "弹出提醒和原子岛独立计时。专注或暂停开始的前 5 分钟，以及弹出前 1 分钟，可从边缘色带拉出静默卡。")
+        if (popup.pending.isBlank()) toggle(reminders, "启用边缘提示与全屏提醒", popup.enabled) {
+            popup.enabled = it
+            FocusService.reminderSettingsChanged(this)
             render()
-        }
-        label(reminders, "强提醒会覆盖当前应用，需要你主动开启相应权限。关闭后立即恢复温和提醒。")
-        if (store.strongReminders()) {
-            permission(reminders, "显示在其他应用上层", PermissionStatus.overlay(this), "仅用于你选择的强提醒。") {
+        } else label(reminders, "请先开始专注或完成静默验证，再更改提醒规则。")
+        label(reminders, "全屏只在亮屏解锁时打开。未授予悬浮权限时，后台以通知提醒，返回应用后再显示。关闭所有提醒需要答对一道题。")
+        if (popup.enabled) {
+            permission(reminders, "显示在其他应用上层", PermissionStatus.overlay(this), "用于边缘色带和退到桌面后的提醒。") {
                 openSafely(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             }
-            permission(reminders, "无障碍覆盖层（可选）", PermissionStatus.accessibility(this), "悬浮层不可用时的备用方式，不读取窗口内容。") {
+            permission(reminders, "无障碍边缘色带（可选）", PermissionStatus.accessibility(this), "只作边缘提示备用，不读取窗口内容。") {
                 openSafely(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
+            if (popup.pending.isBlank()) button(reminders, "调整提醒时间与静默选项") { configureReminders() }
+            label(reminders, "暂停：${threshold(popup.pauseMinutes)} · 闲置：${threshold(popup.idleMinutes)}\n静默选项：${popup.muteOptions.joinToString(" / ")} 分钟", 12f)
+        }
+        button(reminders, "关闭所有提醒一段时间") { startActivity(ReminderActivity.intent(this, challenge = true)) }
+        val questions = card("验证题库")
+        label(questions, "内置 10 道展开求极限题。可由 Agent 维护自己的题目；未联网时仍能答题。")
+        val result = TextView(this).apply { style.text(this); setPadding(0, style.dp(6), 0, 0) }
+        questions.addView(result)
+        fun copyPrompt(rotate: Boolean) {
+            result.text = "正在读取…"
+            ReminderBankSync.connection(this, rotate) { prompt ->
+                if (isFinishing || isDestroyed) return@connection
+                if (prompt == null) result.text = "无法读取，请确认已登录并检查网络。"
+                else {
+                    val clip = android.content.ClipData.newPlainText("提醒题库接入", prompt)
+                    if (Build.VERSION.SDK_INT >= 33) clip.description.extras = android.os.PersistableBundle().apply {
+                        putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                    }
+                    getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(clip)
+                    result.text = if (rotate) "已更换密钥并复制新 Prompt。" else "已复制接入 Prompt。"
+                }
+            }
+        }
+        button(questions, "复制题库接入 Prompt") { copyPrompt(false) }
+        button(questions, "同步题库") {
+            result.text = "正在同步…"
+            ReminderBankSync.refresh(this) { count ->
+                if (!isFinishing && !isDestroyed) result.text = count?.let { "已同步 $it 道自定义题。" } ?: "同步失败，保留本机题库。"
+            }
+        }
+        button(questions, "更换维护密钥") {
+            android.app.AlertDialog.Builder(this).setTitle("更换题库密钥")
+                .setMessage("现有接入密钥将失效，需要更新 Agent 的配置。")
+                .setNegativeButton("取消", null).setPositiveButton("更换") { _, _ -> copyPrompt(true) }.show()
         }
         val background = card("后台计时")
         permission(background, "后台电量策略", PermissionStatus.batteryUnrestricted(this), "保持锁屏后的专注、休息计时及约定提醒时间。") {
@@ -105,6 +142,41 @@ class PermissionSetupActivity : Activity() {
         setContentView(root)
         AppWindowLayout.apply(this, root)
         root.post { root.scrollTo(0, scroll) }
+    }
+
+    private fun threshold(minutes: Int) = if (minutes == 0) "不弹出" else "$minutes 分钟"
+
+    private fun configureReminders() {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(style.dp(18), 0, style.dp(18), 0) }
+        fun field(title: String, value: String, input: Int) = EditText(this).apply {
+            label(form, title)
+            setSingleLine(true); inputType = input; setText(value); contentDescription = title
+            form.addView(this, LinearLayout.LayoutParams(-1, -2))
+        }
+        val number = android.text.InputType.TYPE_CLASS_NUMBER
+        val pause = field("连续暂停（0 关闭，或 6–120 分钟）", popup.pauseMinutes.toString(), number)
+        val idle = field("结束后在开盘时段闲置（0 关闭，或 6–120 分钟）", popup.idleMinutes.toString(), number)
+        val durations = field("三个静默时长（1–240 分钟，用逗号分隔）", popup.muteOptions.joinToString(","), android.text.InputType.TYPE_CLASS_TEXT)
+        val dialog = android.app.AlertDialog.Builder(this).setTitle("提醒与静默时间").setView(ScrollView(this).apply { addView(form) })
+            .setPositiveButton("保存", null).setNegativeButton("取消", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val pauseValue = pause.text.toString().trim().toIntOrNull()
+                val idleValue = idle.text.toString().trim().toIntOrNull()
+                val values = durations.text.toString().split(',', '，').map { it.trim().toIntOrNull() }
+                when {
+                    popup.pending.isNotBlank() -> { dialog.dismiss(); render() }
+                    pauseValue == null || pauseValue != 0 && pauseValue !in 6..120 -> pause.error = "请输入 0 或 6–120"
+                    idleValue == null || idleValue != 0 && idleValue !in 6..120 -> idle.error = "请输入 0 或 6–120"
+                    values.size != 3 || values.distinct().size != 3 || values.any { it == null || it !in 1..240 } -> durations.error = "请输入三个不同的 1–240 分钟值"
+                    else -> {
+                        popup.pauseMinutes = pauseValue; popup.idleMinutes = idleValue; popup.muteOptions = values.filterNotNull()
+                        FocusService.reminderSettingsChanged(this); dialog.dismiss(); render()
+                    }
+                }
+            }
+        }
+        dialog.show()
     }
 
     private fun card(title: String): LinearLayout = LinearLayout(this).apply {
@@ -141,5 +213,5 @@ class PermissionSetupActivity : Activity() {
         runCatching { startActivity(if (primary.resolveActivity(packageManager) != null) primary else fallback) }
     }
     override fun onDestroy() { unbindBlur?.invoke(); unbindBlur = null; super.onDestroy() }
-    override fun onStop() { FocusService.setAppVisible(this, false); super.onStop() }
+    override fun onPause() { FocusService.setAppVisible(this, false); super.onPause() }
 }
