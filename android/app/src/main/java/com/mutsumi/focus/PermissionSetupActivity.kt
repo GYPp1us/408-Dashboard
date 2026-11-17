@@ -76,7 +76,7 @@ class PermissionSetupActivity : Activity() {
             openSafely(Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
         }
         val reminders = card("弹出式提醒")
-        label(reminders, "弹出提醒和原子岛独立计时。专注或暂停开始的前 5 分钟，以及弹出前 1 分钟，可从边缘色带拉出静默卡。")
+        label(reminders, "结束专注或开始暂停后的第 1 分钟，以及全屏提醒前 1 分钟，可拉开边缘色带并在卡片里答题。")
         if (popup.pending.isBlank()) toggle(reminders, "启用边缘提示与全屏提醒", popup.enabled) {
             popup.enabled = it
             FocusService.reminderSettingsChanged(this)

@@ -10,7 +10,6 @@ import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.ViewCompat
@@ -116,7 +115,7 @@ class ReminderActivity : ComponentActivity() {
         val wide = resources.configuration.screenWidthDp >= 600
         val compact = resources.configuration.screenHeightDp < 420
         val contents = style.vertical().apply {
-            setPadding(style.dp(20), style.dp(if (compact) 12 else 22), style.dp(20), style.dp(if (compact) 12 else 22))
+            setPadding(style.dp(16), style.dp(if (compact) 10 else 16), style.dp(16), style.dp(if (compact) 10 else 16))
             background = style.surface(Color.WHITE, 10, style.border)
         }
         val label = if (question != null) "验证 · 静默 $duration 分钟" else if (selecting) "专注 · 静默提醒" else "M  /  专注提醒"
@@ -126,32 +125,15 @@ class ReminderActivity : ComponentActivity() {
         })
         if (question != null) {
             val item = question ?: return
-            val upper = style.vertical()
-            val options = style.vertical()
-            style.add(upper, style.label("答对一题，暂停提醒", if (compact) 23f else 28f, bold = true))
-            if (wrong) style.add(upper, style.label("这题答错了，试试下面这道。", 13f, 0xffa3342b.toInt()).apply {
-                accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-            }, 4)
-            val body = style.vertical()
-            style.question(body, item.body)
-            style.add(upper, body, 10)
-            for ((index, option) in item.options.withIndex()) {
-                val letter = ('A' + index).toString()
-                style.add(options, style.button("$letter   ${ReminderMath.inline(option)}") { answer(index) }.apply {
-                    gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(style.dp(15), 0, style.dp(10), 0)
-                }, if (index == 0) 0 else 6)
-            }
-            if (wide) style.add(contents, LinearLayout(this).apply {
-                addView(upper, LinearLayout.LayoutParams(0, -2, 1.25f))
-                addView(options, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = style.dp(18) })
-            }, 10) else { style.add(contents, upper, 12); style.add(contents, options, 13) }
-            style.add(contents, style.button("更改静默时长") { duration = 0; question = null; selecting = true; wrong = false; render(true) }, 9)
+            style.add(contents, style.label("答对一题，暂停提醒", if (compact) 19f else 22f, bold = true), 6)
+            style.quiz(contents, item, wrong, compact = false, wide = wide && resources.configuration.fontScale <= 1.25f, onAnswer = ::answer)
+            style.add(contents, style.button("更改静默时长", compact = true) { duration = 0; question = null; selecting = true; wrong = false; render(true) }, 7)
         } else {
             val pause = runtime.mode == FocusMode.PAUSED
             style.add(contents, style.label(when { selecting -> "关闭提醒一段时间"; pause -> "准备好，继续专注"; else -> "回到下一段专注" },
-                if (compact) 26f else 34f, bold = true), if (compact) 6 else 13)
+                if (compact) 22f else 26f, bold = true), 7)
             style.add(contents, style.label(when { selecting -> "选一个时长，答对一道题后生效。";
-                pause -> "本段计时仍在暂停，回到计时页后可继续。"; else -> "回到计时页选一个事项。开始后，本次提醒结束。" }, 15f, style.muted), 6)
+                pause -> "本段计时仍在暂停，回到计时页后可继续。"; else -> "回到计时页选一个事项。开始后，本次提醒结束。" }, 13f, style.muted), 4)
             if (!selecting) style.add(contents, style.button("回到专注", true) {
                 if (!required) { finish(); return@button }
                 store.returnToFocus()
@@ -162,7 +144,7 @@ class ReminderActivity : ComponentActivity() {
                 finish()
             }, if (compact) 10 else 18)
             style.add(contents, style.tag("关闭所有提醒"), if (compact) 9 else 17)
-            style.add(contents, style.durations(store.muteOptions, ::choose), 5)
+            style.add(contents, style.durations(store.muteOptions, onChoose = ::choose), 5)
             if (selecting) style.add(contents, style.button(if (required) "返回提醒" else "取消") {
                 if (!required) finish() else { selecting = false; render(true) }
             }, 8)

@@ -15,10 +15,7 @@ internal class PopupReminderController(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
     private val screen = context.getSystemService(PowerManager::class.java)
     private val lockScreen = context.getSystemService(KeyguardManager::class.java)
-    private val edge: ReminderEdgeWindow = ReminderEdgeWindow(context) { duration ->
-        edgeDismiss()
-        open(challenge = true, duration = duration)
-    }
+    private val edge = ReminderEdgeWindow(context) { FocusService.reminderSettingsChanged(context) }
     private var lastLaunch: Long? = null
     private var fallbackShowing = false
 
@@ -40,7 +37,8 @@ internal class PopupReminderController(private val context: Context) {
             lastLaunch = null
         }
         val pending = prefs.pending.isNotBlank()
-        edge.update(window?.edge == true && !pending && interactive && !ReminderActivity.visible(), accent)
+        val surfaceKey = window?.key?.takeIf { !pending && interactive && !ReminderActivity.visible() }
+        edge.update(surfaceKey, window?.edge == true, accent)
         if (!pending || ReminderActivity.visible() || (prefs.returning && appVisible)) {
             clearFallback()
             return

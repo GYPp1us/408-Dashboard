@@ -5,7 +5,7 @@ import java.time.ZoneId
 
 /** The full-screen reminder has its own clock. No island reminder round feeds it. */
 internal object PopupReminderPolicy {
-    const val EARLY_MS = 5 * 60_000L
+    const val EARLY_MS = 60_000L
     const val LEAD_MS = 60_000L
     val DEFAULT_MUTE = listOf(15, 30, 60)
 
@@ -14,26 +14,26 @@ internal object PopupReminderPolicy {
     fun window(state: FocusRuntimeState, schedule: IslandContext, now: Long, muteUntil: Long,
                pauseMinutes: Int, idleMinutes: Int): Window? {
         if (muteUntil > now) return null
-        val anchor = when (state.mode) {
-            FocusMode.FOCUSING -> state.startedAtEpochMs
+        val transitionAt = when (state.mode) {
             FocusMode.PAUSED -> state.pausedAtEpochMs
+            FocusMode.ENDED -> state.endedAtEpochMs
+            else -> return null
+        }
+        if (transitionAt <= 0 || transitionAt > now) return null
+        val early = now - transitionAt < EARLY_MS
+        val transitionKey = "${state.mode}:${state.sessionId}:$transitionAt"
+        val anchor = when (state.mode) {
             FocusMode.ENDED -> {
                 val local = Instant.ofEpochMilli(now).atZone(ZoneId.of(schedule.timezone))
                 val period = schedule.sessions.firstOrNull { local.toLocalTime() >= it.start && local.toLocalTime() < it.end }
-                    ?: return null
+                    ?: return Window(transitionKey, early, false)
                 val opening = local.toLocalDate().atTime(period.start).atZone(local.zone).toInstant().toEpochMilli()
-                maxOf(state.endedAtEpochMs, opening)
+                maxOf(transitionAt, opening)
             }
-            else -> return null
+            else -> transitionAt
         }
-        if (anchor <= 0 || anchor > now) return null
-        val key = "${state.mode}:${state.sessionId}:$anchor"
-        val early = state.mode in setOf(FocusMode.FOCUSING, FocusMode.PAUSED) && now - anchor < EARLY_MS
-        val minutes = when (state.mode) {
-            FocusMode.PAUSED -> pauseMinutes
-            FocusMode.ENDED -> idleMinutes
-            else -> 0
-        }
+        val key = if (!early && anchor != transitionAt) "$transitionKey:$anchor" else transitionKey
+        val minutes = if (state.mode == FocusMode.PAUSED) pauseMinutes else idleMinutes
         if (minutes <= 0) return Window(key, early, false)
         val dueAt = maxOf(anchor, muteUntil) + minutes * 60_000L
         return Window(key, early || now in dueAt - LEAD_MS until dueAt, now >= dueAt)
