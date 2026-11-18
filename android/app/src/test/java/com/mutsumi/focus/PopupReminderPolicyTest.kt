@@ -66,6 +66,15 @@ class PopupReminderPolicyTest {
         assertTrue(EdgeSheetMotion.duration(220f, 1000f, 1f) < EdgeSheetMotion.duration(220f, 0f, 1f))
     }
 
+    @Test fun `edge ignores taps and distinguishes pull from moving along the edge`() {
+        assertNull(EdgeSheetMotion.drag(4f, -5f, 8))
+        assertEquals(EdgeDrag.REPOSITION, EdgeSheetMotion.drag(20f, -30f, 8))
+        assertEquals(EdgeDrag.REPOSITION, EdgeSheetMotion.drag(-4f, 14f, 8))
+        assertEquals(EdgeDrag.PULL, EdgeSheetMotion.drag(-25f, 16f, 8))
+        assertEquals(450, EdgeSheetMotion.crossLimit(1000, 100))
+        assertEquals(0, EdgeSheetMotion.crossLimit(100, 120))
+    }
+
     @Test fun `muting gates all popup phases and does not immediately replay old time`() {
         val paused = FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = at("09:00:00"))
         val until = at("09:45:00")
@@ -86,6 +95,19 @@ class PopupReminderPolicyTest {
             val original = (listOf(question) + ReminderQuestions.builtIn).single { it.body == result.body }
             assertEquals(original.options[original.answer], result.options[result.answer])
             previous = result
+        }
+    }
+
+    @Test fun `offline bank contains distinct valid questions across all categories`() {
+        val bank = ReminderQuestions.builtIn
+        assertEquals(50, bank.size)
+        assertEquals(bank.size, bank.distinctBy { it.body }.size)
+        for (category in listOf("极限", "定积分", "级数", "口算")) {
+            assertTrue(category, bank.any { it.body.contains(category) })
+        }
+        for (item in bank) {
+            assertEquals(item.body, 4, item.options.distinct().size)
+            assertTrue(item.body, item.answer in item.options.indices && item.options.all { it.isNotBlank() })
         }
     }
 

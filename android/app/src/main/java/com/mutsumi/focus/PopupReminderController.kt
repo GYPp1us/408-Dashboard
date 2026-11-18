@@ -9,6 +9,7 @@ import android.content.Context
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
+import android.view.MotionEvent
 
 internal class PopupReminderController(private val context: Context) {
     private val prefs = PopupReminderStore(context)
@@ -24,6 +25,8 @@ internal class PopupReminderController(private val context: Context) {
     }
 
     private fun edgeDismiss() { edge.dismiss() }
+
+    fun trackDashboardEdge(event: MotionEvent): Boolean = edge.trackDashboardTouch(event)
 
     fun update(state: FocusRuntimeState, schedule: IslandContext, now: Long, accent: Int, appVisible: Boolean) {
         val window = if (prefs.enabled) PopupReminderPolicy.window(state, schedule, now,

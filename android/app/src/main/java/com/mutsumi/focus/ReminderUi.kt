@@ -11,6 +11,7 @@ import android.view.View
 import android.widget.HorizontalScrollView
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 
@@ -55,16 +56,11 @@ internal class ReminderUi(val context: Context, val accent: Int) {
         }
     }
 
-    fun quiz(parent: LinearLayout, item: ReminderQuestion, wrong: Boolean, compact: Boolean, wide: Boolean = false,
+    fun quiz(parent: LinearLayout, item: ReminderQuestion, compact: Boolean, wide: Boolean = false,
              onAnswer: (Int) -> Unit) {
         val prompt = vertical()
         val options = vertical()
-        if (wrong) add(prompt, label("答错了，换一道。", 12f, 0xffa3342b.toInt()).apply {
-            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        }, 3)
-        val body = vertical()
-        question(body, item.body, compact)
-        add(prompt, body, if (wrong) 5 else 0)
+        question(prompt, item.body, compact)
         for ((index, option) in item.options.withIndex()) {
             val row = LinearLayout(context).apply {
                 gravity = Gravity.CENTER_VERTICAL
@@ -94,6 +90,41 @@ internal class ReminderUi(val context: Context, val accent: Int) {
                 addView(options, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
             }, 8)
         } else { add(parent, prompt, 7); add(parent, options, 8) }
+    }
+
+    fun revealedAnswer(parent: LinearLayout, item: ReminderQuestion, compact: Boolean) {
+        add(parent, label("答错了", if (compact) 16f else 20f, bold = true).apply {
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }, 5)
+        add(parent, vertical().apply {
+            background = surface(tint, 7, border)
+            setPadding(dp(10), dp(7), dp(10), dp(8))
+            add(this, tag("正确答案 · ${'A' + item.answer}"))
+            val value = vertical()
+            question(value, item.options[item.answer], compact)
+            add(this, value, 4)
+        }, 6)
+        add(parent, tag("本题"), 9)
+        val prompt = vertical()
+        question(prompt, item.body, compact)
+        add(parent, prompt, 3)
+    }
+
+    /** Keep the actions available while the answer and original question scroll. */
+    fun reviewCard(body: View, compact: Boolean, onNext: () -> Unit, onChangeDuration: () -> Unit) = vertical().apply {
+        addView(ScrollView(context).apply {
+            clipToPadding = false
+            addView(body)
+        }, LinearLayout.LayoutParams(-1, -2, 1f))
+        addView(LinearLayout(context).apply {
+            val space = dp(if (compact) 12 else 16)
+            setPadding(space, dp(4), space, dp(10))
+            gravity = Gravity.CENTER_VERTICAL
+            addView(button("更改静默时长", compact = true, action = onChangeDuration), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(button("下一题", primary = true, compact = true, action = onNext), LinearLayout.LayoutParams(0, -2, 1f).apply {
+                marginStart = dp(6)
+            })
+        }, LinearLayout.LayoutParams(-1, -2))
     }
 
     private fun optionText(value: String) = ReminderMath.inline(value).replace('\n', ' ').take(160)

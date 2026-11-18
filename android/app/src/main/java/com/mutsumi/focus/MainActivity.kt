@@ -14,6 +14,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
@@ -38,6 +39,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var contentRoot: FrameLayout
     private var receiverRegistered = false
     private var backInFlight = false
+    private var reminderDragClaimed = false
     private var cacheFallbackUrl: String? = null
     private var cacheFallbackPending = false
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
@@ -84,6 +86,22 @@ class MainActivity : ComponentActivity() {
         webView.post {
             if (hasTrustedDocument()) webView.evaluateJavascript("window.MutsumiWeb?.refresh?.()", null)
         }
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) reminderDragClaimed = false
+        if (FocusService.trackDashboardEdge(event) && !reminderDragClaimed) {
+            // The WebView received DOWN so it could handle a tap. Cancel it once the strip takes a drag.
+            val cancel = MotionEvent.obtain(event)
+            cancel.action = MotionEvent.ACTION_CANCEL
+            try { super.dispatchTouchEvent(cancel) } finally { cancel.recycle() }
+            reminderDragClaimed = true
+        }
+        if (!reminderDragClaimed) return super.dispatchTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            reminderDragClaimed = false
+        }
+        return true
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

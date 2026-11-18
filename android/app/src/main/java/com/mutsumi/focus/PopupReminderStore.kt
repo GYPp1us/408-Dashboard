@@ -21,6 +21,12 @@ internal class PopupReminderStore(private val prefs: SharedPreferences) {
         set(value) { if (value.size == 3 && value.distinct().size == 3 && value.all { it in 1..240 })
             prefs.edit().putString("mute_options", value.sorted().joinToString(",")).apply() }
 
+    fun edgePosition(horizontal: Boolean): Float = prefs.getFloat(edgePositionKey(horizontal), 0f)
+    fun saveEdgePosition(horizontal: Boolean, fraction: Float) {
+        prefs.edit().putFloat(edgePositionKey(horizontal), fraction).apply()
+    }
+    private fun edgePositionKey(horizontal: Boolean) = if (horizontal) "edge_position_landscape" else "edge_position_portrait"
+
     val muteUntil: Long get() = prefs.getLong("mute_until", 0)
     fun muted(now: Long) = now < muteUntil
     fun mute(minutes: Int, now: Long) {

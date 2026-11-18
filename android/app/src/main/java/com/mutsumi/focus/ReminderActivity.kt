@@ -23,7 +23,7 @@ class ReminderActivity : ComponentActivity() {
     private var duration = 0
     private var selecting = false
     private var question: ReminderQuestion? = null
-    private var wrong = false
+    private var reviewingAnswer = false
     private var submitting = false
     private val required: Boolean get() = store.pending.isNotBlank()
 
@@ -32,14 +32,15 @@ class ReminderActivity : ComponentActivity() {
         store = PopupReminderStore(this)
         duration = savedInstanceState?.getInt("minutes") ?: intent.getIntExtra(EXTRA_DURATION, 0)
         selecting = savedInstanceState?.getBoolean("selecting") ?: (intent.action == ACTION_CHALLENGE)
-        wrong = savedInstanceState?.getBoolean("wrong") ?: false
+        reviewingAnswer = savedInstanceState?.getBoolean("reviewing_answer") ?: false
         question = savedInstanceState?.let { state ->
             val body = state.getString("body") ?: return@let null
             val options = state.getStringArrayList("options") ?: return@let null
             ReminderQuestion(body, options, state.getInt("answer"))
         }
-        if (duration in store.muteOptions && question == null) question = nextQuestion()
-        else if (duration !in store.muteOptions) { duration = 0; question = null }
+        if (duration !in store.muteOptions) { duration = 0; question = null }
+        else if (question == null) question = nextQuestion()
+        reviewingAnswer = reviewingAnswer && question != null
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (!required) finish()
@@ -70,7 +71,7 @@ class ReminderActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putInt("minutes", duration)
         outState.putBoolean("selecting", selecting)
-        outState.putBoolean("wrong", wrong)
+        outState.putBoolean("reviewing_answer", reviewingAnswer)
         question?.let {
             outState.putString("body", it.body); outState.putStringArrayList("options", ArrayList(it.options)); outState.putInt("answer", it.answer)
         }
@@ -92,20 +93,32 @@ class ReminderActivity : ComponentActivity() {
 
     private fun choose(minutes: Int) {
         if (minutes !in store.muteOptions) return
-        duration = minutes; selecting = true; wrong = false; question = nextQuestion()
+        duration = minutes; selecting = true; reviewingAnswer = false; question = nextQuestion()
         render(true)
     }
 
     private fun answer(index: Int) {
-        if (submitting) return
+        if (submitting || reviewingAnswer) return
         val current = question ?: return
         if (index != current.answer) {
-            wrong = true; question = nextQuestion(); render(true); return
+            reviewingAnswer = true; render(true); return
         }
         submitting = true
         store.mute(duration, System.currentTimeMillis())
         FocusService.reminderSettingsChanged(this)
         finish()
+    }
+
+    private fun advance() {
+        if (!reviewingAnswer) return
+        question = nextQuestion()
+        reviewingAnswer = false
+        render(true)
+    }
+
+    private fun changeDuration() {
+        duration = 0; question = null; selecting = true; reviewingAnswer = false
+        render(true)
     }
 
     private fun render(animate: Boolean = false) {
@@ -116,7 +129,6 @@ class ReminderActivity : ComponentActivity() {
         val compact = resources.configuration.screenHeightDp < 420
         val contents = style.vertical().apply {
             setPadding(style.dp(16), style.dp(if (compact) 10 else 16), style.dp(16), style.dp(if (compact) 10 else 16))
-            background = style.surface(Color.WHITE, 10, style.border)
         }
         val label = if (question != null) "验证 · 静默 $duration 分钟" else if (selecting) "专注 · 静默提醒" else "M  /  专注提醒"
         style.add(contents, style.tag(label))
@@ -125,9 +137,14 @@ class ReminderActivity : ComponentActivity() {
         })
         if (question != null) {
             val item = question ?: return
-            style.add(contents, style.label("答对一题，暂停提醒", if (compact) 19f else 22f, bold = true), 6)
-            style.quiz(contents, item, wrong, compact = false, wide = wide && resources.configuration.fontScale <= 1.25f, onAnswer = ::answer)
-            style.add(contents, style.button("更改静默时长", compact = true) { duration = 0; question = null; selecting = true; wrong = false; render(true) }, 7)
+            if (reviewingAnswer) style.revealedAnswer(contents, item, compact = compact)
+            else {
+                style.add(contents, style.label("答对一题，暂停提醒", if (compact) 19f else 22f, bold = true), 6)
+                style.quiz(contents, item, compact = false, wide = wide && resources.configuration.fontScale <= 1.25f) { index ->
+                    if (question === item) answer(index)
+                }
+                style.add(contents, style.button("更改静默时长", compact = true, action = ::changeDuration), 7)
+            }
         } else {
             val pause = runtime.mode == FocusMode.PAUSED
             style.add(contents, style.label(when { selecting -> "关闭提醒一段时间"; pause -> "准备好，继续专注"; else -> "回到下一段专注" },
@@ -149,12 +166,18 @@ class ReminderActivity : ComponentActivity() {
                 if (!required) finish() else { selecting = false; render(true) }
             }, 8)
         }
+        val card = if (reviewingAnswer) {
+            style.reviewCard(contents, compact = false, onNext = ::advance, onChangeDuration = ::changeDuration)
+        } else contents
+        card.background = style.surface(Color.WHITE, 10, style.border)
+        card.clipToOutline = true
         val viewport = FrameLayout(this).apply {
             setPadding(style.dp(16), style.dp(10), style.dp(16), style.dp(10))
-            addView(contents, FrameLayout.LayoutParams(minOf(style.dp(if (wide) 680 else 440),
+            addView(card, FrameLayout.LayoutParams(minOf(style.dp(if (wide) 680 else 440),
                 style.dp((resources.configuration.screenWidthDp - 36).coerceAtLeast(160))), -2, Gravity.CENTER))
         }
-        root.addView(ScrollView(this).apply { isFillViewport = true; clipToPadding = false; addView(viewport) })
+        if (reviewingAnswer) root.addView(viewport)
+        else root.addView(ScrollView(this).apply { isFillViewport = true; clipToPadding = false; addView(viewport) })
         setContentView(root)
         WindowCompat.getInsetsController(window, root).apply {
             isAppearanceLightStatusBars = true; isAppearanceLightNavigationBars = true
@@ -166,8 +189,8 @@ class ReminderActivity : ComponentActivity() {
         }
         ViewCompat.requestApplyInsets(root)
         if (animate) {
-            contents.alpha = 0f; contents.translationY = style.dp(8).toFloat()
-            contents.animate().alpha(1f).translationY(0f).setDuration(200).start()
+            card.alpha = 0f; card.translationY = style.dp(8).toFloat()
+            card.animate().alpha(1f).translationY(0f).setDuration(200).start()
         }
     }
 

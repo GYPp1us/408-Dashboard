@@ -77,6 +77,7 @@ class PermissionSetupActivity : Activity() {
         }
         val reminders = card("弹出式提醒")
         label(reminders, "结束专注或开始暂停后的第 1 分钟，以及全屏提醒前 1 分钟，可拉开边缘色带并在卡片里答题。")
+        label(reminders, "从色带内侧向内拉开卡片，沿边缘拖动可调整位置。")
         if (popup.pending.isBlank()) toggle(reminders, "启用边缘提示与全屏提醒", popup.enabled) {
             popup.enabled = it
             FocusService.reminderSettingsChanged(this)
@@ -95,7 +96,7 @@ class PermissionSetupActivity : Activity() {
         }
         button(reminders, "关闭所有提醒一段时间") { startActivity(ReminderActivity.intent(this, challenge = true)) }
         val questions = card("验证题库")
-        label(questions, "内置 10 道展开求极限题。可由 Agent 维护自己的题目；未联网时仍能答题。")
+        label(questions, "内置 ${ReminderQuestions.builtIn.size} 道题，覆盖极限、定积分、级数和基础口算。可由 Agent 维护自己的题目；未联网时仍能答题。")
         val result = TextView(this).apply { style.text(this); setPadding(0, style.dp(6), 0, 0) }
         questions.addView(result)
         fun copyPrompt(rotate: Boolean) {

@@ -10,6 +10,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
+import android.view.MotionEvent
 import com.mutsumi.focus.atomic.VivoAtomicPayload
 import org.json.JSONObject
 
@@ -482,6 +483,8 @@ class FocusService : Service() {
         fun isBusy(): Boolean = runningService?.busy == true
 
         fun isAppVisible(): Boolean = appVisible
+
+        internal fun trackDashboardEdge(event: MotionEvent): Boolean = runningService?.popup?.trackDashboardEdge(event) == true
 
         private fun dispatch(context: Context, intent: Intent) {
             val service = runningService
