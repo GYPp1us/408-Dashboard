@@ -6,7 +6,6 @@
 #focus-modes .drag-label,.checkin-launch .drag-label { display:flex;align-items:center;justify-content:center;text-align:center;width:100%;padding:0 38px;line-height:1.25; }
 #focus-modes .drag-thumb,.checkin-launch .drag-thumb { position:absolute;top:50%;left:3px;right:auto;transform:translateY(-50%);width:30px;min-width:30px;height:30px;min-height:30px;border-radius:5px;display:flex;align-items:center;justify-content:center; }
 #focus-modes .drag-fill { border-radius:inherit; }
-.entry-empty { width:100%;min-height:38px;border:0;color:var(--muted);background:color-mix(in srgb,var(--surface) 45%,transparent);font:inherit;font-size:12px; }
 .entry-status { color:var(--muted);font-size:12px;line-height:1.5;margin:8px 0; }
 .entry-status:empty { display:none; }
 .entry-form { display:grid;gap:12px; }
@@ -18,7 +17,6 @@
 .entry-dialog::backdrop { background:#18202b60;backdrop-filter:blur(6px); }
 .entry-dialog-head { display:flex;align-items:center;justify-content:space-between;gap:12px; }.entry-dialog-head h2 { margin:0;font-size:18px; }
 .entry-duration-strip { min-height:48px;scroll-snap-type:x mandatory;gap:16px; }.entry-duration-strip button { flex:0 0 25%;font-size:14px;scroll-snap-align:center; }
-#entry-target-slot { font:inherit;font-size:12px;border:1px solid var(--line);border-radius:7px;background:color-mix(in srgb,var(--surface) 50%,transparent);color:var(--ink);max-width:100%;min-height:34px; }
 .checkin-row { display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line); }.checkin-row > div { flex:1;min-width:0; }.checkin-row b { font-size:13px;overflow-wrap:anywhere; }.checkin-row small { display:block;color:var(--muted);font-size:11px;margin-top:4px; }.checkin-row .ui-button { min-height:34px;font-size:12px;border-radius:7px; }
 .checkin-row .checkin-launch { margin-top:0;background:color-mix(in srgb,var(--accent-soft) 65%,transparent); }
 .checkin-launch .drag-label { flex-direction:column;gap:1px; }.checkin-launch .drag-label :is(b,small) { display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2;margin:0; }

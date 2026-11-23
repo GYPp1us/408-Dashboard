@@ -490,7 +490,9 @@ class FocusService : Service() {
 
         fun isAppVisible(): Boolean = appVisible
 
-        internal fun trackDashboardEdge(event: MotionEvent): Boolean = runningService?.popup?.trackDashboardEdge(event) == true
+        internal fun trackDashboardEdge(event: MotionEvent, claim: (MotionEvent) -> Unit) {
+            runningService?.popup?.trackDashboardEdge(event, claim)
+        }
 
         private fun dispatch(context: Context, intent: Intent) {
             val service = runningService

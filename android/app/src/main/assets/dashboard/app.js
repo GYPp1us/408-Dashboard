@@ -895,7 +895,7 @@
     const grid = $("#heat-grid");
     const days = $("#heat-days");
     if (!hours || !grid || !days) return;
-    const signature = JSON.stringify([heatmap, state.dashboard?.checkin_heatmap, visibleHours, String(state.dashboard?.now || "").slice(0, 10)]);
+    const signature = JSON.stringify([heatmap, state.dashboard?.checkin_heatmap, state.dashboard?.daily_task_heatmap, visibleHours, String(state.dashboard?.now || "").slice(0, 10)]);
     if (grid.dataset.signature === signature) { state.heatGeometryUpdate?.(); return; }
     grid.dataset.signature = signature;
     const configuredHours = [...new Set((visibleHours || []).map(Number))].filter((hour) => Number.isInteger(hour) && hour >= 0 && hour < 24 && hour % 2 === 0);
@@ -908,7 +908,8 @@
     const wasAtLatest = state.heatWindowStart === null || state.heatWindowStart >= previousMaxStart;
     state.heatWindowStart = wasAtLatest ? maxStart : Math.min(maxStart, Math.max(0, state.heatWindowStart));
     state.heatHistoryLength = historyDays.length;
-    hours.innerHTML = shownHours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("") + "<span>打卡</span>";
+    hours.innerHTML = shownHours.map((hour) => `<span>${String(hour).padStart(2, "0")}</span>`).join("")
+      + '<i class="heat-aux-divider" aria-hidden="true"></i><span>打卡</span><span>任务</span>';
     const max = Math.max(120, ...historyDays.flatMap((day) => buckets.map((bucket) => day[bucket] || 0)));
     let suppressClickUntil = 0;
     const formatDay = (absoluteIndex) => {
@@ -931,7 +932,8 @@
     };
     const renderWindow = () => {
       const displayDays = historyDays.slice(state.heatWindowStart, state.heatWindowStart + dayCount);
-      grid.innerHTML = buckets.map((bucket) => displayDays.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, state.heatWindowStart + dayIndex, bucket)).join("")).join("");
+      grid.innerHTML = buckets.map((bucket) => displayDays.map((day, dayIndex) => renderCell(day[bucket] || 0, dayIndex, state.heatWindowStart + dayIndex, bucket)).join("")).join("")
+        + '<i class="heat-aux-divider" aria-hidden="true"></i>';
       const checkins = state.dashboard?.checkin_heatmap || [];
       grid.innerHTML += displayDays.map((_, dayIndex) => {
         const index = state.heatWindowStart + dayIndex;
@@ -943,15 +945,24 @@
         const text = row?.total ? `${row.completed}/${row.total} · ${Math.round(row.completion * 100)}%` : "未配置";
         return `<button type="button" role="gridcell" tabindex="-1" class="heat-cell heat-checkin-cell${level ? ` l${level}` : ""}${fadeClass(dayIndex)}" data-detail-kind="checkin-day" data-detail-date="${dayKey}" data-detail-hour="checkin" data-detail-key="${dayKey}" data-detail="${dayKey} 打卡 ${text}" aria-label="${dayKey} 打卡 ${text}" title="${text}"></button>`;
       }).join("");
+      const taskDays = state.dashboard?.daily_task_heatmap || [];
+      grid.innerHTML += displayDays.map((_, dayIndex) => {
+        const index = state.heatWindowStart + dayIndex;
+        const row = taskDays[index];
+        if (!row?.total) return '<button type="button" role="gridcell" tabindex="-1" aria-disabled="true" aria-label="无计划任务" class="heat-cell heat-task-empty"></button>';
+        const level = row.completed ? Math.min(4, Math.ceil(4 * row.completion)) : 0;
+        const text = `${row.date} 任务 ${row.completed}/${row.total} · ${Math.round(100 * row.completion)}%`;
+        return `<button type="button" role="gridcell" tabindex="-1" class="heat-cell heat-task-cell${level ? ` l${level}` : ""}${fadeClass(dayIndex)}" data-detail-kind="daily-task-day" data-detail-date="${escapeHtml(row.date)}" data-detail-hour="task" data-detail-key="${escapeHtml(row.date)}" data-detail="${escapeHtml(text)}" aria-label="${escapeHtml(text)}" title="${escapeHtml(text)}"></button>`;
+      }).join("");
       grid.querySelectorAll(".heat-cell").forEach((cell) => cell.addEventListener("click", () => {
-        if (Date.now() < suppressClickUntil) return;
+        if (Date.now() < suppressClickUntil || cell.getAttribute("aria-disabled") === "true") return;
         $("#heat-detail").textContent = cell.dataset.detail;
         state.heatSelection = { date: cell.dataset.detailDate, hour: cell.dataset.detailHour };
         const button = $("#open-heat-detail");
         if (button) {
           button.disabled = false;
           button.dataset.detailKind = cell.dataset.detailKind;
-          button.textContent = cell.dataset.detailKind === "checkin-day" ? "打卡详情 ↗" : "时段详情 ↗";
+          button.textContent = cell.dataset.detailKind === "daily-task-day" ? "任务详情 ↗" : cell.dataset.detailKind === "checkin-day" ? "打卡详情 ↗" : "时段详情 ↗";
           button.dataset.detailDate = cell.dataset.detailDate;
           button.dataset.detailHour = cell.dataset.detailHour;
           button.dataset.detailKey = cell.dataset.detailKey;
@@ -977,9 +988,10 @@
       const cell = width / (dayCount + (dayCount - 1) * gapRatio);
       const gap = cell * gapRatio;
       grid.style.gridTemplateColumns = `repeat(${dayCount},${cell}px)`;
-      grid.style.gridTemplateRows = `repeat(${buckets.length + 1},${cell}px)`;
+      const rows = `repeat(${buckets.length},${cell}px) ${Math.min(1, cell * .22)}px repeat(2,${cell}px)`;
+      grid.style.gridTemplateRows = rows;
       grid.style.gap = `${gap}px`;
-      hours.style.gridTemplateRows = `repeat(${buckets.length + 1},${cell}px)`;
+      hours.style.gridTemplateRows = rows;
       hours.style.gap = `${gap}px`;
     };
     state.heatGeometryUpdate = updateGeometry;
@@ -1331,15 +1343,19 @@
 
   function selectInsightView(name) {
     const summaryAvailable = state.summaryCharts.length > 0;
-    state.insightView = ["investment", "comparison", "summary"].includes(name) && (name !== "summary" || summaryAvailable) ? name : "comparison";
+    const planAvailable = Boolean($("#app-plan-tab") && window.MutsumiViewport?.wide);
+    state.insightView = ["investment", "comparison", "summary", "daily-plan"].includes(name)
+      && (name !== "summary" || summaryAvailable) && (name !== "daily-plan" || planAvailable) ? name : "comparison";
     const statsToggle = $(".native-stat-toggle");
     if (statsToggle) statsToggle.hidden = state.insightView !== "investment";
     ["investment", "comparison", "summary"].forEach((view) => {
       const target = $(view === "investment" ? "#focus-investment-view" : view === "comparison" ? "#focus-comparison-view" : "#focus-summary");
       if (target) target.hidden = state.insightView !== view;
     });
+    const plan = $("#app-home-plan");
+    if (plan) plan.hidden = planAvailable && state.insightView !== "daily-plan";
     document.querySelectorAll("[data-insight-view]").forEach((button) => {
-      button.hidden = button.dataset.insightView === "summary" && !summaryAvailable;
+      button.hidden = button.dataset.insightView === "summary" && !summaryAvailable || button.dataset.insightView === "daily-plan" && !planAvailable;
       const selected = button.dataset.insightView === state.insightView;
       button.classList.toggle("is-active", selected);
       button.setAttribute("aria-selected", String(selected));
@@ -1804,7 +1820,7 @@
     $("#focus-launch-form")?.addEventListener("submit", submitFocusLaunch);
     $("#toggle-focus-pin")?.addEventListener("click", () => {
       const item = selectedFocusLaunchItem();
-      if (item) { if (window.FocusEntry) FocusEntry.assignLaunch(item); else toggleQuickPin(item.id); }
+      if (item && !window.FocusEntry) toggleQuickPin(item.id);
     });
     modal.addEventListener("cancel", (event) => { event.preventDefault(); closeFocusLaunch(); });
   }
@@ -1947,12 +1963,13 @@
     });
   }
 
-  async function startFocusItem(focusItemId, plannedMinutes = 0) {
+  async function startFocusItem(focusItemId, plannedMinutes = 0, dailyTaskId = null) {
     if (!canManageOwnFocus() || state.starting || state.settling || nativeRuntime().busy || state.dashboard?.focus?.active) return false;
     state.starting = true;
     try {
-      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(focusItemId), mode: "专注", planned_minutes: plannedMinutes, client_token: createClientToken() }) });
-      rememberFocusItem(focusItemId);
+      const session = await api("/api/focus/start", { method: "POST", body: JSON.stringify({ focus_item_id: Number(focusItemId), mode: "专注", planned_minutes: plannedMinutes, client_token: createClientToken(), ...(dailyTaskId === null ? {} : { daily_task_id: dailyTaskId }) }) });
+      if (window.FocusEntry) FocusEntry.remember(Number(focusItemId), plannedMinutes);
+      else rememberFocusItem(focusItemId);
       state.recentlyEnded = null;
       const today = state.dashboard?.focus?.today || [];
       state.dashboard = { ...state.dashboard, focus: { ...(state.dashboard?.focus || {}), active: session.session, today: [...today.filter((item) => item.id !== session.session.id), session.session] } };
@@ -2081,6 +2098,7 @@
       || ["#home-state-note", "#focus-timer", "#focus-subject", "#focus-start", "#focus-window"].some((selector) => !$(selector))) return;
     idleView.hidden = Boolean(active);
     activeView.hidden = !active;
+    if (previousActive?.id !== active?.id) window.AppPages?.focusChanged(Boolean(active));
     selectInsightView(state.insightView);
     renderFocusComparison(active);
     $("#home-state-note").textContent = active ? "专注中，保持当前上下文" : "准备开始下一段专注";
@@ -2135,6 +2153,7 @@
       dailyPlan: data.daily_plan?.revision,
       heatmap: data.heatmap,
       checkins: data.checkin_heatmap,
+      taskHeatmap: data.daily_task_heatmap,
       heatmapVisibleHours: data.heatmap_visible_hours,
       preferences: data.preferences,
       friends: (data.friends || []).map((friend) => [friend.id, friend.today_seconds, friend.delta_seconds]),
@@ -2978,6 +2997,12 @@
     const target = $("#settings-focus-items");
     const createSubject = $("#new-focus-item-subject");
     const createForm = $("#focus-item-create-form");
+    if (createForm && !createForm.elements.expected_minutes) {
+      const minutes = document.createElement("input");
+      Object.assign(minutes, {name:"expected_minutes", type:"number", min:"0", max:"1440", step:"1", value:"0", defaultValue:"0", placeholder:"预期分钟"});
+      minutes.setAttribute("aria-label", "预期时间（分钟）");
+      createForm.querySelector("[type=submit]")?.before(minutes);
+    }
     if (createSubject) createSubject.innerHTML = focusItemSubjectOptions(subjects, subjects[0]?.id);
     if (createForm) {
       createForm.querySelectorAll("input, select, button").forEach((field) => {
@@ -2990,7 +3015,7 @@
       return;
     }
     const rankOptions = (selectedRank) => items.map((_item, index) => `<option value="${index + 1}"${index + 1 === selectedRank ? " selected" : ""}>${index + 1}</option>`).join("");
-    target.innerHTML = items.map((item, index) => `<form class="focus-item-settings-row" data-focus-item-id="${Number(item.id)}"><select name="subject_id" aria-label="所属科目">${focusItemSubjectOptions(subjects, item.subject_id)}</select><input name="name" maxlength="24" value="${escapeHtml(item.name)}" aria-label="事项名称"><label class="focus-item-rank">顺序<select data-focus-item-rank aria-label="${escapeHtml(item.label)} 的顺序">${rankOptions(index + 1)}</select></label><button class="ui-button ui-button--secondary ui-button--sm" type="submit">保存</button><button class="ui-button ui-button--danger ui-button--sm" type="button" data-delete-focus-item>删除</button></form>`).join("");
+    target.innerHTML = items.map((item, index) => `<form class="focus-item-settings-row" data-focus-item-id="${Number(item.id)}"><select name="subject_id" aria-label="所属科目">${focusItemSubjectOptions(subjects, item.subject_id)}</select><input name="name" maxlength="24" value="${escapeHtml(item.name)}" aria-label="事项名称"><label class="focus-item-expected">预期分钟<input name="expected_minutes" type="number" min="0" max="1440" step="1" required value="${Number(item.expected_minutes)||0}" aria-label="预期时间（分钟）"></label><label class="focus-item-rank">顺序<select data-focus-item-rank aria-label="${escapeHtml(item.label)} 的顺序">${rankOptions(index + 1)}</select></label><button class="ui-button ui-button--secondary ui-button--sm" type="submit">保存</button><button class="ui-button ui-button--danger ui-button--sm" type="button" data-delete-focus-item>删除</button></form>`).join("");
     target.querySelectorAll(".focus-item-settings-row").forEach((form) => {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -3175,9 +3200,11 @@
     bindActivitySwitch();
     bindQuickScore();
     bindInvestmentRange();
-    document.querySelectorAll("[data-insight-view]").forEach((button) => button.addEventListener("click", () => selectInsightView(button.dataset.insightView)));
+    document.querySelectorAll("[data-insight-view]:not(#app-plan-tab)").forEach((button) => button.addEventListener("click", () => selectInsightView(button.dataset.insightView)));
     window.DashboardController = {
       getData: () => state.dashboard,
+      selectInsightView,
+      startTaskFocus: (itemId, minutes, taskId) => startFocusItem(itemId, minutes, taskId),
       confirm: requestConfirmation,
       isSettlementBusy: () => state.settling,
       canCancelSettlement,

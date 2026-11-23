@@ -12,6 +12,7 @@
   let dialog, content, kind='', historyToken=null, returnFocus=null, generation=0, latest=null, model=null, draft=null, busy=false;
   let initialSession=null, savedSessionId=0;
   let overview=null, overviewRevision=null, overviewLoading=false, overviewSaving=false;
+  let launchTaskId=null, taskStarting=false;
   const messages={daily_task_changed:'任务已在其他端更新，请确认最新状态后再保存。',focus_session_not_ended:'这段专注尚未结束。',daily_task_not_found:'这个任务已更新或移出，请重新选择。',focus_session_not_found:'暂时找不到这段专注记录。',public_https_push_url_required:'请填写可访问的公网 HTTPS 地址。',https_push_url_required:'接收地址需要使用 HTTPS。',invalid_push_url:'请检查接收地址。',push_not_configured:'请先保存接收地址。',authentication_required:'登录已失效，请重新登录。'};
   async function api(url, options={}) {
     const controller=new AbortController(),deadline=setTimeout(()=>controller.abort(),15000);
@@ -33,6 +34,16 @@
       panel.id='app-home-plan';panel.className='panel app-home-plan';panel.setAttribute('aria-labelledby','app-home-plan-title');
       panel.innerHTML='<div class="app-home-plan-head"><h2 id="app-home-plan-title">每日任务</h2><span data-daily-plan-count></span><button type="button" class="ui-button ui-button--quiet" data-open-daily-tasks>全部计划 ↗</button></div><div class="app-home-plan-track" role="progressbar" aria-label="每日任务完成度" aria-valuemin="0" aria-valuemax="100"><i></i></div><div class="app-home-plan-list" data-plan-overview><p>正在读取每日计划…</p></div><p class="app-plan-message" data-plan-message role="status"></p>';
       controls.closest('.dashboard-grid').after(panel);
+      const tabs=$('#dashboard-insights .insight-switch');
+      if(tabs){
+        const button=document.createElement('button');
+        button.id='app-plan-tab';button.type='button';button.hidden=true;button.dataset.insightView='daily-plan';
+        button.setAttribute('role','tab');button.setAttribute('aria-selected','false');
+        button.setAttribute('aria-controls',panel.id);button.textContent='每日任务';
+        button.addEventListener('click',()=>window.DashboardController?.selectInsightView('daily-plan'));
+        tabs.insertBefore(button,tabs.querySelector('[data-insight-view="summary"]'));
+      }
+      placeOverview();
     }
     const settings=$('#settings-data-panel') || $('#settings-system-panel') || $('body.page-settings .app-main');
     if(settings&&!settings.querySelector('[data-open-plan-integration]')){
@@ -46,9 +57,50 @@
     }
   }
   function data(){return latest||window.DashboardController?.getData()||{};}
+  function placeOverview(){
+    const panel=$('#app-home-plan'),grid=$('.dashboard-grid'),insights=$('#dashboard-insights'),tab=$('#app-plan-tab');
+    if(!panel||!grid||!insights||!tab)return;
+    if(window.MutsumiViewport?.wide){
+      if(panel.parentElement!==insights){insights.append(panel);panel.hidden=true;}
+      tab.hidden=false;
+    }else{
+      if(panel.parentElement===insights){window.DashboardController?.selectInsightView('comparison');grid.after(panel);}
+      panel.hidden=false;tab.hidden=true;
+    }
+  }
+  function focusChanged(active){
+    launchTaskId=null;
+    const controller=window.DashboardController;
+    if(window.MutsumiViewport?.wide)controller?.selectInsightView(active?'comparison':'daily-plan');
+    if(!active){overviewRevision=null;refreshOverview();}
+    paintOverview();
+  }
+  function taskItems(task){
+    return (data().focus_items||[]).filter(item=>task.focus_item_id?item.id===task.focus_item_id:!task.subject_id||item.subject_id===task.subject_id);
+  }
+  function taskMinutes(task,item){return Number(task.target_minutes)||Number(item?.expected_minutes)||0;}
+  function canStartTask(){
+    return !data().daily_settlement && !document.body.matches('.is-focusing,.is-resting,.is-settled');
+  }
+  function taskLaunch(task,items){
+    if(task.id!==launchTaskId)return '';
+    const expected=taskMinutes(task,items[0]);
+    return `<form data-task-launch-form="${task.id}" class="app-home-task-form">
+      ${items.length>1?`<label>专注事项<select name="item">${items.map(item=>`<option value="${item.id}" data-minutes="${taskMinutes(task,item)}">${esc(item.label)}</option>`).join('')}</select></label>`:`<input type="hidden" name="item" value="${items[0].id}">`}
+      <label>预期时间（分钟）<input type="number" name="minutes" required min="1" max="1440" step="1" value="${expected||''}"></label>
+      <button class="ui-button ui-button--primary" type="submit">开始专注</button>
+    </form>`;
+  }
   function paintOverview(){
     const host=$('[data-plan-overview]');if(!host||!overview)return;
-    host.innerHTML=overview.tasks.map(task=>`<article class="app-home-task${task.completed?' is-complete':''}"><button type="button" class="app-task-complete" data-home-task="${task.id}" aria-label="${task.completed?'撤销完成':'标记完成'} ${esc(task.title)}" aria-pressed="${task.completed}" ${overviewSaving?'disabled':''}>${window.StatusIcons.completion(task.completed)}</button><div><strong>${esc(task.title)}</strong><span>${duration(task.focus_seconds)}${task.target_minutes?' / '+esc(minutes(task.target_minutes)):''}</span></div></article>`).join('')||'<p>今天还没有任务。<button type="button" class="ui-button ui-button--quiet" data-open-plan-integration>接入每日计划</button></p>';
+    const scroll=host.scrollTop;
+    host.innerHTML=overview.tasks.map(task=>{
+      const items=taskItems(task);
+      const expected=taskMinutes(task,items.length===1?items[0]:null);
+      const launchable=!task.completed&&items.length>0;
+      return `<article class="app-home-task${task.completed?' is-complete':''}"><button type="button" class="app-task-complete" data-home-task="${task.id}" aria-label="${task.completed?'撤销完成':'标记完成'} ${esc(task.title)}" aria-pressed="${task.completed}" ${overviewSaving?'disabled':''}>${window.StatusIcons.completion(task.completed)}</button><div><strong>${esc(task.title)}</strong><span>${duration(task.focus_seconds)}${expected?' · 预期 '+esc(minutes(expected)):''}</span></div>${launchable?`<button type="button" class="ui-button ui-button--quiet app-task-launch" data-start-home-task="${task.id}" aria-expanded="${task.id===launchTaskId}">定时</button>${taskLaunch(task,items)}`:''}</article>`;
+    }).join('')||'<p>今天还没有任务。<button type="button" class="ui-button ui-button--quiet" data-open-plan-integration>接入每日计划</button></p>';
+    host.scrollTop=scroll;
     const count=$('#app-home-plan [data-daily-plan-count]');count.textContent=`${overview.completed} / ${overview.total} 已完成`;
     const percent=overview.total?Math.round(100*overview.completed/overview.total):0;
     const track=$('.app-home-plan-track');track.setAttribute('aria-valuenow',String(percent));track.firstElementChild.style.width=percent+'%';
@@ -60,6 +112,16 @@
     try{overview=await api('/api/daily-tasks');overviewRevision=revision;paintOverview();}
     catch(error){const host=$('[data-plan-overview]');if(host&&!overview)host.innerHTML='<p>'+esc(error.message)+' <button type="button" class="ui-button ui-button--quiet" data-plan-refresh>重试</button></p>';}
     finally{overviewLoading=false;}
+  }
+  async function startOverviewTask(form){
+    if(taskStarting||!canStartTask())return;
+    const fields=new FormData(form),planned=Number(fields.get('minutes')),itemId=Number(fields.get('item'));
+    const task=overview?.tasks.find(item=>item.id===Number(form.dataset.taskLaunchForm));
+    if(!task||task.completed||!Number.isInteger(planned)||planned<1||planned>1440||!taskItems(task).some(item=>item.id===itemId))return;
+    taskStarting=true;
+    const button=form.querySelector('[type=submit]');button.disabled=true;
+    try{if(await window.DashboardController?.startTaskFocus(itemId,planned,task.id)){launchTaskId=null;paintOverview();}}
+    finally{button.disabled=false;taskStarting=false;}
   }
   async function completeOverview(id){
     const task=overview?.tasks.find(item=>item.id===id);if(!task||overviewSaving)return;
@@ -205,9 +267,34 @@
     <section class="app-card app-daily-checkins"><div class="app-section-head"><h2>打卡</h2><b>${checkins?checkins.completed+' / '+checkins.total:'未记录'}</b></div><div>${checkinRows||'<p class="app-empty">没有打卡明细</p>'}</div><small>结算前 24 小时</small></section></main><footer class="app-page-foot app-daily-foot"><span>${esc(report.closing_note||'今天的投入已经收好。')}</span>${window.DashboardController?.canCancelSettlement?.(report.date)?`<button type="button" class="ui-button ui-button--quiet" data-cancel-daily-settlement data-settlement-date="${esc(report.date)}" data-settlement-id="${Number(data().daily_settlement?.id)}" ${window.DashboardController?.isSettlementBusy?.()?'disabled':''}>取消结算</button>`:''}</footer></div>`;
   }
   document.addEventListener('click',event=>{const trigger=event.target.closest?.('[data-open-daily-tasks],[data-open-plan-integration],[data-native-report-back],[data-native-report-tasks]');if(!trigger||!owner())return;if(trigger.matches('[data-native-report-back]'))window.DailyReport?.close();else if(trigger.matches('[data-native-report-tasks],[data-open-daily-tasks]'))openTasks(trigger);else if(!dialog?.contains(trigger))openIntegration(trigger);});
-  document.addEventListener('click',event=>{const button=event.target.closest?.('[data-home-task],[data-plan-refresh]');if(!button||!owner())return;if(button.hasAttribute('data-home-task'))completeOverview(Number(button.dataset.homeTask));else refreshOverview();});
+  document.addEventListener('click',event=>{
+    const button=event.target.closest?.('[data-home-task],[data-plan-refresh],[data-start-home-task]');
+    if(!button||!owner())return;
+    if(button.hasAttribute('data-home-task'))completeOverview(Number(button.dataset.homeTask));
+    else if(button.hasAttribute('data-start-home-task')){
+      if(!canStartTask())return;
+      const id=Number(button.dataset.startHomeTask);
+      launchTaskId=launchTaskId===id?null:id;paintOverview();
+      if(launchTaskId)$(`[data-task-launch-form="${id}"]`)?.scrollIntoView({block:'nearest'});
+    }else refreshOverview();
+  });
+  document.addEventListener('submit',event=>{
+    if(!event.target.matches('[data-task-launch-form]'))return;
+    event.preventDefault();startOverviewTask(event.target);
+  });
+  document.addEventListener('change',event=>{
+    const select=event.target;
+    if(select.matches('[data-task-launch-form] select[name=item]'))select.form.elements.minutes.value=select.selectedOptions[0]?.dataset.minutes||'';
+  });
+  window.addEventListener('dashboard:viewport',placeOverview);
   document.addEventListener('dashboard:updated',event=>{latest=event.detail;install();refreshOverview();});
   document.addEventListener('DOMContentLoaded',()=>{install();refreshOverview();window.DashboardClock?.subscribe('app-pages',tick);});
+  document.addEventListener('DOMContentLoaded',()=>{
+    window.DashboardDetails?.register('daily-task-day',async({date})=>{
+      const catalog=await api('/api/daily-tasks?date='+encodeURIComponent(date));
+      return {title:date+' · 每日任务',html:'<p>'+catalog.completed+' / '+catalog.total+' 已完成</p>'+catalog.tasks.map(task=>`<div class="app-task-row"><span aria-label="${task.completed?'已完成':'未完成'}">${window.StatusIcons.completion(task.completed)}</span><strong>${esc(task.title)}</strong></div>`).join('')};
+    });
+  });
   window.addEventListener('popstate',()=>{if(dialog?.open&&history.state?.[historyKey]!==historyToken)close(true);});
-  window.AppPages={openSession,openTasks,openIntegration,dailyReportHtml,isPortrait:portrait};
+  window.AppPages={openSession,openTasks,openIntegration,dailyReportHtml,isPortrait:portrait,focusChanged};
 })();

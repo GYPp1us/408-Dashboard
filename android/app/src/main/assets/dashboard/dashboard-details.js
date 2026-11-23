@@ -106,6 +106,10 @@
   }
   providers.set("focus", async (data) => {
     const payload = await fetchJson(`/api/focus/items/${encodeURIComponent(data.key)}/summary`, data.signal);
+    if (window.FocusEntry) return {
+      title: itemLabel(payload.item || {}),
+      html: `<div class="detail-metrics">${metric("今日有效专注", duration(payload.today_seconds))}${metric("累计有效专注", duration(payload.all_time_seconds))}${metric("今日次数", payload.today_count || 0)}${metric("预期时间", payload.item?.expected_minutes ? payload.item.expected_minutes + " 分钟" : "未设置")}</div><h3>最近专注记录</h3>${records(payload.recent_sessions)}`,
+    };
     const bridge = window.DashboardController;
     const items = bridge?.getData()?.focus_items || bridge?.getData()?.focus_modes || [];
     const alternatives = items.filter((item) => String(item.id) !== String(data.key));

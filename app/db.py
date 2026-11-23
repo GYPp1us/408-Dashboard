@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS user_focus_items (
     name TEXT NOT NULL,
     item_key TEXT NOT NULL,
     sort_order INTEGER NOT NULL,
+    expected_minutes INTEGER NOT NULL DEFAULT 0 CHECK(expected_minutes BETWEEN 0 AND 1440),
     legacy_mode_id INTEGER UNIQUE
 );
 CREATE TABLE IF NOT EXISTS focus_sessions (
@@ -1001,6 +1002,7 @@ def init_db(connection: sqlite3.Connection, *, allow_subject_migration_review: b
     _hierarchy_ensure_history_columns(connection)
     _hierarchy_add_columns(connection, "focus_reporter_keys", {"token": "TEXT"})
     _hierarchy_add_columns(connection, "daily_settlements", {"report_json": "TEXT"})
+    _hierarchy_add_columns(connection, "user_focus_items", {"expected_minutes": "INTEGER NOT NULL DEFAULT 0 CHECK(expected_minutes BETWEEN 0 AND 1440)"})
     _migrate_focus_hierarchy(connection)
     connection.execute("DROP INDEX IF EXISTS one_active_focus")
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_focus_per_user ON focus_sessions(user_id) WHERE status = 'active' AND user_id IS NOT NULL")
@@ -1245,7 +1247,7 @@ def list_focus_items(connection: sqlite3.Connection, user_id: int | None) -> lis
     where = "WHERE item.user_id = ?" if user_id is not None else ""
     params = (user_id,) if user_id is not None else ()
     return _rows(connection, f"""
-        SELECT item.id, item.subject_id, item.name, item.sort_order,
+        SELECT item.id, item.subject_id, item.name, item.sort_order, item.expected_minutes,
                subject.name AS subject,
                subject.name || ' · ' || item.name AS label
         FROM user_focus_items AS item
@@ -1331,9 +1333,17 @@ def _focus_item_values(name: str) -> tuple[str, str]:
     return item_name, item_key
 
 
+def _focus_item_expected_minutes(value):
+    if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 4:
+        value = int(value)
+    if type(value) is not int or not 0 <= value <= 1440:
+        raise ValueError("invalid_expected_minutes")
+    return value
+
+
 def get_focus_item(connection: sqlite3.Connection, user_id: int, focus_item_id: int) -> dict[str, Any] | None:
     row = connection.execute("""
-        SELECT item.id, item.subject_id, item.name, item.sort_order,
+        SELECT item.id, item.subject_id, item.name, item.sort_order, item.expected_minutes,
                subject.name AS subject,
                subject.name || ' · ' || item.name AS label
         FROM user_focus_items AS item
@@ -1358,6 +1368,7 @@ def create_focus_item(
     user_id: int,
     subject_id: int,
     name: str,
+    expected_minutes: int = 0,
 ) -> dict[str, Any]:
     if not get_subject(connection, user_id, subject_id):
         raise ValueError("subject_not_found")
@@ -1367,9 +1378,9 @@ def create_focus_item(
         (user_id,),
     ).fetchone()[0]
     cursor = connection.execute("""
-        INSERT INTO user_focus_items(user_id, subject_id, name, item_key, sort_order)
-        VALUES (?, ?, ?, ?, ?)
-    """, (user_id, subject_id, item_name, item_key, next_order))
+        INSERT INTO user_focus_items(user_id, subject_id, name, item_key, sort_order, expected_minutes)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, subject_id, item_name, item_key, next_order, _focus_item_expected_minutes(expected_minutes)))
     return get_focus_item(connection, user_id, int(cursor.lastrowid)) or {}
 
 
@@ -1379,17 +1390,20 @@ def update_focus_item(
     focus_item_id: int,
     subject_id: int,
     name: str,
+    expected_minutes: int | None = None,
 ) -> dict[str, Any] | None:
-    if not get_focus_item(connection, user_id, focus_item_id):
+    existing = get_focus_item(connection, user_id, focus_item_id)
+    if not existing:
         return None
     if not get_subject(connection, user_id, subject_id):
         raise ValueError("subject_not_found")
     item_name, item_key = _focus_item_values(name)
     connection.execute("""
         UPDATE user_focus_items
-        SET subject_id = ?, name = ?, item_key = ?
+        SET subject_id = ?, name = ?, item_key = ?, expected_minutes = ?
         WHERE user_id = ? AND id = ?
-    """, (subject_id, item_name, item_key, user_id, focus_item_id))
+    """, (subject_id, item_name, item_key, existing["expected_minutes"] if expected_minutes is None
+          else _focus_item_expected_minutes(expected_minutes), user_id, focus_item_id))
     return get_focus_item(connection, user_id, focus_item_id)
 
 

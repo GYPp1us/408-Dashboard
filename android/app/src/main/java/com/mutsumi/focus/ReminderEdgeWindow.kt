@@ -13,8 +13,11 @@ import android.graphics.Point
 import android.graphics.RectF
 import android.hardware.input.InputManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
@@ -34,15 +37,17 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
     private var phase: String? = null
     private var styleKey = ""
     private var color = PopupReminderPolicy.WAITING_COLOR
+    private var dashboardVisible = false
     private var duration = 0
     private var question: ReminderQuestion? = null
     private var reviewing = false
 
-    fun update(key: String?, signalColor: Int, accent: Int) {
+    fun update(key: String?, signalColor: Int, accent: Int, appVisible: Boolean) {
         if (key == null || phase != key) dismiss()
         phase = key
         if (key == null) return
         color = signalColor
+        dashboardVisible = appVisible
         val specific = if (Settings.canDrawOverlays(context)) context else FocusAccessibilityService.connectedContext()
         if (specific == null) { dismiss(); return }
         val type = if (specific === context) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -50,7 +55,11 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
         val config = context.resources.configuration
         val horizontal = config.orientation == Configuration.ORIENTATION_LANDSCAPE
         val layout = "$type:$horizontal:$accent:${config.screenWidthDp}:${config.screenHeightDp}:${config.fontScale}"
-        if (layout == styleKey && sheet != null) { sheet?.feedback(); return }
+        if (layout == styleKey && sheet != null) {
+            if (!appVisible) sheet?.releaseDashboardTouch()
+            sheet?.feedback()
+            return
+        }
         val reopen = sheet?.opened == true
         sheet?.remove()
         val windowContext = if (type == WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY && Build.VERSION.SDK_INT >= 30)
@@ -64,7 +73,7 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
         sheet?.remove(); sheet = null; phase = null; styleKey = ""
         duration = 0; question = null; reviewing = false
     }
-    fun trackDashboardTouch(event: MotionEvent): Boolean = sheet?.dashboardTouch(event) == true
+    fun trackDashboardTouch(event: MotionEvent, claim: (MotionEvent) -> Unit) { sheet?.dashboardTouch(event, claim) }
 
     private inner class Sheet(private val ui: ReminderUi, private val type: Int, private val horizontal: Boolean) {
         private val wm = ui.context.getSystemService(WindowManager::class.java)
@@ -88,14 +97,9 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
         private var crossOffset = (prefs.edgePosition(horizontal).coerceIn(-1f, 1f) * crossLimit).roundToInt()
         private var sheetAttached = false
         private var collapsedAttached = false
-        private var railAttached = false
         private val gesture = Gesture()
         private val folded = Bar()
         private val openBar = Bar().apply {
-            setOnTouchListener { _, event -> gesture.touch(event, 1, allowMove = true); true }
-        }
-        private val rail = View(ui.context).apply {
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             setOnTouchListener { _, event -> gesture.touch(event, 1, allowMove = true); true }
         }
         private val moving = FrameLayout(ui.context)
@@ -123,8 +127,6 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
             if (type == WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY && Build.VERSION.SDK_INT >= 31)
                 alpha = ui.context.getSystemService(InputManager::class.java).maximumObscuringOpacityForTouch
         }
-        private val railParams = params(if (horizontal) handleLength else ui.dp(48),
-            if (horizontal) ui.dp(48) else handleLength, "Focus reminder drag")
 
         @Suppress("DEPRECATION")
         private fun crossSpace(): Int {
@@ -153,7 +155,6 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
             populate()
             updateCross()
             wm.addView(folded, visualParams); collapsedAttached = true
-            wm.addView(rail, railParams); railAttached = true
             opened = reopen
             position(if (reopen) extent else 0f)
             true
@@ -220,14 +221,11 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
             if (horizontal) {
                 panelParams.x = crossOffset.coerceIn(-limit, limit)
                 visualParams.x = crossOffset; visualParams.y = gap + grip / 2 - thickness / 2
-                railParams.x = crossOffset; railParams.y = gap + grip / 2 + thickness / 2
             } else {
                 panelParams.y = crossOffset.coerceIn(-limit, limit)
                 visualParams.y = crossOffset; visualParams.x = gap + grip / 2 - thickness / 2
-                railParams.y = crossOffset; railParams.x = gap + grip / 2 + thickness / 2
             }
             if (collapsedAttached) runCatching { wm.updateViewLayout(folded, visualParams) }
-            if (railAttached) runCatching { wm.updateViewLayout(rail, railParams) }
             if (sheetAttached) runCatching { wm.updateViewLayout(viewport, panelParams) }
         }
 
@@ -261,17 +259,18 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
             }
         }
 
-        fun dashboardTouch(event: MotionEvent): Boolean = gesture.touch(event, 0, allowMove = true)
+        fun dashboardTouch(event: MotionEvent, claim: (MotionEvent) -> Unit) {
+            if (dashboardVisible) gesture.touch(event, 0, allowMove = true, claim = claim)
+        }
+        fun releaseDashboardTouch() { if (gesture.fromDashboard) gesture.cancel() }
         fun feedback() {
-            rail.visibility = if (shown <= 0f || gesture.capturedRail) View.VISIBLE else View.INVISIBLE
             folded.invalidate(); openBar.invalidate()
         }
         fun remove() {
             animator?.cancel(); gesture.release()
             if (sheetAttached) runCatching { wm.removeViewImmediate(viewport) }
-            if (railAttached) runCatching { wm.removeViewImmediate(rail) }
             if (collapsedAttached) runCatching { wm.removeViewImmediate(folded) }
-            sheetAttached = false; railAttached = false; collapsedAttached = false
+            sheetAttached = false; collapsedAttached = false
         }
 
         private inner class Bar : View(ui.context) {
@@ -279,7 +278,7 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
             private val rect = RectF()
             init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES; contentDescription = "专注提醒，拖动展开或收起" }
             override fun onDraw(canvas: Canvas) {
-                val engaged = gesture.tracker != null || animating
+                val engaged = gesture.activated || animating
                 val halfWidth = ui.dp(if (engaged) 3 else 2).toFloat()
                 val length = minOf(ui.dp(if (engaged) 100 else 88), (if (horizontal) width else height) - ui.dp(16)).toFloat() / 2
                 val cx = width / 2f; val cy = height / 2f
@@ -303,7 +302,7 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
                     gesture.drag == EdgeDrag.REPOSITION -> "正在移动提醒条"
                     gesture.drag == EdgeDrag.PULL -> "正在拖动提醒卡"
                     animating -> if (opened) "正在展开提醒卡" else "正在收起提醒卡"
-                    gesture.tracker != null -> "提醒条已按下"
+                    gesture.activated -> "提醒条已激活"
                     opened -> "向外拖动收起提醒卡"
                     else -> "向内拖动展开提醒卡"
                 }
@@ -321,12 +320,24 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
         }
 
         private inner class Gesture {
+            private val handler = Handler(Looper.getMainLooper())
+            private var initialTouch: MotionEvent? = null
+            private var claimDashboard: ((MotionEvent) -> Unit)? = null
+            private val activate = Runnable {
+                val event = initialTouch ?: return@Runnable
+                activated = true
+                claimDashboard?.invoke(event)
+                folded.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                feedback()
+            }
             var tracker: VelocityTracker? = null
                 private set
             var drag: EdgeDrag? = null
                 private set
             private var source = -1
-            val capturedRail: Boolean get() = source == 1 && tracker != null
+            val fromDashboard get() = source == 0
+            var activated = false
+                private set
             private var startAxis = 0f
             private var startCross = 0f
             private var startOffset = 0f
@@ -335,7 +346,7 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
             private var startedOpen = false
             private fun axis(event: MotionEvent) = if (horizontal) event.rawY else -event.rawX
             private fun cross(event: MotionEvent) = if (horizontal) event.rawX else event.rawY
-            fun touch(event: MotionEvent, origin: Int, allowMove: Boolean): Boolean {
+            fun touch(event: MotionEvent, origin: Int, allowMove: Boolean, claim: ((MotionEvent) -> Unit)? = null): Boolean {
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                     // A child ScrollView may take its UP/CANCEL after the card contents are replaced.
                     // A new pointer sequence always owns a fresh tracker.
@@ -343,25 +354,32 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
                     if (origin == 0) {
                         if (shown > 0 || !folded.isLaidOut) return false
                         val location = IntArray(2); folded.getLocationOnScreen(location)
-                        // Dashboard events have already passed through the painted bar, so the whole surrounding area can be observed.
-                        val margin = ui.dp(20)
-                        if (event.rawX !in (location[0] - margin).toFloat()..(location[0] + folded.width + margin).toFloat() ||
-                            event.rawY !in location[1].toFloat()..(location[1] + folded.height).toFloat()) return false
+                        val halfLong = ui.dp(48)
+                        val halfShort = thickness / 2
+                        val x = location[0] + folded.width / 2f
+                        val y = location[1] + folded.height / 2f
+                        if (abs(event.rawX - x) > (if (horizontal) halfLong else halfShort) ||
+                            abs(event.rawY - y) > (if (horizontal) halfShort else halfLong)) return false
+                        initialTouch = MotionEvent.obtain(event)
+                        claimDashboard = claim
+                        handler.postAtTime(activate, event.eventTime + 500)
                     }
                     animator?.cancel()
                     source = origin; startAxis = axis(event); startCross = cross(event); startOffset = shown
                     startCrossOffset = crossOffset; startTime = event.eventTime; startedOpen = opened
                     tracker = VelocityTracker.obtain()
+                    activated = origin != 0
                     record(event); feedback()
                     return false
                 }
                 if (tracker == null || source != origin) return false
+                if (!activated) {
+                    val moved = maxOf(abs(axis(event) - startAxis), abs(cross(event) - startCross))
+                    if (event.actionMasked != MotionEvent.ACTION_MOVE || moved > ui.dp(6)) release()
+                    return false
+                }
                 if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                    val claimed = drag != null
-                    if (drag == EdgeDrag.REPOSITION) { crossOffset = startCrossOffset; updateCross() }
-                    release()
-                    if (claimed) settle(startedOpen, 0f)
-                    return claimed
+                    return cancel()
                 }
                 record(event)
                 val pull = axis(event) - startAxis
@@ -399,7 +417,19 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
                 raw.offsetLocation(event.rawX - event.x, event.rawY - event.y)
                 tracker?.addMovement(raw); raw.recycle()
             }
-            fun release() { tracker?.recycle(); tracker = null; drag = null; source = -1; feedback() }
+            fun cancel(): Boolean {
+                val claimed = drag != null
+                if (drag == EdgeDrag.REPOSITION) { crossOffset = startCrossOffset; updateCross() }
+                release()
+                if (claimed) settle(startedOpen, 0f)
+                return claimed
+            }
+            fun release() {
+                handler.removeCallbacks(activate)
+                initialTouch?.recycle(); initialTouch = null; claimDashboard = null
+                tracker?.recycle(); tracker = null; drag = null; source = -1; activated = false
+                feedback()
+            }
         }
     }
 }

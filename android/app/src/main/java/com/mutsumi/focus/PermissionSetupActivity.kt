@@ -77,7 +77,7 @@ class PermissionSetupActivity : Activity() {
         }
         val reminders = card("弹出式提醒")
         label(reminders, "开盘期间，未专注时持续显示边缘条。橙色表示等待，紫色表示一分钟内即将提醒。")
-        label(reminders, "向内拉开，向外收起；可从展开卡片上向外滑动。沿屏幕边缘拖动可调整位置。")
+        label(reminders, "在应用内长按色带，轻震后向内拖开。展开后向外滑动收起，沿边缘拖动可调整位置。")
         if (popup.pending.isBlank()) toggle(reminders, "启用边缘提示与全屏提醒", popup.enabled) {
             popup.enabled = it
             FocusService.reminderSettingsChanged(this)

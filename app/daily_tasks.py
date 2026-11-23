@@ -6,7 +6,7 @@ import hmac
 import json
 import secrets
 import unicodedata
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from flask import jsonify, request
@@ -78,6 +78,21 @@ def catalog(conn, user, now, day=None):
     return {'date': day, 'timezone': get_settings(conn, user).get('timezone', 'Asia/Shanghai'), 'tasks': tasks,
             'total': len(tasks), 'completed': sum(t['completed'] for t in tasks), 'focus_seconds': sum(t['focus_seconds'] for t in tasks),
             'completion_records': events}
+
+
+def heatmap(conn, user, now, day_count):
+    first = now.date() - timedelta(days=max(0, day_count - 1))
+    totals = {r['plan_date']: (r['completed'], r['total']) for r in conn.execute(
+        """SELECT plan_date, sum(completed) AS completed, count(*) AS total
+           FROM daily_tasks WHERE user_id=? AND archived=0 AND plan_date BETWEEN ? AND ?
+           GROUP BY plan_date""", (user, first.isoformat(), now.date().isoformat()))}
+    result = []
+    for index in range(day_count):
+        day = (first + timedelta(days=index)).isoformat()
+        completed, total = totals.get(day, (0, 0))
+        result.append({'date': day, 'completed': completed, 'total': total,
+                       'completion': completed / total if total else None})
+    return result
 
 
 def summary(conn, user, now):

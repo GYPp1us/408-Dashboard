@@ -28,7 +28,7 @@ internal class PopupReminderController(private val context: Context) {
 
     private fun edgeDismiss() { edge.dismiss() }
 
-    fun trackDashboardEdge(event: MotionEvent): Boolean = edge.trackDashboardTouch(event)
+    fun trackDashboardEdge(event: MotionEvent, claim: (MotionEvent) -> Unit) = edge.trackDashboardTouch(event, claim)
 
     fun update(state: FocusRuntimeState, schedule: IslandContext, now: Long, accent: Int, appVisible: Boolean) {
         val window = if (prefs.enabled) PopupReminderPolicy.window(state, schedule, now,
@@ -49,7 +49,7 @@ internal class PopupReminderController(private val context: Context) {
         }
         val pending = prefs.pending.isNotBlank()
         val surfaceKey = window?.key?.takeIf { !pending && interactive && !ReminderActivity.visible() }
-        edge.update(surfaceKey, if (window?.imminent == true) PopupReminderPolicy.IMMINENT_COLOR else PopupReminderPolicy.WAITING_COLOR, accent)
+        edge.update(surfaceKey, if (window?.imminent == true) PopupReminderPolicy.IMMINENT_COLOR else PopupReminderPolicy.WAITING_COLOR, accent, appVisible)
         if (!pending || ReminderActivity.visible() || (prefs.returning && appVisible)) {
             clearFallback()
             return

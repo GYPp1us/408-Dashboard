@@ -29,6 +29,33 @@ def database(app):
     return connect(app.config['DATABASE'])
 
 
+def test_start_timed_focus_from_daily_task_and_return_heatmap(env):
+    _, client, paths, now = env
+    item = client.get('/api/focus-items').get_json()['focus_items'][0]
+    other = next(entry for entry in client.get('/api/focus-items').get_json()['focus_items'] if entry['id'] != item['id'])
+    updated = client.patch(f"/api/focus-items/{item['id']}", json={'expected_minutes': '73'})
+    assert updated.status_code == 200
+    assert next(entry for entry in updated.get_json()['focus_items'] if entry['id'] == item['id'])['expected_minutes'] == 73
+    assert client.patch(f"/api/focus-items/{item['id']}", json={'expected_minutes': 1441}).status_code == 400
+    daily = task(client, paths, focus_item_id=item['id'], target_minutes=73)
+    request = {'focus_item_id': item['id'], 'daily_task_id': daily['id'], 'mode': '专注',
+               'planned_minutes': 73, 'client_token': 'daily-task-start'}
+    assert client.post('/api/focus/start', json={**request, 'focus_item_id': other['id']}).status_code == 409
+    created = client.post('/api/focus/start', json=request)
+    assert created.status_code == 201
+    session = created.get_json()['session']
+    assert session['planned_minutes'] == 73
+    assert client.post('/api/focus/start', json=request).get_json()['session']['id'] == session['id']
+    catalog = client.get('/api/daily-tasks').get_json()
+    assert [record['id'] for record in catalog['tasks'][0]['focus_records']] == [session['id']]
+    client.post('/api/daily-tasks/complete', json={'task_id': daily['id'], 'completed': True})
+    dashboard = client.get('/api/dashboard').get_json()
+    assert len(dashboard['heatmap']) == len(dashboard['daily_task_heatmap'])
+    assert dashboard['daily_task_heatmap'][-1] == {
+        'date': now.date().isoformat(), 'completed': 1, 'total': 1, 'completion': 1.0}
+    assert dashboard['daily_task_heatmap'][-2]['completion'] is None
+
+
 def task(client, paths, title='数学模拟', **extra):
     response = client.post(paths['report_url'], json={'tasks':[{'title':title, **extra}]})
     assert response.status_code == 200, response.get_json()

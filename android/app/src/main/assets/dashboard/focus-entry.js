@@ -14,8 +14,31 @@
   const message = text => {const node=$('#entry-status');if(node)node.textContent=text;};
   function save(){try{localStorage.setItem(storage(),JSON.stringify(slots));}catch(_){}}
   function prepareSlots(ids){
-    if(!slots){try{slots=JSON.parse(localStorage.getItem(storage())||'null');}catch(_){}if(!slots||!Array.isArray(slots.quick)||!Array.isArray(slots.timed)){const all=[...new Set([...ids,...items.map(i=>Number(i.id))])];slots={quick:all.slice(0,count).map(id=>({id,minutes:0})),timed:all.slice(0,count).map((id,i)=>({id,minutes:times[i%4]}))};}}
-    for(const group of ['quick','timed'])for(let i=0;i<count;i++){const slot=slots[group][i];if(!slot||!items.some(item=>Number(item.id)===slot.id))slots[group][i]=null;else if(group==='timed'&&!times.includes(slot.minutes))slot.minutes=60;}save();
+    if(!slots){try{slots=JSON.parse(localStorage.getItem(storage())||'null');}catch(_){}}
+    if(!slots||!Array.isArray(slots.quick)||!Array.isArray(slots.timed))slots={quick:[],timed:[]};
+    const candidates=[...new Set([...ids,...items.map(item=>Number(item.id))])];
+    const valid=new Map(items.map(item=>[Number(item.id),item]));
+    for(const group of ['quick','timed']){
+      const entries=slots[group].slice(0,count);
+      for(let i=0;i<count;i++){
+        const slot=entries[i];
+        if(slot&&valid.has(slot.id)&&Number.isInteger(slot.minutes)&&(group==='quick'?slot.minutes===0:slot.minutes>0&&slot.minutes<=1440))continue;
+        const id=candidates.find(key=>valid.has(key)&&!entries.some(entry=>entry?.id===key));
+        entries[i]=id?{id,minutes:group==='quick'?0:(Number(valid.get(id).expected_minutes)||times[i%times.length])}:null;
+      }
+      slots[group]=entries;
+    }
+  }
+  function remember(id,minutes){
+    if(!slots||!items.some(item=>Number(item.id)===id))return;
+    const entries=slots[minutes>0?'timed':'quick'];
+    let index=entries.findIndex(slot=>slot?.id===id&&slot.minutes===minutes);
+    if(index<0)index=entries.indexOf(null);
+    if(index<0)index=entries.reduce((oldest,slot,i)=>(slot.used||0)<(entries[oldest].used||0)?i:oldest,0);
+    const used=Math.max(Date.now(),...entries.map(slot=>(slot?.used||0)+1));
+    entries[index]={id,minutes,used};
+    save();
+    paint();
   }
   function paper(value,attr){return `<div class="score-strip entry-duration-strip" role="listbox" tabindex="0" aria-label="选择定时时长">${times.map(n=>`<button type="button" class="score-strip-option${n===value?' is-selected':''}" role="option" aria-selected="${n===value}" ${attr}="${n}">${timeLabel(n)}</button>`).join('')}</div>`;}
   function bindPaper(host,attr,changed){
@@ -32,17 +55,19 @@
       nav.onclick=e=>{const b=e.target.closest('[data-entry-tab]');if(b){tab=b.dataset.entryTab;paint();}};nav.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const names=['quick','timed','checkin'],i=names.indexOf(tab);tab=names[e.key==='Home'?0:e.key==='End'?2:(i+(e.key==='ArrowRight'?1:2))%3];paint();$(`#entry-tab-${tab}`).focus();};
       const check=document.createElement('section');check.id='checkin-entry';check.setAttribute('role','tabpanel');check.setAttribute('aria-labelledby','entry-tab-checkin');check.innerHTML='<div id="checkin-list"></div><button id="new-checkin" type="button" class="ui-button ui-button--secondary">新增打卡</button>';$('#focus-modes').after(check);$('#new-checkin').onclick=()=>editRule();const note=document.createElement('p');note.id='entry-status';note.className='entry-status';note.setAttribute('role','status');check.after(note);$('#focus-modes').setAttribute('role','tabpanel');
     }
-    if(!$('#focus-duration-band')&&$('#focus-launch-form')){const band=document.createElement('section');band.id='focus-duration-band';band.className='score-paper-strip';band.innerHTML='<div class="score-paper-label"><span>时长</span><b id="focus-duration-value">1h</b></div>'+paper(launchTime,'data-entry-time');$('#focus-launch-form .score-paper-bands').append(band);bindPaper(band.querySelector('.score-strip'),'data-entry-time',n=>{launchTime=n;$('#focus-duration-value').textContent=timeLabel(n);hooks.preview?.();});const select=document.createElement('select');select.id='entry-target-slot';select.setAttribute('aria-label','换入栏位');$('#toggle-focus-pin')?.before(select);}
+    $('#toggle-focus-pin')?.remove();
+    if(!$('#focus-duration-band')&&$('#focus-launch-form')){const band=document.createElement('section');band.id='focus-duration-band';band.className='score-paper-strip';band.innerHTML='<div class="score-paper-label"><span>时长</span><b id="focus-duration-value">1h</b></div>'+paper(launchTime,'data-entry-time');$('#focus-launch-form .score-paper-bands').append(band);bindPaper(band.querySelector('.score-strip'),'data-entry-time',n=>{launchTime=n;$('#focus-duration-value').textContent=timeLabel(n);hooks.preview?.();});}
   }
   function paint(){
     if(!$('#focus-entry-tabs'))return;const settled=Boolean(hooks.data?.()?.daily_settlement);$('#focus-entry-tabs').querySelectorAll('button').forEach(b=>{const active=b.dataset.entryTab===tab;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;});$('#checkin-entry').hidden=tab!=='checkin';$('#focus-modes').hidden=tab==='checkin'||settled;$('#focus-modes').setAttribute('aria-labelledby',`entry-tab-${tab==='timed'?'timed':'quick'}`);const actions=$('.focus-launch-actions');if(actions)actions.hidden=tab==='checkin'||settled;
-    if(tab==='checkin'){loadRules();renderRules();return;}const current=slots[tab].slice(0,count),next=JSON.stringify([tab,current,items.map(i=>[i.id,i.label,i.subject,i.name])]);if(next===signature)return;signature=next;$('#focus-modes').querySelectorAll('.drag-launch').forEach(t=>hooks.dispose?.(t));
-    $('#focus-modes').innerHTML=current.map((slot,i)=>{const item=slot&&items.find(item=>Number(item.id)===slot.id);if(!item)return `<div class="mode entry-slot" data-detail-kind="entry" data-detail-key="${tab}:${i}"><button type="button" class="entry-empty" data-empty-slot="${i}">换入专注 · 栏位 ${i+1}</button></div>`;const text=itemLabel(item)+(tab==='timed'?'-'+slot.minutes+'分钟':'');return `<div class="mode entry-slot" data-detail-kind="entry" data-detail-key="${tab}:${i}" title="长按管理栏位"><div class="drag-launch" data-focus-item-id="${item.id}" data-planned-minutes="${slot.minutes}" data-focus-item="${esc(text)}"><div class="drag-fill"></div><span class="drag-label">${esc(text)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${esc(text)}">→</span></div></div>`;}).join('');$('#focus-modes').querySelectorAll('[data-empty-slot]').forEach(b=>{b.onclick=()=>window.DashboardDetails.open({kind:'entry',key:`${tab}:${b.dataset.emptySlot}`});});hooks.bind?.();
+    if(tab==='checkin'){loadRules();renderRules();return;}const current=slots[tab],next=JSON.stringify([tab,current.map(slot=>slot&&[slot.id,slot.minutes]),items.map(i=>[i.id,i.label,i.subject,i.name])]);if(next===signature)return;signature=next;$('#focus-modes').querySelectorAll('.drag-launch').forEach(t=>hooks.dispose?.(t));
+    $('#focus-modes').innerHTML=current.filter(Boolean).map(slot=>{
+      const item=items.find(item=>Number(item.id)===slot.id);
+      const label=itemLabel(item)+(tab==='timed'?'-'+slot.minutes+'分钟':'');
+      return `<div class="mode entry-slot" data-detail-kind="focus" data-detail-key="${item.id}"><div class="drag-launch" data-focus-item-id="${item.id}" data-planned-minutes="${slot.minutes}" data-focus-item="${esc(label)}"><div class="drag-fill"></div><span class="drag-label">${esc(label)}</span><span class="drag-thumb" role="button" tabindex="0" aria-label="滑动启动 ${esc(label)}">→</span></div></div>`;
+    }).join('');hooks.bind?.();
   }
-  function assign(group,index,id,minutes){if(!own()||!items.some(i=>Number(i.id)===id))throw new Error('该事项已不存在。');const previous=slots[group][index],duplicate=slots[group].findIndex((s,i)=>i!==index&&s?.id===id&&s.minutes===minutes);if(duplicate>=0)slots[group][duplicate]=previous;slots[group][index]={id,minutes};save();signature='';paint();}
   function details(){
-    window.DashboardDetails?.register('entry',async data=>{const [group,raw]=data.key.split(':'),index=Number(raw),slot=slots[group]?.[index];if(!own()||!['quick','timed'].includes(group)||!Number.isInteger(index)||index<0||index>=count)throw new Error('栏位已改变，请重新打开。');let minutes=slot?.minutes||60;
-      return {title:`${group==='timed'?'定时':'快速'}专注 · 栏位 ${index+1}`,html:`<form class="entry-form" id="entry-slot-form"><label>换入事项<select id="entry-slot-item">${items.map(item=>`<option value="${item.id}" ${Number(item.id)===slot?.id?'selected':''}>${esc(itemLabel(item))}</option>`).join('')}</select></label>${group==='timed'?'<div class="score-paper-label"><span>栏位时长</span></div>'+paper(minutes,'data-slot-time'):''}<div class="detail-actions"><button type="submit" class="ui-button ui-button--primary">换入此栏位</button><button type="button" class="ui-button ui-button--secondary" id="entry-remove-slot">换出</button></div><p class="entry-status">栏位数量保持不变；已有相同事项与时长时，两栏交换。</p></form>`,onReady(root){const strip=root.querySelector('.score-strip');if(strip)bindPaper(strip,'data-slot-time',n=>{minutes=n;});root.querySelector('form').onsubmit=e=>{e.preventDefault();assign(group,index,Number(root.querySelector('select').value),group==='timed'?minutes:0);window.DashboardDetails.close();};root.querySelector('#entry-remove-slot').onclick=()=>{slots[group][index]=null;save();signature='';paint();window.DashboardDetails.close();};}};});
     window.DashboardDetails?.register('checkin-day',async data=>{const row=hooks.data?.()?.checkin_heatmap?.find(r=>r.date===data.date);let records=[];if(own())records=(await api(`/api/checkins/history?date=${encodeURIComponent(data.date)}`)).records;return {title:`${data.date} · 打卡`,html:`<div class="detail-metrics"><div class="detail-metric"><span>已完成 / 应完成</span><strong>${row?.completed||0} / ${row?.total||0}</strong></div><div class="detail-metric"><span>完成度</span><strong>${row?.total?Math.round(row.completion*100)+'%':'未配置'}</strong></div></div>${records.map(r=>`<p>${esc(r.name)} · ${esc(r.time)}</p>`).join('')}`};});
   }
   function locationOnce(){if(!navigator.geolocation)return Promise.reject(new Error('当前环境无法定位。'));return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy}),e=>reject(new Error(e.code===1?'需要允许本次定位才能验证地点。':'暂时无法定位，请稍后重试。')),{enableHighAccuracy:true,timeout:15000,maximumAge:0}));}
@@ -98,10 +123,10 @@
     dialog.querySelector('#archive-checkin')?.addEventListener('click',async()=>{try{await api(`/api/checkins/${rule.id}`,{method:'DELETE'});dialog.close();await loadRules(true);await hooks.refresh?.();}catch(e){dialog.querySelector('#checkin-edit-status').textContent=e.message;}});dialog.showModal();
   }
   window.FocusEntry={render(modes,options){items=modes;hooks=options;count=options.count;prepareSlots(options.quickIds||[]);ensure();details();paint();},
-    prepareLaunch(){ensure();if(!slots)return;launchMode=tab==='timed'?'timed':'quick';$('#focus-duration-band')?.toggleAttribute('hidden',launchMode!=='timed');$('#focus-launch-title').textContent=launchMode==='timed'?'启动其他定时专注':'启动其他专注';const select=$('#entry-target-slot');if(select)select.innerHTML=slots[launchMode].slice(0,count).map((s,i)=>`<option value="${i}">栏位 ${i+1}${s?' · '+esc(itemLabel(items.find(item=>Number(item.id)===s.id)))+(launchMode==='timed'?' · '+s.minutes+'分钟':''):' · 空'}</option>`).join('');},
+    remember,
+    prepareLaunch(){ensure();if(!slots)return;launchMode=tab==='timed'?'timed':'quick';$('#focus-duration-band')?.toggleAttribute('hidden',launchMode!=='timed');$('#focus-launch-title').textContent=launchMode==='timed'?'启动其他定时专注':'启动其他专注';},
     launchMinutes:()=>launchMode==='timed'?launchTime:0,
-    updateLaunch(item){const pin=$('#toggle-focus-pin');if(pin){pin.textContent='换入栏位';pin.removeAttribute('aria-pressed');pin.disabled=!item;}if($('#focus-entry-preview')&&item)$('#focus-entry-preview').textContent=itemLabel(item)+(launchMode==='timed'?'-'+launchTime+'分钟':'');},
-    assignLaunch(item){assign(launchMode,Number($('#entry-target-slot').value),Number(item.id),launchMode==='timed'?launchTime:0);message('栏位已换入。');}};
+    updateLaunch(item){if($('#focus-entry-preview')&&item)$('#focus-entry-preview').textContent=itemLabel(item)+(launchMode==='timed'?'-'+launchTime+'分钟':'');}};
   document.addEventListener('dashboard:updated',e=>{if(!own())return;paint();const stamp=JSON.stringify([e.detail?.checkin_heatmap?.at(-1),String(e.detail?.now||'').slice(0,10)]);if(stamp!==catalogStamp){catalogStamp=stamp;catalogDay='';if(tab==='checkin')loadRules(true);}});
   document.addEventListener('DOMContentLoaded',()=>{for(const action of ['link','prompt','rotate'])$('#checkin-reporter-'+action)?.addEventListener('click',async()=>{try{const d=await api('/api/checkin-reporter/connection'+(action==='rotate'?'/rotate':''),{method:'POST',body:'{}'}),text=action==='prompt'?`每日打卡：GET ${d.catalog_url} 读取 checkin_items；POST ${d.report_url}，JSON {"source":"your_app","state":"checkin","checkin_item_id":目录ID}。限定地点时附 latitude、longitude、accuracy（米）。停止触发可发 state=idle。使用服务器接收时间和账户时区；两条件都启用时都要满足。重复帧每日每项只完成一次。key 长期有效，仅手动更换撤销，与专注上报 key 独立。`:d.report_url;if(action!=='rotate')await navigator.clipboard.writeText(text);$('#checkin-reporter-note').textContent=action==='rotate'?'打卡 key 已更换；旧链接立即失效。':action==='prompt'?'接入提示已复制。':'上报链接已复制。';}catch(e){$('#checkin-reporter-note').textContent=e.message;}});});
 })();

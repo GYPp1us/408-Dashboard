@@ -28,7 +28,7 @@ from .focus_reporter import ReporterError, apply_frame, authenticate_reporter, c
 from .checkins import heatmap as checkin_heatmap, settlement_snapshot as checkin_settlement_snapshot, island_context
 from .focus_exchange import ExchangeParameters, MODEL as EXCHANGE_MODEL
 from .focus_challenge import account_now, challenge_decisions, challenge_payload, set_challenge
-from .daily_tasks import catalog as daily_task_catalog, summary as daily_task_summary
+from .daily_tasks import catalog as daily_task_catalog, heatmap as daily_task_heatmap, summary as daily_task_summary
 from .daily_task_push import enqueue as enqueue_daily_task_push, cancel_settlement as cancel_daily_task_push
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 from .settlement_report import build_settlement_report
@@ -649,11 +649,17 @@ def register_routes(app):
             focus_sessions = _focus_sessions(connection, now, pauses, viewer_id)
             sessions = [(start, end) for _, start, end in focus_sessions]
             focus_heat = aggregate_focus_heatmap(sessions, now)
+            own_dashboard = viewer_id is not None and viewer_id == current_user_id() and not is_guest()
             first_checkin = connection.execute("SELECT min(created_day) FROM checkin_rules WHERE user_id=?", (viewer_id,)).fetchone()[0]
-            if first_checkin:
-                checkin_days = (now.date() - datetime.fromisoformat(first_checkin).date()).days + 1
-                if checkin_days > len(focus_heat):
-                    focus_heat = [[0] * 12 for _ in range(checkin_days - len(focus_heat))] + focus_heat
+            first_task = connection.execute(
+                "SELECT min(plan_date) FROM daily_tasks WHERE user_id=? AND archived=0 AND plan_date BETWEEN ? AND ?",
+                (viewer_id, (now.date() - timedelta(days=365)).isoformat(), settlement_date),
+            ).fetchone()[0] if own_dashboard else None
+            first_auxiliary_day = min(filter(None, (first_checkin, first_task)), default=None)
+            if first_auxiliary_day:
+                auxiliary_days = (now.date() - datetime.fromisoformat(first_auxiliary_day).date()).days + 1
+                if auxiliary_days > len(focus_heat):
+                    focus_heat = [[0] * 12 for _ in range(auxiliary_days - len(focus_heat))] + focus_heat
             today_rows = _today_focus_rows(connection, now, pauses, viewer_id)
             today_focus = summarize_today_focus(sessions, now)
             today_focus["count"] = len(today_rows)
@@ -690,6 +696,7 @@ def register_routes(app):
                 "focus_messages": get_focus_messages(connection, viewer_id),
                 "heatmap": focus_heat,
                 "checkin_heatmap": checkin_heatmap(connection, viewer_id, now, len(focus_heat)),
+                "daily_task_heatmap": daily_task_heatmap(connection, viewer_id, now, len(focus_heat)) if own_dashboard else [],
                 "heatmap_visible_hours": heatmap_visible_hours,
                 "scores": scores,
                 "score_history": score_history,
@@ -791,6 +798,7 @@ def register_routes(app):
     def start_focus():
         payload = request.get_json(silent=True) or {}
         focus_item_id = payload.get("focus_item_id")
+        daily_task_id = payload.get("daily_task_id")
         legacy_focus_item = str(payload.get("focus_item", payload.get("subject", ""))).strip()
         mode = str(payload.get("mode", "")).strip()
         client_token = str(payload.get("client_token", "")).strip()
@@ -800,6 +808,9 @@ def register_routes(app):
             planned_minutes = 0
         if planned_minutes < 0:
             return jsonify(error="planned_minutes_must_be_non_negative"), 400
+        if daily_task_id is not None and (type(daily_task_id) is not int or daily_task_id <= 0 or focus_item_id is None
+                                         or not 1 <= planned_minutes <= 1440):
+            return jsonify(error="invalid_daily_task_focus"), 400
         if focus_item_id is not None:
             try:
                 focus_item_id = int(focus_item_id)
@@ -837,6 +848,17 @@ def register_routes(app):
                 return jsonify(error="focus_item_not_found" if focus_item_id is not None else "subject_not_found"), 404
             subject_id = int(selected_item["subject_id"])
             subject = selected_item["label"]
+            if daily_task_id is not None:
+                task = connection.execute(
+                    "SELECT * FROM daily_tasks WHERE id=? AND user_id=? AND plan_date=? AND archived=0",
+                    (daily_task_id, current_user_id(), local_date),
+                ).fetchone()
+                if not task:
+                    return jsonify(error="daily_task_not_found"), 404
+                if task["completed"] or (task["focus_item_id"] and task["focus_item_id"] != selected_item["id"]) or (
+                    task["subject_id"] and task["subject_id"] != subject_id
+                ):
+                    return jsonify(error="daily_task_changed"), 409
             active = connection.execute("SELECT id FROM focus_sessions WHERE status = 'active' AND user_id = ? LIMIT 1", (current_user_id(),)).fetchone()
             if active:
                 connection.rollback()
@@ -846,6 +868,13 @@ def register_routes(app):
                 "INSERT INTO focus_sessions(user_id, subject_id, focus_item_id, subject, mode, planned_minutes, started_at, status, client_token, last_foreground_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)",
                 (current_user_id(), subject_id, focus_item_id, subject, mode, planned_minutes, started_at, client_token or None, started_at),
             )
+            if daily_task_id is not None:
+                connection.execute(
+                    "INSERT INTO daily_task_focus_links(session_id,task_id,user_id,updated_at) VALUES (?,?,?,?)",
+                    (cursor.lastrowid, daily_task_id, current_user_id(), started_at),
+                )
+                connection.execute("UPDATE daily_tasks SET revision=revision+1,updated_at=? WHERE id=? AND user_id=?",
+                                   (started_at, daily_task_id, current_user_id()))
             connection.commit()
             _refresh_focus_kline(connection, current_user_id(), settings)
             return jsonify(session=_row(connection, cursor.lastrowid)), 201
@@ -1224,7 +1253,7 @@ def register_routes(app):
                 payload = request.get_json(silent=True) or {}
                 try:
                     subject_id = int(payload.get("subject_id"))
-                    create_focus_item(connection, user_id, subject_id, payload.get("name", ""))
+                    create_focus_item(connection, user_id, subject_id, payload.get("name", ""), payload.get("expected_minutes", 0))
                 except (TypeError, ValueError) as error:
                     if str(error) == "subject_not_found":
                         return jsonify(error="subject_not_found"), 404
@@ -1259,6 +1288,7 @@ def register_routes(app):
                     focus_item_id,
                     subject_id,
                     payload.get("name", existing["name"]),
+                    payload.get("expected_minutes"),
                 )
             except (TypeError, ValueError) as error:
                 if str(error) == "subject_not_found":

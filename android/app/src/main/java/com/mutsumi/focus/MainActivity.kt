@@ -90,18 +90,20 @@ class MainActivity : ComponentActivity() {
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) reminderDragClaimed = false
-        if (FocusService.trackDashboardEdge(event) && !reminderDragClaimed) {
-            // The WebView received DOWN so it could handle a tap. Cancel it once the strip takes a drag.
-            val cancel = MotionEvent.obtain(event)
-            cancel.action = MotionEvent.ACTION_CANCEL
-            try { super.dispatchTouchEvent(cancel) } finally { cancel.recycle() }
-            reminderDragClaimed = true
-        }
+        FocusService.trackDashboardEdge(event, ::claimReminderDrag)
         if (!reminderDragClaimed) return super.dispatchTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
             reminderDragClaimed = false
         }
         return true
+    }
+
+    private fun claimReminderDrag(down: MotionEvent) {
+        if (reminderDragClaimed) return
+        reminderDragClaimed = true
+        val cancel = MotionEvent.obtain(down)
+        cancel.action = MotionEvent.ACTION_CANCEL
+        try { super.dispatchTouchEvent(cancel) } finally { cancel.recycle() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

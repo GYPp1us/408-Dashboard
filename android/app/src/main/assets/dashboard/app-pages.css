@@ -16,6 +16,33 @@
 .app-home-task.is-complete strong { color:var(--muted); }
 .app-plan-message { margin:6px 0 0; color:var(--accent-deep); font-size:11px; }
 .app-plan-message:empty { display:none; }
+.app-home-task { flex-wrap:wrap; }
+.app-home-task>div { flex:1; }
+.app-home-task-form { flex:1 0 100%; display:flex; flex-wrap:wrap; align-items:end; gap:8px; padding:6px 0; }
+.app-home-task-form label { display:grid; gap:4px; color:var(--muted); font-size:11px; }
+.app-home-task-form :is(input,select) { border:1px solid var(--line); border-radius:4px; background:var(--surface); color:var(--ink); font:inherit; padding:5px 7px; max-width:100%; }
+.app-home-task-form input[type=number] { width:86px; }
+body:is(.is-focusing,.is-resting,.is-settled) :is(.app-task-launch,.app-home-task-form) { display:none; }
+html.native-app[data-viewport-mode="wide"] .dashboard-grid { --dashboard-panel-height:calc(352px + var(--focus-entry-height) + 10px); }
+html.native-app[data-viewport-mode="wide"] .insight-switch:has(#app-plan-tab:not([hidden])) { grid-template-columns:repeat(3,minmax(0,1fr)); }
+html.native-app[data-viewport-mode="wide"] .insight-switch:has(#app-plan-tab:not([hidden])):has([data-insight-view="summary"]:not([hidden])) { grid-template-columns:repeat(4,minmax(0,1fr)); }
+html.native-app[data-viewport-mode="wide"] #dashboard-insights .app-home-plan { margin:8px 0 0; padding:0; border:0; background:none; box-shadow:none; backdrop-filter:none; }
+html.native-app[data-viewport-mode="wide"] #dashboard-insights .app-home-plan-head h2 { display:none; }
+html.native-app[data-viewport-mode="wide"] #dashboard-insights .app-home-plan-list { grid-template-columns:minmax(0,1fr); max-height:calc(var(--dashboard-panel-height) - 123px); }
+.heat-aux-divider { grid-column:1/-1; align-self:center; background:var(--line); height:100%; pointer-events:none; }
+.heat-cell.heat-task-empty { background:transparent; border-color:transparent; box-shadow:none; }
+#settings-focus-items .focus-item-settings-row { grid-template-columns:minmax(65px,.8fr) minmax(0,1fr) 64px 46px auto auto; }
+#focus-item-create-form:has([name=expected_minutes]) { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 66px auto; }
+.focus-item-expected { display:grid; gap:2px; color:var(--muted); font-size:9px; }
+html.native-app[data-viewport-mode="portrait"] #settings-focus-items .focus-item-settings-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 64px 42px; }
+.native-app :is(#quick-score-modal,#focus-launch-modal) .quick-score-form {
+  --entry-button-width:clamp(76px,22vw,100px);
+  justify-content:safe center;
+  padding-inline:calc(var(--entry-button-width) + 12px) 14px;
+}
+.native-app :is(#quick-score-modal,#focus-launch-modal) .quick-score-actions { justify-content:flex-end; margin-top:8px; padding-top:0; border:0; }
+.native-app :is(#quick-score-modal,#focus-launch-modal) .quick-score-actions .primary { width:var(--entry-button-width); }
+.native-app :is(#quick-score-modal,#focus-launch-modal) .score-paper-bands { min-width:0; }
 html.native-app[data-viewport-mode="portrait"] .app-home-plan { order:1; margin:0; padding:16px 18px; }
 html.native-app[data-viewport-mode="portrait"] body.page-home .time-grid { order:2; }
 html.native-app[data-viewport-mode="portrait"] #dashboard-insights { order:3; }
