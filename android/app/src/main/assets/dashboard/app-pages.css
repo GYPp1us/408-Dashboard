@@ -1,6 +1,26 @@
 /* APK pages share the dashboard palette, glass surfaces and small corners. */
-.app-plan-shortcut,.app-plan-setting { display:none; }
-html.native-app[data-viewport-mode="portrait"] .app-plan-shortcut { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px; width:100%; }
+.app-plan-setting { display:none; }
+.app-home-plan { margin-top:12px; min-width:0; border-radius:6px; background:color-mix(in srgb,var(--surface) 75%,transparent); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); }
+.app-home-plan-head { display:flex; align-items:center; gap:12px; }
+.app-home-plan-head h2 { margin:0; font-size:14px; font-weight:500; }
+.app-home-plan-head>span { margin-left:auto; color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+.app-home-plan-head>.ui-button,.app-home-plan-list .ui-button { min-height:28px; padding:4px 8px; font-size:11px; border-radius:4px; }
+.app-home-plan-track { height:5px; margin:9px 0; overflow:hidden; border-radius:2px; background:var(--line); }
+.app-home-plan-track i { display:block; height:100%; background:var(--accent); transition:width .2s; }
+.app-home-plan-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px 16px; max-height:136px; overflow:auto; }
+.app-home-plan-list>p { grid-column:1/-1; margin:0; padding:4px 0; font-size:12px; color:var(--muted); }
+.app-home-task { display:flex; gap:9px; align-items:center; padding:6px 0; min-width:0; }
+.app-home-task>div { min-width:0; display:flex; flex-direction:column; gap:3px; }
+.app-home-task strong { font-size:13px; font-weight:500; overflow-wrap:anywhere; }
+.app-home-task span { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+.app-home-task.is-complete strong { color:var(--muted); }
+.app-plan-message { margin:6px 0 0; color:var(--accent-deep); font-size:11px; }
+.app-plan-message:empty { display:none; }
+html.native-app[data-viewport-mode="portrait"] .app-home-plan { order:1; margin:0; padding:16px 18px; }
+html.native-app[data-viewport-mode="portrait"] body.page-home .time-grid { order:2; }
+html.native-app[data-viewport-mode="portrait"] #dashboard-insights { order:3; }
+html.native-app[data-viewport-mode="portrait"] #dashboard-activity { order:4; }
+html.native-app[data-viewport-mode="portrait"] .app-home-plan-list { grid-template-columns:minmax(0,1fr); max-height:176px; }
 html.native-app[data-viewport-mode="portrait"] .app-plan-setting { display:block; margin-top:16px; }
 .app-native-page { box-sizing:border-box; position:fixed; inset:0; margin:0; padding:0; border:0; border-radius:0; width:var(--app-page-width,100dvw); height:var(--app-page-height,100dvh); max-width:none; max-height:none; color:var(--ink); background:var(--paper); overflow:hidden; }
 html.native-app[data-viewport-mode="portrait"] body.page-home .app-native-page { zoom:calc(1 / var(--ui-scale,.69)); }

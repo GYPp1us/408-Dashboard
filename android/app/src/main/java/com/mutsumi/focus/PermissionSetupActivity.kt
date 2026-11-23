@@ -76,14 +76,14 @@ class PermissionSetupActivity : Activity() {
             openSafely(Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
         }
         val reminders = card("弹出式提醒")
-        label(reminders, "结束专注或开始暂停后的第 1 分钟，以及全屏提醒前 1 分钟，可拉开边缘色带并在卡片里答题。")
-        label(reminders, "从色带内侧向内拉开卡片，沿边缘拖动可调整位置。")
+        label(reminders, "开盘期间，未专注时持续显示边缘条。橙色表示等待，紫色表示一分钟内即将提醒。")
+        label(reminders, "向内拉开，向外收起；可从展开卡片上向外滑动。沿屏幕边缘拖动可调整位置。")
         if (popup.pending.isBlank()) toggle(reminders, "启用边缘提示与全屏提醒", popup.enabled) {
             popup.enabled = it
             FocusService.reminderSettingsChanged(this)
             render()
         } else label(reminders, "请先开始专注或完成静默验证，再更改提醒规则。")
-        label(reminders, "全屏只在亮屏解锁时打开。未授予悬浮权限时，后台以通知提醒，返回应用后再显示。关闭所有提醒需要答对一道题。")
+        label(reminders, "全屏只在亮屏解锁时打开。每段非专注期间，首次常规延迟直接生效，另有一次额外延迟 1 分钟；后续常规延迟需答对一道题。")
         if (popup.enabled) {
             permission(reminders, "显示在其他应用上层", PermissionStatus.overlay(this), "用于边缘色带和退到桌面后的提醒。") {
                 openSafely(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))

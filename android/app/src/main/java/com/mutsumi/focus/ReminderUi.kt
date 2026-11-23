@@ -56,6 +56,12 @@ internal class ReminderUi(val context: Context, val accent: Int) {
         }
     }
 
+    fun delayChoices(parent: LinearLayout, store: PopupReminderStore, compact: Boolean, onChoose: (Int) -> Unit, onExtraMinute: () -> Unit) {
+        add(parent, label(if (store.freeDelayAvailable) "首次延迟可直接生效" else "答对一题后延迟", 12f, muted), 3)
+        add(parent, durations(store.muteOptions, compact, onChoose), 7)
+        if (store.minuteDelayAvailable) add(parent, button("延迟 1 分钟 · 额外一次", compact = compact, action = onExtraMinute), 6)
+    }
+
     fun quiz(parent: LinearLayout, item: ReminderQuestion, compact: Boolean, wide: Boolean = false,
              onAnswer: (Int) -> Unit) {
         val prompt = vertical()

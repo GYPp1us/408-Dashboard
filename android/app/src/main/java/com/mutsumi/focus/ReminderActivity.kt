@@ -38,6 +38,9 @@ class ReminderActivity : ComponentActivity() {
             val options = state.getStringArrayList("options") ?: return@let null
             ReminderQuestion(body, options, state.getInt("answer"))
         }
+        if (savedInstanceState == null && duration > 0 && store.delayWithoutQuestion(duration, System.currentTimeMillis())) {
+            FocusService.reminderSettingsChanged(this); finish(); return
+        }
         if (duration !in store.muteOptions) { duration = 0; question = null }
         else if (question == null) question = nextQuestion()
         reviewingAnswer = reviewingAnswer && question != null
@@ -91,8 +94,13 @@ class ReminderActivity : ComponentActivity() {
 
     private fun nextQuestion() = ReminderQuestions.next(ReminderQuestions.decode(store.bankJson), question)
 
-    private fun choose(minutes: Int) {
-        if (minutes !in store.muteOptions) return
+    private fun choose(minutes: Int, extraMinute: Boolean = false) {
+        if (store.delayWithoutQuestion(minutes, System.currentTimeMillis(), extraMinute)) {
+            FocusService.reminderSettingsChanged(this)
+            finish()
+            return
+        }
+        if (extraMinute || minutes !in store.muteOptions) return
         duration = minutes; selecting = true; reviewingAnswer = false; question = nextQuestion()
         render(true)
     }
@@ -149,7 +157,7 @@ class ReminderActivity : ComponentActivity() {
             val pause = runtime.mode == FocusMode.PAUSED
             style.add(contents, style.label(when { selecting -> "关闭提醒一段时间"; pause -> "准备好，继续专注"; else -> "回到下一段专注" },
                 if (compact) 22f else 26f, bold = true), 7)
-            style.add(contents, style.label(when { selecting -> "选一个时长，答对一道题后生效。";
+            style.add(contents, style.label(when { selecting -> "选择一段时间，稍后再提醒。";
                 pause -> "本段计时仍在暂停，回到计时页后可继续。"; else -> "回到计时页选一个事项。开始后，本次提醒结束。" }, 13f, style.muted), 4)
             if (!selecting) style.add(contents, style.button("回到专注", true) {
                 if (!required) { finish(); return@button }
@@ -161,7 +169,7 @@ class ReminderActivity : ComponentActivity() {
                 finish()
             }, if (compact) 10 else 18)
             style.add(contents, style.tag("关闭所有提醒"), if (compact) 9 else 17)
-            style.add(contents, style.durations(store.muteOptions, onChoose = ::choose), 5)
+            style.delayChoices(contents, store, compact = compact, onChoose = { choose(it) }, onExtraMinute = { choose(1, true) })
             if (selecting) style.add(contents, style.button(if (required) "返回提醒" else "取消") {
                 if (!required) finish() else { selecting = false; render(true) }
             }, 8)

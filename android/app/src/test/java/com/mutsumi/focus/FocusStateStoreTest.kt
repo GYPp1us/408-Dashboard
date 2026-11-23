@@ -336,7 +336,7 @@ class FocusStateStoreTest {
 }
 
 /** In-memory Android preferences allow real persistence logic to run on the JVM. */
-private class MemoryPreferences : SharedPreferences {
+internal class MemoryPreferences : SharedPreferences {
     private val values = mutableMapOf<String, Any?>()
     override fun getAll(): MutableMap<String, *> = values.toMutableMap()
     override fun getString(key: String?, defValue: String?): String? = values[key] as? String ?: defValue

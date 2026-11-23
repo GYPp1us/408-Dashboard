@@ -3,39 +3,33 @@ package com.mutsumi.focus
 import java.time.Instant
 import java.time.ZoneId
 
-/** The full-screen reminder has its own clock. No island reminder round feeds it. */
+/** Popup timing and the always-available edge share one stable non-focus period. */
 internal object PopupReminderPolicy {
-    const val EARLY_MS = 60_000L
     const val LEAD_MS = 60_000L
     val DEFAULT_MUTE = listOf(15, 30, 60)
 
-    data class Window(val key: String, val edge: Boolean, val due: Boolean)
+    const val WAITING_COLOR = 0xffce792f.toInt()
+    const val IMMINENT_COLOR = 0xff8162ad.toInt()
+    data class Window(val key: String, val edge: Boolean = true, val due: Boolean, val imminent: Boolean, val dueAt: Long? = null)
 
     fun window(state: FocusRuntimeState, schedule: IslandContext, now: Long, muteUntil: Long,
                pauseMinutes: Int, idleMinutes: Int): Window? {
-        if (muteUntil > now) return null
-        val transitionAt = when (state.mode) {
+        if (state.mode == FocusMode.FOCUSING) return null
+        val local = Instant.ofEpochMilli(now).atZone(ZoneId.of(schedule.timezone))
+        val period = schedule.sessions.firstOrNull { local.toLocalTime() >= it.start && local.toLocalTime() < it.end }
+            ?: return null
+        val opening = local.toLocalDate().atTime(period.start).atZone(local.zone).toInstant().toEpochMilli()
+        val transition = when (state.mode) {
             FocusMode.PAUSED -> state.pausedAtEpochMs
             FocusMode.ENDED -> state.endedAtEpochMs
-            else -> return null
+            FocusMode.REST -> state.restStartedAtEpochMs
+            else -> 0
         }
-        if (transitionAt <= 0 || transitionAt > now) return null
-        val early = now - transitionAt < EARLY_MS
-        val transitionKey = "${state.mode}:${state.sessionId}:$transitionAt"
-        val anchor = when (state.mode) {
-            FocusMode.ENDED -> {
-                val local = Instant.ofEpochMilli(now).atZone(ZoneId.of(schedule.timezone))
-                val period = schedule.sessions.firstOrNull { local.toLocalTime() >= it.start && local.toLocalTime() < it.end }
-                    ?: return Window(transitionKey, early, false)
-                val opening = local.toLocalDate().atTime(period.start).atZone(local.zone).toInstant().toEpochMilli()
-                maxOf(transitionAt, opening)
-            }
-            else -> transitionAt
-        }
-        val key = if (!early && anchor != transitionAt) "$transitionKey:$anchor" else transitionKey
+        val anchor = maxOf(opening, transition)
+        val key = "${state.mode}:${state.sessionId}:$anchor"
         val minutes = if (state.mode == FocusMode.PAUSED) pauseMinutes else idleMinutes
-        if (minutes <= 0) return Window(key, early, false)
-        val dueAt = maxOf(anchor, muteUntil) + minutes * 60_000L
-        return Window(key, early || now in dueAt - LEAD_MS until dueAt, now >= dueAt)
+        val triggers = minutes > 0 && state.mode != FocusMode.SETTLED
+        val dueAt = if (muteUntil > anchor) muteUntil else anchor + minutes * 60_000L
+        return Window(key, due = triggers && now >= dueAt, imminent = triggers && now >= dueAt - LEAD_MS, dueAt = dueAt.takeIf { triggers })
     }
 }

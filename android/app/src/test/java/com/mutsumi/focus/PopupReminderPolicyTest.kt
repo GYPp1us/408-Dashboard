@@ -11,14 +11,16 @@ class PopupReminderPolicyTest {
     private val schedule = IslandContext(sessions = listOf(IslandContext.Session(LocalTime.parse("08:30"), LocalTime.parse("11:40")),
         IslandContext.Session(LocalTime.parse("13:30"), LocalTime.parse("22:45"))))
 
-    @Test fun `pause has two one minute windows and starting focus has no edge`() {
+    @Test fun `nonfocus edge stays available throughout opening and distinguishes final minute`() {
         val start = at("09:00:00")
         val paused = FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = start, sessionId = 4)
         fun window(time: String) = PopupReminderPolicy.window(paused, schedule, at(time), 0, 12, 20)!!
         assertTrue(window("09:00:00").edge)
         assertTrue(window("09:00:59").edge)
-        assertFalse(window("09:01:00").edge)
-        assertFalse(window("09:10:59").edge)
+        assertTrue(window("09:01:00").edge)
+        assertTrue(window("09:10:59").edge)
+        assertFalse(window("09:10:59").imminent)
+        assertTrue(window("09:11:00").imminent)
         assertTrue(window("09:11:00").edge)
         assertFalse(window("09:11:59").due)
         assertTrue(window("09:12:00").due)
@@ -28,31 +30,36 @@ class PopupReminderPolicyTest {
         assertFalse(PopupReminderPolicy.window(paused, schedule, at("09:50:00"), 0, 0, 20)!!.due)
     }
 
-    @Test fun `actual end has an immediate minute plus an idle warning minute`() {
+    @Test fun `ended and idle states remain available until close`() {
         val ended = FocusRuntimeState(mode = FocusMode.ENDED, endedAtEpochMs = at("09:00:00"), sessionId = 4)
         fun window(time: String) = PopupReminderPolicy.window(ended, schedule, at(time), 0, 12, 20)!!
         assertTrue(window("09:00:00").edge)
         assertTrue(window("09:00:59").edge)
-        assertFalse(window("09:01:00").edge)
-        assertFalse(window("09:18:59").edge)
+        assertTrue(window("09:01:00").edge)
+        assertTrue(window("09:18:59").edge)
+        assertFalse(window("09:18:59").imminent)
+        assertTrue(window("09:19:00").imminent)
         assertTrue(window("09:19:00").edge)
         assertFalse(window("09:19:59").due)
         assertTrue(window("09:20:00").due)
         val afterClose = ended.copy(endedAtEpochMs = at("23:00:00"))
-        assertTrue(PopupReminderPolicy.window(afterClose, schedule, at("23:00:59"), 0, 12, 20)!!.edge)
-        assertFalse(PopupReminderPolicy.window(afterClose, schedule, at("23:20:00"), 0, 12, 20)!!.due)
+        assertNull(PopupReminderPolicy.window(afterClose, schedule, at("23:00:59"), 0, 12, 20))
+        assertTrue(PopupReminderPolicy.window(FocusRuntimeState(), schedule, at("09:00:00"), 0, 12, 20)!!.edge)
+        assertTrue(PopupReminderPolicy.window(FocusRuntimeState(mode = FocusMode.REST, restStartedAtEpochMs = at("09:00:00")),
+            schedule, at("09:10:00"), 0, 12, 20)!!.edge)
+        assertFalse(PopupReminderPolicy.window(FocusRuntimeState(mode = FocusMode.SETTLED), schedule,
+            at("09:20:00"), 0, 12, 20)!!.due)
     }
 
     @Test fun `lunch suppresses ended reminder and reopening starts a fresh wait`() {
         val ended = FocusRuntimeState(mode = FocusMode.ENDED, endedAtEpochMs = at("11:27:00"))
         fun window(time: String) = PopupReminderPolicy.window(ended, schedule, at(time), 0, 12, 20)
-        assertFalse(window("12:40:00")!!.due)
-        assertFalse(window("12:40:00")!!.edge)
+        assertNull(window("12:40:00"))
         assertFalse(window("13:30:00")!!.due)
-        assertFalse(window("13:30:00")!!.edge)
+        assertTrue(window("13:30:00")!!.edge)
         assertTrue(window("13:49:00")!!.edge)
         assertTrue(window("13:50:00")!!.due)
-        assertFalse(window("22:45:00")!!.due)
+        assertNull(window("22:45:00"))
     }
 
     @Test fun `fast flick opens or closes while short slow pull settles back`() {
@@ -62,6 +69,7 @@ class PopupReminderPolicyTest {
         assertTrue(EdgeSheetMotion.opens(250f, 300f, 0f, true, 1f))
         assertFalse(EdgeSheetMotion.opens(250f, 300f, -850f, true, 1f))
         assertTrue(EdgeSheetMotion.opens(60f, 300f, EdgeSheetMotion.releaseSpeed(0f, 60f, 65, 1f), false, 1f))
+        assertTrue(EdgeSheetMotion.opens(150f, 866f, EdgeSheetMotion.releaseSpeed(0f, 150f, 126, 2.625f), false, 2.625f))
         assertEquals(-850f, EdgeSheetMotion.releaseSpeed(-850f, 60f, 65, 1f))
         assertTrue(EdgeSheetMotion.duration(220f, 1000f, 1f) < EdgeSheetMotion.duration(220f, 0f, 1f))
     }
@@ -75,14 +83,52 @@ class PopupReminderPolicyTest {
         assertEquals(0, EdgeSheetMotion.crossLimit(100, 120))
     }
 
-    @Test fun `muting gates all popup phases and does not immediately replay old time`() {
+    @Test fun `delay keeps edge visible and triggers exactly at the selected time`() {
         val paused = FocusRuntimeState(mode = FocusMode.PAUSED, pausedAtEpochMs = at("09:00:00"))
         val until = at("09:45:00")
         fun window(time: String) = PopupReminderPolicy.window(paused, schedule, at(time), until, 12, 20)
-        assertNull(window("09:44:59"))
-        assertFalse(window("09:45:00")!!.due)
-        assertTrue(window("09:56:00")!!.edge)
-        assertTrue(window("09:57:00")!!.due)
+        assertTrue(window("09:43:59")!!.edge)
+        assertFalse(window("09:43:59")!!.imminent)
+        assertTrue(window("09:44:00")!!.imminent)
+        assertFalse(window("09:44:59")!!.due)
+        assertTrue(window("09:45:00")!!.due)
+        assertEquals(window("09:43:59")!!.key, window("09:45:00")!!.key)
+    }
+
+    @Test fun `free normal delay and extra minute are independent single use across store recreation`() {
+        val prefs = MemoryPreferences()
+        val store = PopupReminderStore(prefs)
+        store.beginPhase("pause1")
+        assertTrue(store.delayWithoutQuestion(1, 1000, extraMinute = true))
+        assertFalse(PopupReminderStore(prefs).delayWithoutQuestion(1, 1001, extraMinute = true))
+        assertTrue(store.freeDelayAvailable)
+        assertTrue(store.delayWithoutQuestion(15, 2000))
+        assertEquals(961000, store.muteUntil)
+        store.beginPhase("pause1")
+        assertFalse(store.delayWithoutQuestion(30, 3000))
+        store.beginPhase("pause2")
+        assertTrue(store.freeDelayAvailable)
+        assertTrue(store.minuteDelayAvailable)
+        assertFalse(store.delayWithoutQuestion(999, 3000))
+    }
+
+    @Test fun `a custom normal minute remains separate from the bonus minute`() {
+        val store = PopupReminderStore(MemoryPreferences())
+        store.muteOptions = listOf(1, 15, 30)
+        store.beginPhase("pause")
+        assertTrue(store.delayWithoutQuestion(1, 1000))
+        assertFalse(store.freeDelayAvailable)
+        assertTrue(store.minuteDelayAvailable)
+        assertTrue(store.delayWithoutQuestion(1, 1001, extraMinute = true))
+        assertFalse(store.minuteDelayAvailable)
+    }
+
+    @Test fun `a slightly ahead transition keeps one stable edge phase`() {
+        val state = FocusRuntimeState(mode = FocusMode.PAUSED, sessionId = 5, pausedAtEpochMs = at("09:01:00"))
+        val first = PopupReminderPolicy.window(state, schedule, at("09:00:00"), 0, 12, 20)!!
+        val next = PopupReminderPolicy.window(state, schedule, at("09:00:01"), 0, 12, 20)!!
+        assertEquals(first.key, next.key)
+        assertFalse(first.due)
     }
 
     @Test fun `question rotation avoids same question and preserves answer after shuffle`() {

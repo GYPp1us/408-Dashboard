@@ -19,6 +19,8 @@ internal class PopupReminderController(private val context: Context) {
     private val edge = ReminderEdgeWindow(context) { FocusService.reminderSettingsChanged(context) }
     private var lastLaunch: Long? = null
     private var fallbackShowing = false
+    var nextUpdateAt = Long.MAX_VALUE
+        private set
 
     fun open(challenge: Boolean, duration: Int = 0) {
         runCatching { context.startActivity(ReminderActivity.intent(context, challenge, duration)) }
@@ -31,6 +33,12 @@ internal class PopupReminderController(private val context: Context) {
     fun update(state: FocusRuntimeState, schedule: IslandContext, now: Long, accent: Int, appVisible: Boolean) {
         val window = if (prefs.enabled) PopupReminderPolicy.window(state, schedule, now,
             prefs.muteUntil, prefs.pauseMinutes, prefs.idleMinutes) else null
+        window?.let { prefs.beginPhase(it.key) }
+        nextUpdateAt = window?.dueAt?.let { due ->
+            when { now < due - PopupReminderPolicy.LEAD_MS -> due - PopupReminderPolicy.LEAD_MS
+                now < due -> due
+                else -> Long.MAX_VALUE }
+        } ?: Long.MAX_VALUE
         val interactive = screen.isInteractive && !lockScreen.isKeyguardLocked
         if (prefs.pending.isNotBlank() && (window == null || prefs.pending != window.key || !window.due)) {
             prefs.resolve(); ReminderActivity.resolved(); lastLaunch = null
@@ -41,7 +49,7 @@ internal class PopupReminderController(private val context: Context) {
         }
         val pending = prefs.pending.isNotBlank()
         val surfaceKey = window?.key?.takeIf { !pending && interactive && !ReminderActivity.visible() }
-        edge.update(surfaceKey, window?.edge == true, accent)
+        edge.update(surfaceKey, if (window?.imminent == true) PopupReminderPolicy.IMMINENT_COLOR else PopupReminderPolicy.WAITING_COLOR, accent)
         if (!pending || ReminderActivity.visible() || (prefs.returning && appVisible)) {
             clearFallback()
             return

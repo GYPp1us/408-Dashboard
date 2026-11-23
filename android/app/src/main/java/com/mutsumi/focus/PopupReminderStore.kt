@@ -29,6 +29,22 @@ internal class PopupReminderStore(private val prefs: SharedPreferences) {
 
     val muteUntil: Long get() = prefs.getLong("mute_until", 0)
     fun muted(now: Long) = now < muteUntil
+    fun beginPhase(key: String) {
+        if (prefs.getString("delay_phase", "") == key) return
+        prefs.edit().putString("delay_phase", key).putBoolean("free_delay_used", false)
+            .putBoolean("minute_delay_used", false).apply()
+    }
+    val freeDelayAvailable: Boolean get() = !prefs.getBoolean("free_delay_used", false)
+    val minuteDelayAvailable: Boolean get() = !prefs.getBoolean("minute_delay_used", false)
+    fun delayWithoutQuestion(minutes: Int, now: Long, extraMinute: Boolean = false): Boolean {
+        if (extraMinute && minutes != 1) return false
+        val bonus = extraMinute
+        if (bonus && !minuteDelayAvailable || !bonus && (!freeDelayAvailable || minutes !in muteOptions)) return false
+        prefs.edit().putBoolean(if (bonus) "minute_delay_used" else "free_delay_used", true)
+            .putLong("mute_until", maxOf(now, muteUntil) + minutes * 60_000L)
+            .remove("pending").remove("returning").apply()
+        return true
+    }
     fun mute(minutes: Int, now: Long) {
         if (minutes !in muteOptions) return
         prefs.edit().putLong("mute_until", now + minutes * 60_000L).remove("pending").remove("returning").apply()
@@ -42,6 +58,7 @@ internal class PopupReminderStore(private val prefs: SharedPreferences) {
     val accountGeneration: Long get() = prefs.getLong("account_generation", 0)
     fun clearAccount() {
         prefs.edit().remove("pending").remove("returning").remove("mute_until").remove("bank")
+            .remove("delay_phase").remove("free_delay_used").remove("minute_delay_used")
             .putLong("account_generation", accountGeneration + 1).apply()
     }
     var bankJson: String

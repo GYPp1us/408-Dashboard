@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -78,6 +79,11 @@ class FocusService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (!destroyed) applyState()
+    }
+
     override fun onDestroy() {
         destroyed = true
         if (runningService === this) runningService = null
@@ -138,7 +144,7 @@ class FocusService : Service() {
             // Keep the authenticated schedule fresh without a per-second
             // wake lock while there is no clock on the island.
             releaseWakeLock()
-            handler.postDelayed(tick, (store.islandContext().nextBoundary(now) - now).coerceIn(50L, 15_000L))
+            handler.postDelayed(tick, (minOf(store.islandContext().nextBoundary(now), popup.nextUpdateAt) - now).coerceIn(50L, 15_000L))
             return
         }
         val lock = wakeLock ?: getSystemService(PowerManager::class.java).newWakeLock(
