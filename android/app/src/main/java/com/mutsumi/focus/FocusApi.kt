@@ -43,7 +43,7 @@ object FocusApi {
                 while (true) {
                     val used = reader.read(buffer)
                     if (used < 0) break
-                    if (result.length + used > 98_304) return@runCatching null
+                    if (result.length + used > 1_600_000) return@runCatching null
                     result.append(buffer, 0, used)
                 }
                 JSONObject(result.toString())

@@ -51,4 +51,4 @@ curl -fsS -b guest.cookies "$BASE/api/focus-kline/live"
 
 普通 Agent 不需要 APP 的登录 Cookie，也不用调用前台心跳、内部结算或设置接口。数据迁移另走 `GET /api/migration/export`，用站点管理员生成的 `X-Migration-Code`（15 分钟有效，成功调用后失效）。详细字段见 [每日计划协议](daily-plan-agent-protocol.md) 和 [打卡协议](checkin-reporter.md)。
 
-提醒验证码的自定义题库通过 `GET` / `PUT /api/reminder-questions/bank` 维护，使用独立的 Bearer 密钥。获取密钥和请求格式见 [提醒题库接入](reminder-question-bank.md)。
+提醒验证题库通过 `GET` / `PUT /api/reminder-questions/bank` 维护，使用独立的 Bearer 密钥，支持编辑、替换和清空整个题库。获取密钥和请求格式见 [提醒题库接入](reminder-question-bank.md)。

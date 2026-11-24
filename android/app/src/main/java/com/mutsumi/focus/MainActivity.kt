@@ -302,6 +302,10 @@ class MainActivity : ComponentActivity() {
                     FocusStateStore(this@MainActivity).setLastPageUrl(url)
                     if (Uri.parse(url).path in setOf("/login", "/register")) {
                         FocusService.clear(this@MainActivity)
+                    } else {
+                        view.evaluateJavascript("document.body?.dataset.page === 'home' && document.body?.dataset.role === 'admin'") { home ->
+                            if (home == "true" && view.url == url) ReminderBankSync.refresh(this@MainActivity)
+                        }
                     }
                     deliverFocusDestination()
                 }

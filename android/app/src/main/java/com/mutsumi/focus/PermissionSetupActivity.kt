@@ -96,8 +96,9 @@ class PermissionSetupActivity : Activity() {
         }
         button(reminders, "关闭所有提醒一段时间") { startActivity(ReminderActivity.intent(this, challenge = true)) }
         val questions = card("验证题库")
-        label(questions, "内置 ${ReminderQuestions.builtIn.size} 道题，覆盖极限、定积分、级数和基础口算。可由 Agent 维护自己的题目；未联网时仍能答题。")
+        label(questions, "所有题目均可通过接入 Prompt 编辑或删除。离线时使用最近同步的题目。")
         val result = TextView(this).apply { style.text(this); setPadding(0, style.dp(6), 0, 0) }
+        if (popup.bankJson.isNotBlank()) result.text = "本机有 ${ReminderQuestions.decode(popup.bankJson).size} 道题。"
         questions.addView(result)
         fun copyPrompt(rotate: Boolean) {
             result.text = "正在读取…"
@@ -118,7 +119,7 @@ class PermissionSetupActivity : Activity() {
         button(questions, "同步题库") {
             result.text = "正在同步…"
             ReminderBankSync.refresh(this) { count ->
-                if (!isFinishing && !isDestroyed) result.text = count?.let { "已同步 $it 道自定义题。" } ?: "同步失败，保留本机题库。"
+                if (!isFinishing && !isDestroyed) result.text = count?.let { "已同步 $it 道题。" } ?: "同步失败，请确认已登录并检查网络。"
             }
         }
         button(questions, "更换维护密钥") {

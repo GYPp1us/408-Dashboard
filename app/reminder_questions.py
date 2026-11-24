@@ -2,6 +2,7 @@
 
 import json
 import secrets
+from pathlib import Path
 
 from flask import jsonify, request
 
@@ -9,9 +10,12 @@ from .auth import current_user_id, user_required
 from .db import connect
 from .focus_reporter import REPORT_BASE_URL
 
+MAX_QUESTIONS = 128
+EDITABLE_BANK_VERSION = 1
+
 
 def validate_questions(value):
-    if not isinstance(value, list) or len(value) > 48:
+    if not isinstance(value, list) or len(value) > MAX_QUESTIONS:
         raise ValueError('invalid_questions')
 
     def text(value, limit):
@@ -36,6 +40,32 @@ def validate_questions(value):
     return result
 
 
+INITIAL_QUESTIONS = validate_questions(json.loads(Path(__file__).with_name('reminder_question_seed.json').read_text(encoding='utf-8')))
+
+
+def _find_bank(db, user, token):
+    if token is not None:
+        return db.execute('SELECT * FROM reminder_question_banks WHERE maintenance_key=?', (token,)).fetchone()
+    return db.execute('SELECT * FROM reminder_question_banks WHERE user_id=?', (user,)).fetchone()
+
+
+def _initialize_bank(db, user, row):
+    if row is not None and row['editable_bank_version'] >= EDITABLE_BANK_VERSION:
+        return row['revision'], json.loads(row['questions_json'])
+
+    existing = json.loads(row['questions_json']) if row is not None else []
+    bodies = {question['body'] for question in existing}
+    questions = existing + [question for question in INITIAL_QUESTIONS if question['body'] not in bodies]
+    revision = (row['revision'] if row is not None else 0) + 1
+    db.execute(
+        'INSERT INTO reminder_question_banks(user_id, revision, questions_json, editable_bank_version) VALUES (?,?,?,?) '
+        'ON CONFLICT(user_id) DO UPDATE SET revision=excluded.revision,questions_json=excluded.questions_json,'
+        'editable_bank_version=excluded.editable_bank_version',
+        (user, revision, json.dumps(questions, ensure_ascii=False, separators=(',', ':')), EDITABLE_BANK_VERSION),
+    )
+    return revision, questions
+
+
 def register_reminder_questions(app):
     def no_store(response):
         response.headers['Cache-Control'] = 'no-store'
@@ -47,7 +77,7 @@ def register_reminder_questions(app):
             db = connect(app.config['DATABASE'])
             try:
                 if request.method == 'PUT':
-                    request.max_content_length = 96_000
+                    request.max_content_length = 1_600_000
                     data = request.get_json(silent=True)
                     if not isinstance(data, dict) or type(data.get('expected_revision')) is not int:
                         return jsonify(error='expected_revision_required'), 400
@@ -55,21 +85,27 @@ def register_reminder_questions(app):
                         questions = validate_questions(data.get('questions'))
                     except ValueError as error:
                         return jsonify(error=str(error)), 400
-                    db.execute('BEGIN IMMEDIATE')
+                if request.method == 'GET':
+                    row = _find_bank(db, user, token)
+                    if token is not None and row is None:
+                        return jsonify(error='invalid_maintenance_key'), 401
+                    if row is not None and row['editable_bank_version'] >= EDITABLE_BANK_VERSION:
+                        return no_store(jsonify(revision=row['revision'], questions=json.loads(row['questions_json'])))
+                db.execute('BEGIN IMMEDIATE')
+                row = _find_bank(db, user, token)
                 if token is not None:
-                    row = db.execute('SELECT user_id FROM reminder_question_banks WHERE maintenance_key=?', (token,)).fetchone()
                     if row is None:
                         return jsonify(error='invalid_maintenance_key'), 401
                     user = row['user_id']
-                row = db.execute('SELECT revision, questions_json FROM reminder_question_banks WHERE user_id=?', (user,)).fetchone()
-                revision = row['revision'] if row else 0
+                revision, current_questions = _initialize_bank(db, user, row)
                 if request.method == 'GET':
-                    return no_store(jsonify(revision=revision, questions=json.loads(row['questions_json']) if row else []))
+                    db.commit()
+                    return no_store(jsonify(revision=revision, questions=current_questions))
                 if revision != data['expected_revision']:
+                    db.commit()
                     return jsonify(error='question_bank_changed', revision=revision), 409
-                db.execute('INSERT INTO reminder_question_banks(user_id, revision, questions_json) VALUES (?,?,?) '
-                           'ON CONFLICT(user_id) DO UPDATE SET revision=excluded.revision,questions_json=excluded.questions_json',
-                           (user, revision+1, json.dumps(questions, ensure_ascii=False, separators=(',', ':'))))
+                db.execute('UPDATE reminder_question_banks SET revision=?, questions_json=? WHERE user_id=?',
+                           (revision+1, json.dumps(questions, ensure_ascii=False, separators=(',', ':')), user))
                 db.commit()
                 return no_store(jsonify(revision=revision+1, questions=questions))
             finally:
@@ -101,12 +137,12 @@ def register_reminder_questions(app):
             url = REPORT_BASE_URL + '/api/reminder-questions/bank'
             prompt = '\n'.join([
                 '维护 Mutsumi Focus 专注提醒题库。请先核算每一道题，保证只有一个正确选项。',
-                f'GET {url} 读取 revision 和 questions。PUT 同一地址替换自定义题库，Content-Type: application/json。',
+                f'GET {url} 读取 revision 和全部题目。先读取和合并，再 PUT 到同一地址替换题库，Content-Type: application/json。',
                 f'Authorization: Bearer {token}',
                 '此凭据只用于此题库，不应写进日志。',
                 '提交 {"expected_revision":读取的数字,"questions":[{"body":"求极限：\\n$$\\n\\\\frac{\\\\sin x}{x}\\n$$","options":["0","1","2"],"answer_index":1}]}。',
-                'answer_index 从 0 开始，每题 3–5 个不同选项，最多 48 题。题干支持 $$ 独占行包围的公式、$…$ 行内公式、三反引号代码块。公式使用常用 TeX 子集（lim、frac、sin、sqrt、上下标等）。',
-                '请优先编写 x→0 时可以用一两项幂级数化简的小题；删除自定义题时提交 questions: []，设备将保留内置题库。409 时先重读。',
+                f'answer_index 从 0 开始，每题 3–5 个不同选项，题干最多 560 字，单选项最多 80 字，最多 {MAX_QUESTIONS} 题。支持 $$ 独占行包围的公式、$…$ 行内公式、三反引号代码块。公式使用常用 TeX 子集（lim、frac、sin、sqrt、上下标等）。',
+                '所有题目均可编辑和删除。questions: [] 会清空整个题库，清空后须重新添加题目才可答题。HTTP 409 时先重读。建议提交 UTF-8 JSON。',
             ])
             return no_store(jsonify(bank_url=url, prompt=prompt))
         finally:

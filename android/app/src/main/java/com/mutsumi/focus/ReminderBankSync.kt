@@ -8,20 +8,31 @@ import java.util.concurrent.Executors
 internal object ReminderBankSync {
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
-    private var refreshing = false
+    private class Refresh(val generation: Long) {
+        val callbacks = mutableListOf<(Int?) -> Unit>()
+    }
+
+    private var pending: Refresh? = null
 
     fun refresh(context: Context, done: ((Int?) -> Unit)? = null) {
-        if (refreshing && done == null) return
         val store = PopupReminderStore(context.applicationContext)
         val generation = store.accountGeneration
-        refreshing = true
+        val current = pending
+        if (current?.generation == generation) {
+            done?.let { current.callbacks.add(it) }
+            return
+        }
+        val refresh = Refresh(generation)
+        done?.let { refresh.callbacks.add(it) }
+        pending = refresh
         worker.execute {
             val result = FocusApi.reminderBankRequest()
             main.post {
-                refreshing = false
+                if (pending === refresh) pending = null
                 val valid = result != null && result.optJSONArray("questions") != null && store.accountGeneration == generation
                 if (valid) store.bankJson = result.toString()
-                done?.invoke(if (valid) ReminderQuestions.decode(store.bankJson).size else null)
+                val count = if (valid && refresh.callbacks.isNotEmpty()) ReminderQuestions.decode(store.bankJson).size else null
+                refresh.callbacks.forEach { it(count) }
             }
         }
     }

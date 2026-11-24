@@ -41,6 +41,7 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
     private var duration = 0
     private var question: ReminderQuestion? = null
     private var reviewing = false
+    private var bankSyncFailed = false
 
     fun update(key: String?, signalColor: Int, accent: Int, appVisible: Boolean) {
         if (key == null || phase != key) dismiss()
@@ -71,7 +72,7 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
     private fun nextQuestion() = ReminderQuestions.next(ReminderQuestions.decode(prefs.bankJson), question)
     fun dismiss() {
         sheet?.remove(); sheet = null; phase = null; styleKey = ""
-        duration = 0; question = null; reviewing = false
+        duration = 0; question = null; reviewing = false; bankSyncFailed = false
     }
     fun trackDashboardTouch(event: MotionEvent, claim: (MotionEvent) -> Unit) { sheet?.dashboardTouch(event, claim) }
 
@@ -167,17 +168,29 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
                 return
             }
             if (extraMinute || minutes !in prefs.muteOptions) return
-            duration = minutes; reviewing = false; question = nextQuestion(); populate(); position(extent)
+            duration = minutes; reviewing = false; question = nextQuestion(); bankSyncFailed = false
+            populate(); position(extent)
+            if (question == null) syncQuestion()
         }
         private fun changeDuration() {
             duration = 0; question = null; reviewing = false; populate(); position(extent)
+        }
+        private fun syncQuestion() {
+            ReminderBankSync.refresh(context) { count ->
+                if (sheet !== this || !opened || duration <= 0 || question != null) return@refresh
+                bankSyncFailed = count == null
+                question = nextQuestion()
+                populate(); position(extent)
+            }
         }
         private fun populate() {
             val selected = question
             val body = ui.vertical().apply {
                 setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
-                ui.add(this, ui.tag(if (selected == null) "专注提醒" else "延迟 $duration 分钟"))
-                if (selected == null) {
+                ui.add(this, ui.tag(if (duration == 0) "专注提醒" else "延迟 $duration 分钟"))
+                if (selected == null && duration > 0) {
+                    ui.unavailableBank(this, prefs.bankJson.isNotBlank(), bankSyncFailed, ::syncQuestion, ::changeDuration)
+                } else if (selected == null) {
                     ui.add(this, ui.label("稍后提醒", 17f, bold = true), 2)
                     ui.delayChoices(this, prefs, compact = true, onChoose = { choose(it) }, onExtraMinute = { choose(1, true) })
                 } else if (reviewing) ui.revealedAnswer(this, selected, compact = true)
@@ -244,7 +257,9 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
         private fun settle(open: Boolean, speed: Float) {
             animator?.cancel()
             opened = open
-            if (open && question == null) ReminderBankSync.refresh(context)
+            if (open && question == null) {
+                if (duration > 0) syncQuestion() else ReminderBankSync.refresh(context)
+            }
             val target = if (open) extent else 0f
             if (abs(shown - target) < 1f) { position(target); return }
             animator = ValueAnimator.ofFloat(shown, target).apply {

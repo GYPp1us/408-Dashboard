@@ -201,7 +201,8 @@ CREATE TABLE IF NOT EXISTS reminder_question_banks (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     revision INTEGER NOT NULL DEFAULT 0,
     questions_json TEXT NOT NULL DEFAULT '[]',
-    maintenance_key TEXT UNIQUE
+    maintenance_key TEXT UNIQUE,
+    editable_bank_version INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS daily_task_focus_links (
     session_id INTEGER PRIMARY KEY REFERENCES focus_sessions(id) ON DELETE CASCADE,
@@ -1003,6 +1004,7 @@ def init_db(connection: sqlite3.Connection, *, allow_subject_migration_review: b
     _hierarchy_add_columns(connection, "focus_reporter_keys", {"token": "TEXT"})
     _hierarchy_add_columns(connection, "daily_settlements", {"report_json": "TEXT"})
     _hierarchy_add_columns(connection, "user_focus_items", {"expected_minutes": "INTEGER NOT NULL DEFAULT 0 CHECK(expected_minutes BETWEEN 0 AND 1440)"})
+    _hierarchy_add_columns(connection, "reminder_question_banks", {"editable_bank_version": "INTEGER NOT NULL DEFAULT 0"})
     _migrate_focus_hierarchy(connection)
     connection.execute("DROP INDEX IF EXISTS one_active_focus")
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_focus_per_user ON focus_sessions(user_id) WHERE status = 'active' AND user_id IS NOT NULL")

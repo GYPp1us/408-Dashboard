@@ -25,6 +25,7 @@ class ReminderActivity : ComponentActivity() {
     private var question: ReminderQuestion? = null
     private var reviewingAnswer = false
     private var submitting = false
+    private var bankSyncFailed = false
     private val required: Boolean get() = store.pending.isNotBlank()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,7 +55,7 @@ class ReminderActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.isStatusBarContrastEnforcedCompat()
         render(animate = savedInstanceState == null)
-        ReminderBankSync.refresh(this)
+        if (duration > 0 && question == null) syncQuestion() else ReminderBankSync.refresh(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -94,6 +95,15 @@ class ReminderActivity : ComponentActivity() {
 
     private fun nextQuestion() = ReminderQuestions.next(ReminderQuestions.decode(store.bankJson), question)
 
+    private fun syncQuestion() {
+        ReminderBankSync.refresh(this) { count ->
+            if (isFinishing || isDestroyed || duration <= 0 || question != null) return@refresh
+            bankSyncFailed = count == null
+            question = nextQuestion()
+            render()
+        }
+    }
+
     private fun choose(minutes: Int, extraMinute: Boolean = false) {
         if (store.delayWithoutQuestion(minutes, System.currentTimeMillis(), extraMinute)) {
             FocusService.reminderSettingsChanged(this)
@@ -102,7 +112,9 @@ class ReminderActivity : ComponentActivity() {
         }
         if (extraMinute || minutes !in store.muteOptions) return
         duration = minutes; selecting = true; reviewingAnswer = false; question = nextQuestion()
+        bankSyncFailed = false
         render(true)
+        if (question == null) syncQuestion()
     }
 
     private fun answer(index: Int) {
@@ -138,7 +150,7 @@ class ReminderActivity : ComponentActivity() {
         val contents = style.vertical().apply {
             setPadding(style.dp(16), style.dp(if (compact) 10 else 16), style.dp(16), style.dp(if (compact) 10 else 16))
         }
-        val label = if (question != null) "验证 · 静默 $duration 分钟" else if (selecting) "专注 · 静默提醒" else "M  /  专注提醒"
+        val label = if (duration > 0) "验证 · 静默 $duration 分钟" else if (selecting) "专注 · 静默提醒" else "M  /  专注提醒"
         style.add(contents, style.tag(label))
         contents.addView(View(this).apply { setBackgroundColor(style.border) }, LinearLayout.LayoutParams(-1, style.dp(1)).apply {
             topMargin = style.dp(if (compact) 5 else 10)
@@ -153,6 +165,8 @@ class ReminderActivity : ComponentActivity() {
                 }
                 style.add(contents, style.button("更改静默时长", compact = true, action = ::changeDuration), 7)
             }
+        } else if (duration > 0) {
+            style.unavailableBank(contents, store.bankJson.isNotBlank(), bankSyncFailed, ::syncQuestion, ::changeDuration)
         } else {
             val pause = runtime.mode == FocusMode.PAUSED
             style.add(contents, style.label(when { selecting -> "关闭提醒一段时间"; pause -> "准备好，继续专注"; else -> "回到下一段专注" },

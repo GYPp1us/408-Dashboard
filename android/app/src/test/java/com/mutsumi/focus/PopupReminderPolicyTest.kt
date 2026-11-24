@@ -132,29 +132,32 @@ class PopupReminderPolicyTest {
     }
 
     @Test fun `question rotation avoids same question and preserves answer after shuffle`() {
-        val question = ReminderQuestion("custom", listOf("incorrect 1", "correct", "incorrect 2"), 1)
+        val question = ReminderQuestion("first", listOf("incorrect 1", "correct", "incorrect 2"), 1)
+        val bank = listOf(question, question.copy(body = "second"))
         val random = Random(8)
         var previous: ReminderQuestion? = null
         repeat(75) {
-            val result = ReminderQuestions.next(listOf(question), previous, random)
+            val result = checkNotNull(ReminderQuestions.next(bank, previous, random))
             assertNotEquals(previous?.body, result.body)
-            val original = (listOf(question) + ReminderQuestions.builtIn).single { it.body == result.body }
+            val original = bank.single { it.body == result.body }
             assertEquals(original.options[original.answer], result.options[result.answer])
             previous = result
         }
     }
 
-    @Test fun `offline bank contains distinct valid questions across all categories`() {
-        val bank = ReminderQuestions.builtIn
-        assertEquals(50, bank.size)
-        assertEquals(bank.size, bank.distinctBy { it.body }.size)
-        for (category in listOf("极限", "定积分", "级数", "口算")) {
-            assertTrue(category, bank.any { it.body.contains(category) })
-        }
-        for (item in bank) {
-            assertEquals(item.body, 4, item.options.distinct().size)
-            assertTrue(item.body, item.answer in item.options.indices && item.options.all { it.isNotBlank() })
-        }
+    @Test fun `empty bank offers no question and one question can be retried`() {
+        val question = ReminderQuestion("only", listOf("wrong", "correct", "also wrong"), 1)
+        assertNull(ReminderQuestions.next(ReminderQuestions.decode("""{"questions":[]}"""), question))
+        val result = checkNotNull(ReminderQuestions.next(listOf(question), question, Random(2)))
+        assertEquals(question.body, result.body)
+        assertEquals(question.options[question.answer], result.options[result.answer])
+    }
+
+    @Test fun `decode accepts the full managed bank`() {
+        val raw = (1..128).joinToString(",") { """{"body":"题 $it","options":["0","1","2"],"answer_index":2}""" }
+        val bank = ReminderQuestions.decode("""{"revision":1,"questions":[$raw]}""")
+        assertEquals(128, bank.size)
+        assertEquals("题 128", bank.last().body)
     }
 
     @Test fun `common power series formula retains signs and superscripts`() {

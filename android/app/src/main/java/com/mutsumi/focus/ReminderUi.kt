@@ -62,6 +62,18 @@ internal class ReminderUi(val context: Context, val accent: Int) {
         if (store.minuteDelayAvailable) add(parent, button("延迟 1 分钟 · 额外一次", compact = compact, action = onExtraMinute), 6)
     }
 
+    fun unavailableBank(parent: LinearLayout, cached: Boolean, syncFailed: Boolean, onSync: () -> Unit, onBack: () -> Unit) {
+        add(parent, label(if (cached) "题库为空" else "题库尚未同步", 18f, bold = true), 6)
+        val message = when {
+            syncFailed -> "同步失败，请检查登录状态与网络。"
+            cached -> "添加题目后同步，即可继续验证。"
+            else -> "同步账户题库后即可继续验证。"
+        }
+        add(parent, label(message, 13f, muted), 4)
+        add(parent, button("同步题库", compact = true, action = onSync), 7)
+        add(parent, button("返回时长选择", compact = true, action = onBack), 6)
+    }
+
     fun quiz(parent: LinearLayout, item: ReminderQuestion, compact: Boolean, wide: Boolean = false,
              onAnswer: (Int) -> Unit) {
         val prompt = vertical()
