@@ -162,6 +162,9 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
         }.onFailure { remove() }.getOrDefault(false)
 
         private fun choose(minutes: Int, extraMinute: Boolean = false) {
+            // A hold can confirm before its UP arrives. Release the sheet's
+            // drag tracker so that UP cannot restore the previous open state.
+            gesture.release()
             if (prefs.delayWithoutQuestion(minutes, System.currentTimeMillis(), extraMinute)) {
                 duration = 0; question = null; reviewing = false
                 populate(); settle(false, 0f); onChanged()
@@ -192,7 +195,8 @@ internal class ReminderEdgeWindow(private val context: Context, private val onCh
                     ui.unavailableBank(this, prefs.bankJson.isNotBlank(), bankSyncFailed, ::syncQuestion, ::changeDuration)
                 } else if (selected == null) {
                     ui.add(this, ui.label("稍后提醒", 17f, bold = true), 2)
-                    ui.delayChoices(this, prefs, compact = true, onChoose = { choose(it) }, onExtraMinute = { choose(1, true) })
+                    ui.delayChoices(this, prefs, compact = true, canHold = { opened && sheet === this@Sheet },
+                        onChoose = { choose(it) }, onExtraMinute = { choose(1, true) })
                 } else if (reviewing) ui.revealedAnswer(this, selected, compact = true)
                 else {
                     ui.add(this, ui.label("答对一题，延迟提醒", 16f, bold = true), 2)

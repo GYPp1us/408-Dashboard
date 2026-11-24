@@ -36,30 +36,48 @@ internal class ReminderUi(val context: Context, val accent: Int) {
         parent.addView(view, LinearLayout.LayoutParams(width, -2).apply { topMargin = dp(margin) })
     }
     fun tag(value: String) = label(value, 11f, accentInk, true).apply { letterSpacing = .09f }
-    fun button(value: String, primary: Boolean = false, compact: Boolean = false, action: () -> Unit) = Button(context).apply {
+    private fun Button.styleButton(value: String, primary: Boolean, compact: Boolean) {
         text = value; isAllCaps = false; textSize = if (compact) 13f else 14f; gravity = Gravity.CENTER
         typeface = Typeface.create("serif", Typeface.NORMAL)
         minHeight = dp(44); minimumHeight = dp(44); minimumWidth = 0; minWidth = 0
         stateListAnimator = null; elevation = 0f
         setTextColor(if (primary) IslandPalette(accent).buttonText else ink)
         setPadding(dp(10), dp(7), dp(10), dp(7))
+    }
+
+    fun button(value: String, primary: Boolean = false, compact: Boolean = false, action: () -> Unit) = Button(context).apply {
+        styleButton(value, primary, compact)
         background = RippleDrawable(ColorStateList.valueOf(0x26000000),
             surface(if (primary) accent else tint, stroke = if (primary) null else border), null)
         setOnClickListener { action() }
     }
 
-    fun durations(options: List<Int>, compact: Boolean = false, onChoose: (Int) -> Unit) = LinearLayout(context).apply {
-        for ((index, minutes) in options.withIndex()) {
-            addView(button("$minutes 分钟", compact = compact) { onChoose(minutes) }, LinearLayout.LayoutParams(0, -2, 1f).apply {
-                if (index > 0) marginStart = dp(6)
-            })
+    fun delayChoices(
+        parent: LinearLayout, store: PopupReminderStore, compact: Boolean,
+        canHold: (() -> Boolean)? = null, onChoose: (Int) -> Unit, onExtraMinute: () -> Unit,
+    ) {
+        fun choice(value: String, action: () -> Unit): Button {
+            if (canHold == null) return button(value, compact = compact, action = action)
+            return ReminderHoldButton(context, ColorUtils.blendARGB(tint, accent, .29f), dp(1).toFloat(),
+                dp(8).toFloat(), canHold, action).apply {
+                styleButton(value, primary = false, compact = compact)
+                background = surface(tint, stroke = border)
+            }
         }
-    }
-
-    fun delayChoices(parent: LinearLayout, store: PopupReminderStore, compact: Boolean, onChoose: (Int) -> Unit, onExtraMinute: () -> Unit) {
-        add(parent, label(if (store.freeDelayAvailable) "首次延迟可直接生效" else "答对一题后延迟", 12f, muted), 3)
-        add(parent, durations(store.muteOptions, compact, onChoose), 7)
-        if (store.minuteDelayAvailable) add(parent, button("延迟 1 分钟 · 额外一次", compact = compact, action = onExtraMinute), 6)
+        val hint = if (canHold == null) {
+            if (store.freeDelayAvailable) "首次延迟可直接生效" else "答对一题后延迟"
+        } else {
+            if (store.freeDelayAvailable) "长按确认 · 首次直接生效" else "长按时长，答对一题后延迟"
+        }
+        add(parent, label(hint, 12f, muted), 3)
+        add(parent, LinearLayout(context).apply {
+            for ((index, minutes) in store.muteOptions.withIndex()) {
+                addView(choice("$minutes 分钟") { onChoose(minutes) }, LinearLayout.LayoutParams(0, -2, 1f).apply {
+                    if (index > 0) marginStart = dp(6)
+                })
+            }
+        }, 7)
+        if (store.minuteDelayAvailable) add(parent, choice("延迟 1 分钟 · 额外一次", onExtraMinute), 6)
     }
 
     fun unavailableBank(parent: LinearLayout, cached: Boolean, syncFailed: Boolean, onSync: () -> Unit, onBack: () -> Unit) {
