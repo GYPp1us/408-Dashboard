@@ -2687,8 +2687,6 @@
     if (!active || state.locking || state.settling || active.focus_locked) return;
     state.locking = true;
     try {
-      const confirmed = await requestConfirmation({ title: "锁定本段专注", message: "锁定后本段记录将标记为非受信，且不能恢复受信状态。确定继续？", label: "锁定专注", tone: "danger" });
-      if (!confirmed || state.dashboard?.focus?.active?.id !== active.id) { resetCommitSlider(track, thumb); return; }
       await api("/api/focus/lock", { method: "POST", body: JSON.stringify({ session_id: active.id }) });
       await loadDashboard();
       showToast("本段专注已锁定");
