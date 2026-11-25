@@ -64,8 +64,20 @@ jobs:
           java-version: '21'
           cache: gradle
 
-      - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Ensure Android SDK packages are installed
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?The runner must provide an Android SDK directory}"
+          if [[ -f "$ANDROID_HOME/platforms/android-36/android.jar" &&
+                -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]]; then
+            exit 0
+          fi
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            managers=("$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager)
+            sdkmanager=${managers[0]}
+          fi
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'platforms;android-36' 'build-tools;36.0.0'
 
       - name: Run Android unit tests
         working-directory: android
