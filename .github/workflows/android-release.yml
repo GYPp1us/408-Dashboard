@@ -1,0 +1,200 @@
+name: Android release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Android release tag (for example, v0.9.6hotfix)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+concurrency:
+  group: android-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - name: Validate release tag
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(hotfix[0-9]*|-rc[0-9]+)?$ ]]; then
+            echo "::error::Unsupported Android release tag: $RELEASE_TAG"
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::Dispatch Android releases from main."
+            exit 1
+          fi
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the tagged source
+        id: source
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          git merge-base --is-ancestor "$commit" refs/remotes/origin/main
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            [[ "$(git rev-parse "$GITHUB_SHA^{commit}")" == "$commit" ]]
+          fi
+          [[ "$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' android/app/build.gradle.kts)" == "${RELEASE_TAG#v}" ]]
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Run Android unit tests
+        working-directory: android
+        run: bash gradlew --no-daemon --no-configuration-cache :app:testDebugUnitTest
+
+      - name: Build the signed release
+        working-directory: android
+        env:
+          MUTSUMI_FOCUS_STORE_BASE64: ${{ secrets.MUTSUMI_FOCUS_STORE_BASE64 }}
+          MUTSUMI_FOCUS_STORE_PASSWORD: ${{ secrets.MUTSUMI_FOCUS_STORE_PASSWORD }}
+          MUTSUMI_FOCUS_KEY_ALIAS: ${{ secrets.MUTSUMI_FOCUS_KEY_ALIAS }}
+          MUTSUMI_FOCUS_KEY_PASSWORD: ${{ secrets.MUTSUMI_FOCUS_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${MUTSUMI_FOCUS_STORE_BASE64:?Missing signing keystore}"
+          : "${MUTSUMI_FOCUS_STORE_PASSWORD:?Missing signing store password}"
+          : "${MUTSUMI_FOCUS_KEY_ALIAS:?Missing signing key alias}"
+          : "${MUTSUMI_FOCUS_KEY_PASSWORD:?Missing signing key password}"
+          umask 077
+          export MUTSUMI_FOCUS_STORE_FILE
+          MUTSUMI_FOCUS_STORE_FILE=$(mktemp "$RUNNER_TEMP/mutsumi-release.XXXXXX")
+          trap 'rm -f -- "$MUTSUMI_FOCUS_STORE_FILE"' EXIT
+          printf '%s' "$MUTSUMI_FOCUS_STORE_BASE64" | base64 --decode > "$MUTSUMI_FOCUS_STORE_FILE"
+          unset MUTSUMI_FOCUS_STORE_BASE64
+          bash gradlew --no-daemon --no-configuration-cache :app:lintRelease :app:assembleRelease
+
+      - name: Verify the APK and create release assets
+        env:
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          set -euo pipefail
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          "$tools/zipalign" -c -P 16 4 "$apk"
+          signer=$("$tools/apksigner" verify --verbose --print-certs "$apk")
+          expected=$(awk '/^SHA-256:/ {gsub(":", "", $2); print tolower($2)}' android/release-signing-cert.sha256)
+          actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<< "$signer")
+          [[ "$expected" =~ ^[a-f0-9]{64}$ && "$actual" == "$expected" ]]
+          grep -q '^Verified using v2 scheme .*: true$' <<< "$signer"
+          badging=$("$tools/aapt" dump badging "$apk")
+          ! grep -q '^application-debuggable' <<< "$badging" || exit 1
+          export APK_PACKAGE_LINE SIGNING_CERT
+          APK_PACKAGE_LINE=${badging%%$'\n'*}
+          SIGNING_CERT=$actual
+          mkdir release-files
+          name="Mutsumi-Focus-$RELEASE_TAG.apk"
+          cp "$apk" "release-files/$name"
+          (cd release-files && sha256sum "$name" > "$name.sha256")
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          tag = os.environ["RELEASE_TAG"]
+          apk = Path("release-files", f"Mutsumi-Focus-{tag}.apk")
+          pattern = r"package: name='com\.mutsumi\.focus' versionCode='(\d+)' versionName='([^']+)'"
+          package = re.match(pattern, os.environ["APK_PACKAGE_LINE"])
+          if not package or package[2] != tag[1:]:
+              raise SystemExit("APK package or version does not match the tag")
+          with ZipFile(apk) as archive:
+              names = archive.namelist()
+              if "res/raw/emulator_test_ca.pem" in names:
+                  raise SystemExit("Release contains a test CA")
+              bundled = {name: hashlib.sha256(archive.read(name)).hexdigest()
+                         for name in names if name.startswith("assets/dashboard/") and not name.endswith("/")}
+          manifest = {
+              "version": package[2], "versionCode": int(package[1]), "applicationId": "com.mutsumi.focus",
+              "sourceCommit": os.environ["SOURCE_COMMIT"], "releaseTag": tag, "file": apk.name,
+              "sha256": hashlib.sha256(apk.read_bytes()).hexdigest(), "size": apk.stat().st_size,
+              "releaseCertificateSha256": os.environ["SIGNING_CERT"], "bundledAssetSha256": bundled,
+          }
+          apk.with_name(f"{apk.stem}-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          PY
+          if [[ -f "docs/releases/$RELEASE_TAG.md" ]]; then
+            cp "docs/releases/$RELEASE_TAG.md" release-files/notes.md
+          fi
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: android-release
+          path: release-files/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: android-release
+          path: release-files
+
+      - name: Publish the signed GitHub Release
+        working-directory: release-files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          name="Mutsumi-Focus-$RELEASE_TAG"
+          files=("$name.apk" "$name.apk.sha256" "$name-manifest.json")
+          sha256sum --check "$name.apk.sha256"
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" == "$SOURCE_COMMIT" ]]
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,url > "$RUNNER_TEMP/release.json" 2>/dev/null; then
+            jq -e '.isDraft == false' "$RUNNER_TEMP/release.json" >/dev/null
+            jq -r '"Release already published: " + .url' "$RUNNER_TEMP/release.json" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          release_type=(--latest)
+          if [[ "$RELEASE_TAG" == *-rc* ]]; then
+            release_type=(--prerelease --latest=false)
+          fi
+          notes=(--generate-notes)
+          if [[ -f notes.md ]]; then
+            notes=(--notes-file notes.md)
+          fi
+          gh release create "$RELEASE_TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Mutsumi Focus ${RELEASE_TAG#v}" "${release_type[@]}" "${notes[@]}"
+          assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets,url)
+          for file in "${files[@]}"; do
+            digest=$(sha256sum "$file" | cut -d ' ' -f 1)
+            jq -e --arg file "$file" --arg digest "sha256:$digest" \
+              '.assets | any(.name == $file and .digest == $digest and .state == "uploaded")' <<< "$assets" >/dev/null
+          done
+          jq -r '.url' <<< "$assets" >> "$GITHUB_STEP_SUMMARY"
