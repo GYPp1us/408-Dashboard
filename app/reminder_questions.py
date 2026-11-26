@@ -10,7 +10,9 @@ from .auth import current_user_id, user_required
 from .db import connect
 from .focus_reporter import REPORT_BASE_URL
 
-MAX_QUESTIONS = 128
+MAX_QUESTIONS = 512
+# Allow a full bank even when non-BMP text is escaped as JSON surrogate pairs.
+MAX_BANK_BODY_BYTES = 6 * 1024 * 1024
 EDITABLE_BANK_VERSION = 1
 
 
@@ -77,7 +79,7 @@ def register_reminder_questions(app):
             db = connect(app.config['DATABASE'])
             try:
                 if request.method == 'PUT':
-                    request.max_content_length = 1_600_000
+                    request.max_content_length = MAX_BANK_BODY_BYTES
                     data = request.get_json(silent=True)
                     if not isinstance(data, dict) or type(data.get('expected_revision')) is not int:
                         return jsonify(error='expected_revision_required'), 400

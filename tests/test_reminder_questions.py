@@ -57,6 +57,23 @@ def test_maintenance_prompt_key_rotates_without_changing_bank_or_allowing_other_
     assert owner.get(PATH).get_json() == {'questions': [QUESTION], 'revision': 2}
 
 
+def test_question_bank_accepts_512_max_length_questions_and_rejects_513(clients):
+    owner, _ = clients
+    revision = owner.get(PATH).get_json()['revision']
+    questions = [
+        {'body': str(index).ljust(560, '🧮'), 'options': [symbol * 80 for symbol in '🤔😐🫠🤓🤯'], 'answer_index': 0}
+        for index in range(512)
+    ]
+    payload = json.dumps({'expected_revision': revision, 'questions': questions}, ensure_ascii=True)
+    saved = owner.put(PATH, data=payload, content_type='application/json')
+    assert saved.status_code == 200
+    assert saved.get_json() == {'revision': revision + 1, 'questions': questions}
+
+    rejected = owner.put(PATH, json={'expected_revision': revision + 1, 'questions': [*questions, QUESTION]})
+    assert rejected.status_code == 400
+    assert rejected.get_json() == {'error': 'invalid_questions'}
+
+
 def test_upgrade_preserves_custom_questions_key_and_overrides(clients):
     owner, outsider = clients
     initial = owner.get(PATH).get_json()['questions']
