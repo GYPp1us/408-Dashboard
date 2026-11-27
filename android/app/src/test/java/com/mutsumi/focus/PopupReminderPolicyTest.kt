@@ -153,11 +153,17 @@ class PopupReminderPolicyTest {
         assertEquals(question.options[question.answer], result.options[result.answer])
     }
 
-    @Test fun `decode accepts the full managed bank`() {
-        val raw = (1..128).joinToString(",") { """{"body":"题 $it","options":["0","1","2"],"answer_index":2}""" }
-        val bank = ReminderQuestions.decode("""{"revision":1,"questions":[$raw]}""")
-        assertEquals(128, bank.size)
-        assertEquals("题 128", bank.last().body)
+    @Test fun `reads a full managed bank with escaped supplementary characters`() {
+        val escapedGlyph = "\\ud83d\\ude00"
+        val body = escapedGlyph.repeat(555)
+        val option = escapedGlyph.repeat(79)
+        val options = (1..5).joinToString(",") { """"$it$option"""" }
+        val rows = (1..512).joinToString(",") { """{"body":"题 $it$body","options":[$options],"answer_index":4}""" }
+        val payload = """{"revision":1,"questions":[$rows]}"""
+        val bank = ReminderQuestions.decode(checkNotNull(FocusApi.readReminderResponse(payload.reader())))
+        assertEquals(512, bank.size)
+        assertTrue(bank.last().body.startsWith("题 512"))
+        assertTrue(bank.last().options[bank.last().answer].startsWith("5"))
     }
 
     @Test fun `common power series formula retains signs and superscripts`() {

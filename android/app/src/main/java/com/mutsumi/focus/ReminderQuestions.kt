@@ -6,11 +6,14 @@ import kotlin.random.Random
 internal data class ReminderQuestion(val body: String, val options: List<String>, val answer: Int)
 
 internal object ReminderQuestions {
-    private const val MAX_QUESTIONS = 128
+    private const val MAX_QUESTIONS = 512
 
-    fun decode(raw: String): List<ReminderQuestion> = runCatching {
-        val bank = JSONObject(raw).getJSONArray("questions")
-        (0 until bank.length().coerceAtMost(MAX_QUESTIONS)).mapNotNull { index ->
+    fun decode(raw: String): List<ReminderQuestion> =
+        runCatching { decode(JSONObject(raw)) }.getOrDefault(emptyList())
+
+    fun decode(payload: JSONObject): List<ReminderQuestion> {
+        val bank = payload.optJSONArray("questions") ?: return emptyList()
+        return (0 until bank.length().coerceAtMost(MAX_QUESTIONS)).mapNotNull { index ->
             runCatching {
                 val row = bank.getJSONObject(index)
                 val body = row.getString("body").takeIf { it.isNotBlank() && it.length <= 1120 } ?: return@runCatching null
@@ -23,7 +26,7 @@ internal object ReminderQuestions {
                 ReminderQuestion(body, options, answer)
             }.getOrNull()
         }
-    }.getOrDefault(emptyList())
+    }
 
     fun next(bank: List<ReminderQuestion>, previous: ReminderQuestion?, random: Random = Random.Default): ReminderQuestion? {
         val pool = if (bank.size > 1) bank.filterNot { it.body == previous?.body } else bank

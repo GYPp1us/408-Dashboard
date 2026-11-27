@@ -41,6 +41,16 @@ CREATE TABLE IF NOT EXISTS friendships (
     PRIMARY KEY (user_id, friend_id),
     CHECK(user_id < friend_id)
 );
+CREATE TABLE IF NOT EXISTS blockcolc_friend_links (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    encrypted_token TEXT,
+    friends_json TEXT NOT NULL DEFAULT '[]',
+    synced_at REAL NOT NULL,
+    next_sync_at REAL NOT NULL,
+    status TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     key TEXT NOT NULL,

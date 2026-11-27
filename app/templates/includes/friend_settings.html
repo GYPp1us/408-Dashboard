@@ -1,0 +1,25 @@
+<article class="panel account-panel">
+  <div class="account-panel-head"><h2>好友列表</h2></div>
+  <form id="friend-search-form" class="friend-search-form">
+    <input id="friend-search-input" placeholder="搜索站内用户名" aria-label="搜索站内用户名" autocomplete="off">
+    <button class="ui-button ui-button--primary primary" type="submit">搜索</button>
+  </form>
+  <div id="friend-search-results" class="friend-search-results"></div>
+  <div id="friend-list" class="friend-list"><div class="loading-row">正在读取好友…</div></div>
+  <div id="blockcolc-friends-connect" class="blockcolc-friends-connect" hidden>
+    <div class="blockcolc-link-heading">
+      <h3>方块钟好友同步</h3>
+      <span><span id="blockcolc-sync-status" role="status"></span><time id="blockcolc-sync-time"></time></span>
+    </div>
+    <form id="blockcolc-link-form" class="friend-search-form" hidden aria-describedby="blockcolc-link-help">
+      <input id="blockcolc-friend-token" type="password" placeholder="粘贴方块钟读取好友令牌" aria-label="方块钟读取好友令牌"
+             autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="47" required>
+      <button class="ui-button ui-button--primary primary" type="submit">连接账户</button>
+    </form>
+    <small id="blockcolc-link-help">在方块钟「账户与云同步 → 第三方接入」生成读取好友令牌。同步范围由好友的分享权限决定。</small>
+    <div class="blockcolc-link-actions">
+      <button id="blockcolc-edit-link" class="ui-button ui-button--quiet ui-button--sm" type="button" hidden>更换令牌</button>
+      <button id="blockcolc-disconnect" class="ui-button ui-button--quiet ui-button--sm" type="button" hidden>断开连接</button>
+    </div>
+  </div>
+</article>

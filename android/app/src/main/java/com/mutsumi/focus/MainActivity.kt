@@ -235,6 +235,7 @@ class MainActivity : ComponentActivity() {
                 if (!isTrustedUrl(request.url.toString()) || request.method != "GET") return null
                 val asset = when (request.url.path) {
                     "/static/app.js" -> "app.js"
+                    "/static/friends.js" -> "friends.js"
                     "/static/dashboard-clock.js" -> "dashboard-clock.js"
                     "/static/status-icons.js" -> "status-icons.js"
                     "/static/paper-tape.js" -> "paper-tape.js"
@@ -250,7 +251,7 @@ class MainActivity : ComponentActivity() {
                     else -> return null
                 }
                 return WebResourceResponse(if (asset.endsWith(".css")) "text/css" else "application/javascript",
-                    "UTF-8", 200, "OK", mapOf("Cache-Control" to "no-store"), if (asset == "app.js") java.io.SequenceInputStream(java.util.Collections.enumeration(listOf("dashboard-clock.js", "status-icons.js", "paper-tape.js", "app-pages.js", "app.js").map { assets.open("dashboard/$it") }))
+                    "UTF-8", 200, "OK", mapOf("Cache-Control" to "no-store"), if (asset == "app.js") java.io.SequenceInputStream(java.util.Collections.enumeration(listOf("dashboard-clock.js", "status-icons.js", "paper-tape.js", "app-pages.js", "friends.js", "app.js").map { assets.open("dashboard/$it") }))
                     else assets.open("dashboard/$asset"))
             }
 

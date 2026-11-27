@@ -32,6 +32,7 @@ from .daily_tasks import catalog as daily_task_catalog, heatmap as daily_task_he
 from .daily_task_push import enqueue as enqueue_daily_task_push, cancel_settlement as cancel_daily_task_push
 from .services import aggregate_focus_heatmap, aggregate_focus_investment, calculate_window, current_time, focus_leaderboard, score_metrics, seconds_until_exam, summarize_today_focus
 from .settlement_report import build_settlement_report
+from .blockcolc_friends import SELECTION_KEY
 
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -335,11 +336,7 @@ def _refresh_focus_kline(connection, user_id: int | None, settings: dict | None 
     """
 
 
-def _friend_diff_payload(connection, now: datetime, user_id: int | None) -> list[dict]:
-    if user_id is None or is_guest():
-        return []
-    pauses = _pause_map(connection)
-    own_seconds = summarize_today_focus([(start, end) for _, start, end in _focus_sessions(connection, now, pauses, user_id)], now)["seconds"]
+def _friend_diff_payload(connection, now: datetime, user_id: int, pauses, own_seconds: int) -> list[dict]:
     result = []
     for friend in list_friends(connection, user_id):
         friend_seconds = summarize_today_focus([(start, end) for _, start, end in _focus_sessions(connection, now, pauses, friend["id"])], now)["seconds"]
@@ -350,6 +347,10 @@ def _friend_diff_payload(connection, now: datetime, user_id: int | None) -> list
             "delta_seconds": own_seconds - friend_seconds,
         })
     return result
+
+
+def _local_friend_options(connection, user_id):
+    return [{**item, "source": "local", "key": f"local:{item['id']}"} for item in list_friends(connection, user_id)]
 
 
 def _ui_preferences(settings: dict, viewer_id: int | None) -> dict:
@@ -663,6 +664,19 @@ def register_routes(app):
             today_rows = _today_focus_rows(connection, now, pauses, viewer_id)
             today_focus = summarize_today_focus(sessions, now)
             today_focus["count"] = len(today_rows)
+            local_friends = _friend_diff_payload(connection, now, viewer_id, pauses, today_focus["seconds"]) if own_dashboard else []
+            leaderboard_friend = None
+            if own_dashboard:
+                selected = settings.get(SELECTION_KEY, "")
+                if selected.startswith("local:"):
+                    match = next((friend for friend in local_friends if f"local:{friend['id']}" == selected), None)
+                    if match:
+                        leaderboard_friend = {"key": selected, "name": match["username"], "seconds": match["today_seconds"]}
+                elif selected.startswith("blockcolc:"):
+                    _, remote_friends = app.extensions["blockcolc_friends"].view(connection, viewer_id, now.tzinfo)
+                    match = next((friend for friend in remote_friends if friend["key"] == selected), None)
+                    if match and match["today_seconds"] is not None:
+                        leaderboard_friend = {"key": selected, "name": match["username"], "seconds": match["today_seconds"]}
             scores = score_metrics(list_latest_scores(connection, viewer_id))
             score_history = score_metrics(list_scores(connection, viewer_id))
             plans = list_plans(connection, viewer_id)
@@ -702,7 +716,8 @@ def register_routes(app):
                 "score_history": score_history,
                 "daily_plan": daily_task_summary(connection, viewer_id, now) if viewer_id == current_user_id() and not is_guest() else None,
                 "plans": plans,
-                "friends": _friend_diff_payload(connection, now, viewer_id),
+                "friends": local_friends,
+                "leaderboard_friend": leaderboard_friend,
                 "viewer": get_user(connection, viewer_id),
             })
         finally:
@@ -1452,8 +1467,47 @@ def register_routes(app):
                 except sqlite3.IntegrityError:
                     return jsonify(error="already_friend"), 409
                 connection.commit()
-            friends = list_friends(connection, current_user_id())
-            return jsonify(friends=friends)
+            user_id = current_user_id()
+            settings = get_settings(connection, user_id)
+            zone = _now(settings.get("timezone", "Asia/Shanghai")).tzinfo
+            link, remote = app.extensions["blockcolc_friends"].view(connection, user_id, zone)
+            friends = _local_friend_options(connection, user_id) + remote
+            selected = settings.get(SELECTION_KEY)
+            response = jsonify(friends=friends, blockcolc=link,
+                               selected_friend=selected if any(friend["key"] == selected for friend in friends) else None)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        finally:
+            connection.close()
+
+    @app.put("/api/friends/leaderboard-selection")
+    @user_required
+    def select_leaderboard_friend():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or "key" not in payload:
+            return jsonify(error="invalid_leaderboard_friend"), 400
+        key = payload["key"]
+        if key is not None and (not isinstance(key, str) or len(key) > 105):
+            return jsonify(error="invalid_leaderboard_friend"), 400
+        user_id = current_user_id()
+        connection = connect(app.config["DATABASE"])
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            if key is None:
+                connection.execute("DELETE FROM user_settings WHERE user_id=? AND key=?", (user_id, SELECTION_KEY))
+            else:
+                friends = _local_friend_options(connection, user_id)
+                if key.startswith("blockcolc:"):
+                    _, friends = app.extensions["blockcolc_friends"].view(connection, user_id, refresh=False)
+                if not any(friend["key"] == key for friend in friends):
+                    return jsonify(error="friend_not_found"), 404
+                connection.execute(
+                    "INSERT INTO user_settings(user_id, key, value) VALUES (?, ?, ?) "
+                    "ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value",
+                    (user_id, SELECTION_KEY, key),
+                )
+            connection.commit()
+            return jsonify(ok=True)
         finally:
             connection.close()
 

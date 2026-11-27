@@ -2,7 +2,7 @@
   const clock = window.DashboardClock;
   const responseTimes = new WeakMap();
   let requestSequence = 0, focusViewRevision = 0;
-  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, heatWindowStart: null, heatHistoryLength: 0, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, friendTickerTimer: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "index", insightView: "comparison", summaryReturnView: "comparison", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, leaderboardPendingRank: null, leaderboardTimer: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
+  const state = { dashboard: null, dashboardFetchedAt: null, dashboardSignature: null, scoreChart: null, focusTrendChart: null, heatResizeObserver: null, heatGeometryUpdate: null, heatWindowStart: null, heatHistoryLength: 0, summaryCharts: [], secondTasks: new Map(), secondTimer: null, syncTimer: null, heartbeatTimer: null, heartbeatFailureTimer: null, heartbeatFailureSince: null, heartbeatInFlight: false, syncLost: false, foregroundContinuous: true, focusRecoverySessionId: null, syncing: false, wakeLock: null, wakeRetry: null, starting: false, ending: false, pausing: false, locking: false, settling: false, confirmResolver: null, investmentRange: "week", activityView: "index", insightView: "comparison", summaryReturnView: "comparison", restStartedAt: null, lastActiveSnapshot: null, recentlyEnded: null, nativeStateSignature: null, leaderboardRank: null, quickFocus: { pinned: [], recent: [] }, focusLaunch: { subjectId: null, itemId: null }, scoreEntry: { subjects: [], selection: { subject: null, hundreds: 0, tens: 0, ones: 0 } } };
   const DAILY_TARGET_SECONDS = 7 * 3600;
   const chartColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const quickFocusCount = () => Number(window.DashboardUI?.preferences.quick_focus_count || 4);
@@ -746,32 +746,6 @@
     $("#state-dot").classList.toggle("state-dot-active", Boolean(active));
   }
 
-  function renderFriendDiffBoard(friends) {
-    const board = $("#friend-diff-board");
-    if (!board) return;
-    window.clearInterval(state.friendTickerTimer);
-    state.friendTickerTimer = null;
-    if (!friends?.length) {
-      board.hidden = true;
-      board.replaceChildren();
-      return;
-    }
-    board.hidden = false;
-    const rows = friends.map((friend) => {
-      const delta = Number(friend.delta_seconds || 0);
-      const relation = delta > 0 ? `领先 ${formatSignedSeconds(delta)}` : delta < 0 ? `落后 ${formatSignedSeconds(Math.abs(delta))}` : "持平 ±00:00:00";
-      const tone = delta > 0 ? "ahead" : delta < 0 ? "behind" : "";
-      return `<div class="friend-diff-row"><span>好友 · ${escapeHtml(friend.username)}</span><b>${formatSeconds(friend.today_seconds)}</b><em class="${tone}">${relation}</em></div>`;
-    }).join("");
-    board.innerHTML = `<div class="friend-diff-head"><span>好友 diff</span><small>今日累计 · 与你相比</small></div><div class="friend-diff-window"><div class="friend-diff-track">${rows}</div></div>`;
-    const track = board.querySelector(".friend-diff-track");
-    let index = 0;
-    state.friendTickerTimer = window.setInterval(() => {
-      index = (index + 1) % friends.length;
-      track.style.transform = `translateY(-${index * 38}px)`;
-    }, 4000);
-  }
-
   function renderClock() {
     setSecondTask("clock", (now) => {
       const current = serverNow(now);
@@ -1210,16 +1184,6 @@
     else { removeSecondTask("focusComparison"); tick(serverNow()); }
   }
 
-  function visibleLeaderboardEntries(entries, today) {
-    if (today.rank <= 6) return entries.filter((entry) => entry.rank <= 6).slice(0, 6);
-    const first = entries.slice(0, 3);
-    const previous = [...entries].reverse().find((entry) => entry.rank < today.rank);
-    const result = [...first];
-    if (previous && !result.some((entry) => entry.date === previous.date)) result.push({ isGap: true }, previous);
-    if (!result.some((entry) => entry.date === today.date)) result.push(today);
-    return result;
-  }
-
   function renderQuantileProfile(target, entries, today) {
     if (!target) return;
     const step = 20 * 60;
@@ -1250,77 +1214,42 @@
     requestAnimationFrame(updateProfileGeometry);
   }
 
-  function renderLeaderboardRows(target, entries, today, animate = false) {
+  function renderLeaderboardRows(target, entries, todayKey, animate) {
     target.innerHTML = entries.map((entry) => {
       if (entry.isGap) return '<div class="focus-leaderboard-gap" aria-hidden="true">···</div>';
-      const isToday = entry.date === today.date;
-      const podium = isToday && Number(entry.rank) >= 1 && Number(entry.rank) <= 3;
-      const gapText = entry.rank === 1 ? "榜首" : `−${formatSeconds(Number(entry.gap_to_previous_seconds || 0))}`;
+      const friend = Boolean(entry.friendKey);
+      const isToday = !friend && entry.date === todayKey;
+      const gapText = entry.rank === 1 ? "榜首" : `−${formatSeconds(entry.gap_to_previous_seconds || 0)}`;
+      const identity = friend
+        ? `<span class="focus-leaderboard-friend-name" title="${escapeHtml(entry.name)}" aria-label="好友 ${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</span>`
+        : `<time>${isToday ? "今天" : escapeHtml(entry.date.slice(5).replace("-", "/"))}</time>`;
+      const podium = isToday && entry.rank <= 3;
       const outline = podium ? '<svg class="focus-podium-outline" aria-hidden="true"><rect x="1" y="1" width="100%" height="100%" rx="6" pathLength="100"/></svg>' : "";
-      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}${podium ? ` is-podium podium-${Number(entry.rank)}` : ""}${animate ? " is-swapping" : ""}" data-leaderboard-date="${escapeHtml(entry.date)}">${outline}<div class="focus-leaderboard-identity"><time>${isToday ? "今天" : escapeHtml(String(entry.date).slice(5).replace("-", "/"))}</time><b>#${entry.rank}</b></div><div class="focus-leaderboard-metric"><strong>${formatSeconds(entry.seconds)}</strong></div><div class="focus-leaderboard-metric"><strong>${gapText}</strong></div></div>`;
+      return `<div class="focus-leaderboard-row${isToday ? " is-today" : ""}${friend ? " is-friend" : ""}${podium ? ` is-podium podium-${entry.rank}` : ""}${animate && isToday ? " is-swapping" : ""}" ${friend ? `data-leaderboard-friend="${escapeHtml(entry.friendKey)}"` : `data-leaderboard-date="${escapeHtml(entry.date)}"`}>${outline}<div class="focus-leaderboard-identity">${identity}<b>#${entry.rank}</b></div><div class="focus-leaderboard-metric"><strong>${formatSeconds(entry.seconds)}</strong></div><div class="focus-leaderboard-metric"><strong>${gapText}</strong></div></div>`;
     }).join("");
   }
 
   function renderFocusLeaderboard(leaderboard, activeExtra = 0) {
-    const rowsTarget = $("#focus-leaderboard-rows");
-    if (!rowsTarget) return;
-    const sourceEntries = leaderboard?.entries || [];
+    const target = $("#focus-leaderboard-rows");
+    if (!target) return;
     const todayKey = leaderboard?.today?.date || accountDateKey();
-    const entries = sourceEntries.map((entry) => ({ ...entry, seconds: Number(entry.seconds || 0) }));
-    let today = entries.find((entry) => entry.date === todayKey);
-    if (today) today.seconds += activeExtra;
-    else if (activeExtra || Number(leaderboard?.today?.seconds || 0)) {
-      today = { date: todayKey, seconds: Number(leaderboard?.today?.seconds || 0) + activeExtra };
-      entries.push(today);
-    }
-    entries.sort((left, right) => right.seconds - left.seconds || String(right.date).localeCompare(String(left.date)));
-    entries.forEach((entry) => {
-      const higher = entries.filter((other) => other.seconds > entry.seconds).map((other) => other.seconds);
-      entry.rank = higher.length + 1;
-      const previous = higher.length ? Math.min(...higher) : null;
-      entry.gap_to_previous_seconds = previous === null ? null : previous - entry.seconds;
-    });
-    const dayCount = entries.length;
-    today = entries.find((entry) => entry.date === todayKey);
+    const { rows, today, ownToday, history } = window.DashboardFriends.leaderboard(
+      leaderboard, todayKey, activeExtra, state.dashboard?.leaderboard_friend
+    );
     const summary = $("#focus-leaderboard-summary");
     const percentile = $("#focus-leaderboard-percentile");
     const dayCountTarget = $("#focus-leaderboard-day-count");
     const profile = $("#focus-leaderboard-profile");
-    if (!today || !today.seconds) {
-      rowsTarget.innerHTML = '<div class="loading-row">今天产生有效专注后会进入榜单。</div>';
-      if (summary) summary.textContent = "今天尚未上榜";
-      if (percentile) percentile.textContent = "--";
-      if (dayCountTarget) dayCountTarget.textContent = `${dayCount} 个历史记录日`;
-      if (profile) profile.replaceChildren();
-      state.leaderboardRank = null;
-      return;
-    }
-    const percent = Math.round((dayCount - today.rank + 1) / dayCount * 100);
-    const gap = Number(today.gap_to_previous_seconds || 0);
-    if (summary) summary.textContent = today.rank === 1 ? "今日暂列第 1 名" : `今日第 ${today.rank} 名 · 距上一名 ${formatSeconds(gap)}`;
-    if (percentile) percentile.textContent = `${percent}%`;
-    if (dayCountTarget) dayCountTarget.textContent = `${entries.filter((entry) => entry.date !== today.date).length} 个历史记录日`;
-    renderQuantileProfile(profile, entries, today);
-    const finalEntries = visibleLeaderboardEntries(entries, today);
-    if (state.leaderboardTimer && state.leaderboardPendingRank === today.rank) return;
-    window.clearTimeout(state.leaderboardTimer);
-    const rankImproved = state.leaderboardRank != null && today.rank < state.leaderboardRank;
-    state.leaderboardRank = today.rank;
-    if (!rankImproved) {
-      state.leaderboardPendingRank = null;
-      renderLeaderboardRows(rowsTarget, finalEntries, today);
-      return;
-    }
-    const displaced = entries.find((entry) => entry.rank > today.rank && entry.date !== today.date);
-    const interim = [...entries.slice(0, 3), { isGap: true }, today];
-    if (displaced && !interim.some((entry) => entry.date === displaced.date)) interim.push(displaced);
-    renderLeaderboardRows(rowsTarget, interim, today, true);
-    state.leaderboardPendingRank = today.rank;
-    state.leaderboardTimer = window.setTimeout(() => {
-      renderLeaderboardRows(rowsTarget, finalEntries, today);
-      state.leaderboardPendingRank = null;
-      state.leaderboardTimer = null;
-    }, 500);
+    if (summary) summary.textContent = !today ? "今天尚未上榜" : today.rank === 1 ? "今日暂列第 1 名"
+      : `今日第 ${today.rank} 名 · 距上一名 ${formatSeconds(today.gap_to_previous_seconds || 0)}`;
+    if (dayCountTarget) dayCountTarget.textContent = `${history.length - Number(Boolean(ownToday))} 个历史记录日`;
+    if (percentile) percentile.textContent = ownToday ? `${Math.round((history.length - ownToday.rank + 1) / history.length * 100)}%` : "--";
+    if (ownToday) renderQuantileProfile(profile, history, ownToday);
+    else profile?.replaceChildren();
+    const rankImproved = today && state.leaderboardRank != null && today.rank < state.leaderboardRank;
+    state.leaderboardRank = today?.rank ?? null;
+    if (rows.length) renderLeaderboardRows(target, rows, todayKey, rankImproved);
+    else target.innerHTML = '<div class="loading-row">今天产生有效专注后会进入榜单。</div>';
   }
 
   function renderGuestSummary(data) {
@@ -2156,7 +2085,6 @@
       taskHeatmap: data.daily_task_heatmap,
       heatmapVisibleHours: data.heatmap_visible_hours,
       preferences: data.preferences,
-      friends: (data.friends || []).map((friend) => [friend.id, friend.today_seconds, friend.delta_seconds]),
     });
   }
 
@@ -2205,7 +2133,7 @@
       closeFocusSummary();
     }
     document.body.classList.toggle("is-settled", Boolean(data.daily_settlement));
-    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_items || data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderFocusTrendChart(data.focus_leaderboard); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderFriendDiffBoard(data.friends); renderGuestSummary(data);
+    renderStatus(data); renderClock(); renderWindows(data); renderTicker(data.scores); renderModes(data.focus_items || data.focus_modes); renderHeatmap(data.heatmap, data.heatmap_visible_hours); renderFocusTrendChart(data.focus_leaderboard); renderScoreChart(data.score_history); renderFocusInvestment(data.focus_investment, data.focus.active); renderGuestSummary(data);
     renderDailySettlement(data);
     selectActivityView(state.activityView);
     applyFocusState(data.focus.active, false);
@@ -2282,7 +2210,10 @@
           state.dashboard.today_focus = data.today_focus;
           state.dashboard.focus_investment = data.focus_investment;
           state.dashboard.focus_leaderboard = data.focus_leaderboard;
+          const friendChanged = JSON.stringify(state.dashboard.leaderboard_friend) !== JSON.stringify(data.leaderboard_friend);
+          state.dashboard.leaderboard_friend = data.leaderboard_friend;
           state.dashboardFetchedAt = Date.parse(data.now) || serverNow();
+          if (friendChanged) renderFocusComparison(state.dashboard.focus?.active);
           document.dispatchEvent(new CustomEvent("dashboard:updated", { detail:data }));
         }
       });
@@ -2712,21 +2643,10 @@
     renderScores(scores.scores.map((item) => ({ ...item, gap: item.target - item.score, completion: item.score / item.target })), "#settings-scores");
   }
 
-  function renderFriends(friends) {
-    const target = $("#friend-list");
-    if (!target) return;
-    target.innerHTML = friends.length ? friends.map((friend) => `<div class="friend-row"><div><b>@${escapeHtml(friend.username)}</b><small>${escapeHtml(friend.email || "已建立好友关系")}</small></div><button class="ui-button ui-button--danger ui-button--sm" type="button" data-remove-friend="${escapeHtml(friend.username)}">移除</button></div>`).join("") : '<div class="loading-row">暂无好友，先搜索一个用户名。</div>';
-    target.querySelectorAll("[data-remove-friend]").forEach((button) => button.addEventListener("click", async () => {
-      const confirmed = await requestConfirmation({ title: "移除好友", message: `确定移除好友 @${button.dataset.removeFriend}？双方的好友差值板将不再显示对方。`, label: "移除好友", tone: "danger" });
-      if (!confirmed) return;
-      try { await api(`/api/friends/${encodeURIComponent(button.dataset.removeFriend)}`, { method: "DELETE" }); await loadFriends(); showToast("好友已移除"); } catch (error) { showToast(error.message); }
-    }));
-  }
+  let friendPage;
 
-  async function loadFriends() {
-    if (!$("#friend-list")) return;
-    const data = await api("/api/friends");
-    renderFriends(data.friends || []);
+  function loadFriends() {
+    return friendPage?.load();
   }
 
   async function searchFriends(event) {
@@ -2758,6 +2678,7 @@
   }
 
   function bindAccountForms() {
+    if ($("#friend-list")) friendPage = window.DashboardFriends.bindAccount({ api, showToast, requestConfirmation, escapeHtml, formatSeconds });
     $("#friend-search-form")?.addEventListener("submit", searchFriends);
     $("#create-invitation")?.addEventListener("click", async () => { try { await api("/api/invitations", { method: "POST", body: "{}" }); await loadInvitations(); showToast("邀请码已生成"); } catch (error) { showToast(error.message); } });
   }

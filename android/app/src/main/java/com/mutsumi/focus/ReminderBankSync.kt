@@ -26,13 +26,14 @@ internal object ReminderBankSync {
         done?.let { refresh.callbacks.add(it) }
         pending = refresh
         worker.execute {
-            val result = FocusApi.reminderBankRequest()
+            val result = FocusApi.reminderBankRequest()?.takeIf { it.optJSONArray("questions") != null }
+            val bank = result?.toString()
+            val count = result?.let { ReminderQuestions.decode(it).size }
             main.post {
                 if (pending === refresh) pending = null
-                val valid = result != null && result.optJSONArray("questions") != null && store.accountGeneration == generation
-                if (valid) store.bankJson = result.toString()
-                val count = if (valid && refresh.callbacks.isNotEmpty()) ReminderQuestions.decode(store.bankJson).size else null
-                refresh.callbacks.forEach { it(count) }
+                val valid = bank != null && store.accountGeneration == generation
+                if (valid) store.bankJson = checkNotNull(bank)
+                refresh.callbacks.forEach { it(if (valid) count else null) }
             }
         }
     }

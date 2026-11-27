@@ -2,11 +2,14 @@ package com.mutsumi.focus
 
 import android.webkit.CookieManager
 import org.json.JSONObject
+import java.io.Reader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.OffsetDateTime
 
 object FocusApi {
+    private const val MAX_REMINDER_RESPONSE_CHARS = 6 * 1024 * 1024
+
     data class Result(val successful: Boolean, val status: Int, val state: FocusRuntimeState? = null)
     data class StateResult(val successful: Boolean, val status: Int, val state: FocusRuntimeState? = null,
                            val islandContext: IslandContext? = null)
@@ -37,19 +40,20 @@ object FocusApi {
             configure(connection, state)
             connection.requestMethod = if (connectionDetails) "POST" else "GET"
             if (connection.responseCode !in 200..299) return@runCatching null
-            connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                val result = StringBuilder()
-                val buffer = CharArray(4096)
-                while (true) {
-                    val used = reader.read(buffer)
-                    if (used < 0) break
-                    if (result.length + used > 1_600_000) return@runCatching null
-                    result.append(buffer, 0, used)
-                }
-                JSONObject(result.toString())
-            }
+            connection.inputStream.bufferedReader(Charsets.UTF_8).use(::readReminderResponse)
         } finally { connection.disconnect() }
     }.getOrNull()
+
+    internal fun readReminderResponse(reader: Reader): JSONObject? {
+        val result = StringBuilder()
+        val buffer = CharArray(4096)
+        while (true) {
+            val used = reader.read(buffer)
+            if (used < 0) return JSONObject(result.toString())
+            if (result.length + used > MAX_REMINDER_RESPONSE_CHARS) return null
+            result.append(buffer, 0, used)
+        }
+    }
 
     fun fetchState(localState: FocusRuntimeState): StateResult {
         // The existing dashboard includes today's settlement, so a finish on

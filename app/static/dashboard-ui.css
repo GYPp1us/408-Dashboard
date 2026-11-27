@@ -104,7 +104,7 @@ button, input, select, textarea { font-family: var(--font-ui); }
 #dashboard-controls .is-panel-overlay #focus-state-overlay-note { margin-top: 16px; color: var(--accent-deep); font-size: 13px; line-height: 1.6; }
 #dashboard-controls .is-panel-overlay #settle-overlay-today { width: min(260px, 100%); height: 32px; margin: 24px auto 0; }
 #dashboard-controls > .focus-state-overlay.is-panel-overlay:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-.focus-leaderboard-row.is-today.is-podium { position: relative; border-bottom-color: transparent; border-radius: 5px; background: var(--accent-soft); }
+.focus-leaderboard-row.is-today.is-podium { position: relative; border-bottom-color: transparent; border-radius: 5px; }
 .focus-leaderboard-row.is-podium > :not(.focus-podium-outline) { position: relative; z-index: 1; }
 .focus-podium-outline { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; color: var(--accent-deep); }
 .focus-podium-outline rect { width: calc(100% - 2px); height: calc(100% - 2px); fill: none; stroke: currentColor; stroke-width: 1; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; opacity: .65; animation: podium-outline-flow 6s linear infinite; }
@@ -127,7 +127,7 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .activity-switch-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .insight-switch button[hidden] { display: none; }
 .linear-stack, .linear-stack .stack-rest, .linear-stack .stack-other { background: var(--subtle); }
-.investment-trend:not(.up):not(.down), .focus-compare-trend, .friend-diff-row em { background: var(--subtle); }
+.investment-trend:not(.up):not(.down), .focus-compare-trend { background: var(--subtle); }
 .investment-range-control { min-width: 0; }
 .focus-leaderboard-row { border-color: var(--line); background: var(--surface); }
 .focus-leaderboard-row.is-today { background: var(--accent-soft); }
@@ -171,14 +171,13 @@ body.page-focus-kline { background: var(--canvas); }
   --heat-l4: var(--accent);
 }
 :root[data-theme="dark"] .current-time-art { mix-blend-mode: luminosity; opacity: .2; }
-:root[data-theme="dark"] .score-entry-preview, :root[data-theme="dark"] .confirm-dialog-head, :root[data-theme="dark"] .friend-diff-head,
+:root[data-theme="dark"] .score-entry-preview, :root[data-theme="dark"] .confirm-dialog-head,
 :root[data-theme="dark"] .focus-leaderboard-row, :root[data-theme="dark"] .subject-settings-row, :root[data-theme="dark"] .settings-list > div,
 :root[data-theme="dark"] .account-profile, :root[data-theme="dark"] .friend-list > div, :root[data-theme="dark"] .invitation-list > div { background: var(--surface); border-color: var(--line); color: var(--ink); }
+:root[data-theme="dark"] .focus-leaderboard-row.is-today { background: var(--accent-soft); }
 :root[data-theme="dark"] .investment-trend.up, :root[data-theme="dark"] .focus-compare-trend.is-ahead,
-:root[data-theme="dark"] .friend-diff-row em.ahead,
 :root[data-theme="dark"] .focus-trust-state { background: #203e35; color: var(--score-positive); }
 :root[data-theme="dark"] .investment-trend.down, :root[data-theme="dark"] .focus-compare-trend.is-behind,
-:root[data-theme="dark"] .friend-diff-row em.behind,
 :root[data-theme="dark"] .focus-trust-state.untrusted { background: #472e31; color: var(--score-negative); }
 @media (prefers-color-scheme: dark) {
   :root[data-theme-mode="system"]:not([data-theme]) { --canvas: #13181e; --ink: #e2e8ee; --muted: #9aa8b5; --line: #323d48; --paper: #191f27; --surface: #202832; --subtle: #283340; }
